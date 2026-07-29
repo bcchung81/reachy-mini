@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import selfintro
 from animator import Animator
 from llm import LLMClient
 from motion import MotionPlayer, classify
@@ -45,6 +46,23 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False):
 def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
     """한 턴: 모션 즉시 + LLM 스트림 → 절 단위 TTS. 구간 지연을 로그로 남긴다."""
     t0 = time.time()
+
+    # 구성을 묻는 질문은 LLM 에 맡기지 않는다 — 모델명과 수치를 지어낼 수 있다.
+    # 검증된 대본을 그대로 읽는다(약 57초).
+    if selfintro.matches(user):
+        if player:
+            player.play_for("curious", force=True)
+        print(f"  [자기소개 대본 {len(selfintro.SCRIPT)}문장]")
+        for line in selfintro.SCRIPT:
+            print(f"미니> {line}")
+        speaker.speak_many(selfintro.SCRIPT)
+        llm.history += [
+            {"role": "user", "content": user},
+            {"role": "assistant", "content": selfintro.HISTORY_SUMMARY},
+        ]
+        speaker.wait_idle(timeout=180)
+        return
+
     category = classify(user)
     # 공연(노래·춤)은 요청 자체가 목적이라 진행 중인 모션을 끊고서라도 보여준다
     name = player.play_for(category, force=(category == "perform")) if player else None
