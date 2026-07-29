@@ -1,6 +1,7 @@
 """음성 일상대화 데모. --text: 키보드 입력(오디오 없음, 안전 폴백)."""
 
 import argparse
+import contextlib
 import sys
 import time
 from pathlib import Path
@@ -14,7 +15,13 @@ HERE = Path(__file__).parent
 FALLBACK_LINE = "음, 잠깐 생각이 안 나요. 다시 한 번 말해 줄래요?"
 
 
-def build(no_robot: bool = False):
+def build(stack: contextlib.ExitStack, no_robot: bool = False):
+    """ReachyMini 는 반드시 컨텍스트로 잡는다.
+
+    __enter__ 는 self 만 돌려주지만 __exit__ 이 media_manager.close() 와
+    client.disconnect() 를 한다. 이걸 빠뜨리면 대화가 끝나도 살아남은
+    스레드가 프로세스를 붙잡아 종료되지 않는다.
+    """
     llm = LLMClient(system_prompt=(HERE / "prompt.md").read_text())
     speaker = Speaker()
     player = None
@@ -23,7 +30,7 @@ def build(no_robot: bool = False):
         from reachy_mini.motion.recorded_move import RecordedMoves
 
         moves = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
-        mini = ReachyMini()
+        mini = stack.enter_context(ReachyMini())
         player = MotionPlayer(mini, moves)
     return llm, speaker, player
 
@@ -67,13 +74,12 @@ if __name__ == "__main__":
     ap.add_argument("--text", action="store_true", help="키보드 입력 모드")
     ap.add_argument("--no-robot", action="store_true", help="데몬 없이 (대화·TTS만)")
     args = ap.parse_args()
-    llm, speaker, player = build(no_robot=args.no_robot)
-    if args.text:
-        text_loop(llm, speaker, player)
-    else:
-        try:
-            from voice_loop import voice_loop  # Task 8에서 추가
-        except ImportError:
-            print("음성 모드는 아직 없다 — --text 를 쓰세요.")
-            sys.exit(1)
-        voice_loop(llm, speaker, player, respond)
+    with contextlib.ExitStack() as stack:
+        llm, speaker, player = build(stack, no_robot=args.no_robot)
+        if args.text:
+            text_loop(llm, speaker, player)
+        else:
+            from voice_loop import voice_loop
+
+            voice_loop(llm, speaker, player, respond)
+    print("종료했습니다.")
