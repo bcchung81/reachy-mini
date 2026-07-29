@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from animator import Animator
 from llm import LLMClient
 from motion import MotionPlayer, classify
 from tts import Speaker
@@ -32,6 +33,12 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False):
         moves = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
         mini = stack.enter_context(ReachyMini())
         player = MotionPlayer(mini, moves)
+
+        # 말하는 동안 흔들리고 조용할 때 숨 쉬게 한다. 감정 모션이 끝난 뒤
+        # 답변이 이어지는 구간에서 로봇이 굳어 보이는 것을 막는다.
+        animator = Animator(mini, lambda: speaker.speaking, lambda: player.busy)
+        animator.start()
+        stack.callback(animator.stop)
     return llm, speaker, player
 
 
@@ -43,19 +50,28 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
     name = player.play_for(category, force=(category == "perform")) if player else None
     print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
 
+    # 첫 절만 즉시 발화하고 나머지는 묶어서 한 번에 보낸다.
+    # say 비용은 대부분 프로세스 고정비라 길이와 거의 무관한데(M0 실측),
+    # 절마다 따로 띄우면 문장 사이에 공백과 억양 초기화가 생겨 뚝뚝 끊겨 들린다.
+    # 첫 절을 말하는 3초 남짓 동안 스트림(~1.5초)이 끝나므로 공백은 생기지 않는다.
     spoke = False
+    rest: list[str] = []
     try:
         for clause in llm.chat_stream(user):
+            print(f"미니> {clause}")
             if not spoke:
                 print(f"  [첫 절 +{time.time() - t0:.2f}s]")
+                speaker.speak(clause)
                 spoke = True
-            print(f"미니> {clause}")
-            speaker.speak(clause)
+            else:
+                rest.append(clause)
     except Exception as exc:
         print(f"  [LLM 실패: {type(exc).__name__} — 폴백]")
         if not spoke:
             speaker.speak(FALLBACK_LINE)
-    speaker.wait_idle(timeout=30)
+    if rest:
+        speaker.speak(" ".join(rest))
+    speaker.wait_idle(timeout=60)
 
 
 def text_loop(llm, speaker, player) -> None:

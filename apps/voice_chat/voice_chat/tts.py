@@ -8,18 +8,23 @@ speaking 플래그는 큐 적재 순간 켜진다 — 마이크 게이팅이 소
 내려간다. 그래서 잠금으로 보호되는 대기 건수로 판정한다.
 """
 
+import os
 import queue
 import re
 import subprocess
 import threading
 import time
 
-DEFAULT_VOICE = "Yuna"  # ko_KR — 로봇의 기본 언어
+# 한국어 음성은 REACHY_VOICE 로 바꾼다. macOS 에는 ko_KR 음성이 9종 있다:
+#   Yuna / Eddy / Flo / Grandma / Grandpa / Reed / Rocko / Sandy / Shelley
+# Yuna 외에는 "이름 (한국어(한국))" 전체 이름으로 불러야 로케일이 맞는다.
+# 캐릭터 음성들은 유나(0.82s)보다 합성이 빠르다(0.46~0.56s, 실측).
+DEFAULT_VOICE = os.environ.get("REACHY_VOICE", "Yuna")
 
 # 문자체계 → macOS 음성. 사용자가 "영어로 답해줘" 같은 요청을 했을 때
-# 유나가 영문을 읽으면 알아들을 수 없게 뭉개지므로 문장별로 음성을 고른다.
+# 한국어 음성이 영문을 읽으면 알아들을 수 없게 뭉개지므로 문장별로 음성을 고른다.
 _SCRIPTS = [
-    ("Yuna", re.compile(r"[가-힣ᄀ-ᇿ]")),  # 한글
+    (None, re.compile(r"[가-힣ᄀ-ᇿ]")),  # 한글 → DEFAULT_VOICE
     ("Kyoko", re.compile(r"[぀-ヿ]")),  # 히라가나·가타카나
     ("Tingting", re.compile(r"[一-鿿]")),  # 한자 (가나가 없을 때만)
     ("Samantha", re.compile(r"[A-Za-z]")),  # 라틴 문자
@@ -30,7 +35,7 @@ def pick_voice(text: str) -> str:
     """문장의 문자체계로 음성을 고른다. 한글이 섞였으면 무조건 한국어 음성이다."""
     for voice, pattern in _SCRIPTS:
         if pattern.search(text):
-            return voice
+            return voice or DEFAULT_VOICE
     return DEFAULT_VOICE
 
 

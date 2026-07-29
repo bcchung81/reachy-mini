@@ -25,3 +25,19 @@ def test_빈_문자열은_무시():
     s = Speaker(cmd=["/usr/bin/true"])
     s.speak("   ")
     assert not s.speaking
+
+
+def test_기본_음성은_환경변수로_바뀐다(monkeypatch):
+    import importlib
+
+    import tts as tts_mod
+
+    monkeypatch.setenv("REACHY_VOICE", "Rocko (한국어(한국))")
+    importlib.reload(tts_mod)
+    try:
+        assert tts_mod.pick_voice("안녕하세요") == "Rocko (한국어(한국))"
+        # 다른 문자체계는 영향받지 않는다
+        assert tts_mod.pick_voice("Hello there") == "Samantha"
+    finally:
+        monkeypatch.delenv("REACHY_VOICE")
+        importlib.reload(tts_mod)
