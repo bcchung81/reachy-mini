@@ -99,18 +99,10 @@ else
 fi
 
 # ── 3. 예열 ─────────────────────────────────────────────────────
-# 첫 질문에서 프리필 비용을 물지 않도록 더미 요청을 한 번 보낸다.
+# 첫 질문이 느려지지 않도록 LLM·TTS·STT·모션 경로를 한 번씩 태운다.
+# LLM 은 반드시 앱과 같은 시스템 블록으로 태워야 프리픽스 캐시가 맞는다.
 say_step "예열"
-curl -sf --max-time 60 http://localhost:8080/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"local","max_tokens":1,"messages":[{"role":"user","content":"안녕"}]}' \
-  > /dev/null 2>&1 && echo "   LLM 프리필 예열 완료" || echo "   ${c_dim}예열 건너뜀${c_off}"
-
-# 모션 데이터셋은 앱이 처음 로드할 때 내려받는다. 미리 캐시에 올려 둔다.
-$PY - <<'PYEOF' 2>/dev/null && echo "   모션 카탈로그 준비 완료" || echo "   ${c_dim}모션 카탈로그 예열 건너뜀${c_off}"
-from reachy_mini.motion.recorded_move import RecordedMoves
-RecordedMoves("pollen-robotics/reachy-mini-emotions-library").list_moves()
-PYEOF
+$PY scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다 — 첫 응답이 느릴 수 있다${c_off}"
 
 # ── 4. 최종 점검 후 앱 진입 ─────────────────────────────────────
 say_step "최종 점검"
