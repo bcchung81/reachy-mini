@@ -9,14 +9,36 @@ speaking 플래그는 큐 적재 순간 켜진다 — 마이크 게이팅이 소
 """
 
 import queue
+import re
 import subprocess
 import threading
 import time
 
+DEFAULT_VOICE = "Yuna"  # ko_KR — 로봇의 기본 언어
+
+# 문자체계 → macOS 음성. 사용자가 "영어로 답해줘" 같은 요청을 했을 때
+# 유나가 영문을 읽으면 알아들을 수 없게 뭉개지므로 문장별로 음성을 고른다.
+_SCRIPTS = [
+    ("Yuna", re.compile(r"[가-힣ᄀ-ᇿ]")),  # 한글
+    ("Kyoko", re.compile(r"[぀-ヿ]")),  # 히라가나·가타카나
+    ("Tingting", re.compile(r"[一-鿿]")),  # 한자 (가나가 없을 때만)
+    ("Samantha", re.compile(r"[A-Za-z]")),  # 라틴 문자
+]
+
+
+def pick_voice(text: str) -> str:
+    """문장의 문자체계로 음성을 고른다. 한글이 섞였으면 무조건 한국어 음성이다."""
+    for voice, pattern in _SCRIPTS:
+        if pattern.search(text):
+            return voice
+    return DEFAULT_VOICE
+
 
 class Speaker:
-    def __init__(self, voice: str = "Yuna", cmd: list[str] | None = None):
-        self._cmd = cmd or ["say", "-v", voice]
+    def __init__(self, voice: str | None = None, cmd: list[str] | None = None):
+        # voice 를 고정하면 그 음성만 쓴다. None 이면 문장마다 자동 선택.
+        self._voice = voice
+        self._cmd = cmd
         self._q: queue.Queue[str] = queue.Queue()
         self._speaking = threading.Event()
         self._lock = threading.Lock()
@@ -48,7 +70,8 @@ class Speaker:
         while True:
             text = self._q.get()
             try:
-                subprocess.run(self._cmd + [text], check=False)
+                cmd = self._cmd or ["say", "-v", self._voice or pick_voice(text)]
+                subprocess.run([*cmd, text], check=False)
             except Exception:
                 pass  # 시연 중 TTS 실패로 워커가 죽지 않게
             finally:

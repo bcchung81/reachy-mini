@@ -39,7 +39,8 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
     """한 턴: 모션 즉시 + LLM 스트림 → 절 단위 TTS. 구간 지연을 로그로 남긴다."""
     t0 = time.time()
     category = classify(user)
-    name = player.play_for(category) if player else None
+    # 공연(노래·춤)은 요청 자체가 목적이라 진행 중인 모션을 끊고서라도 보여준다
+    name = player.play_for(category, force=(category == "perform")) if player else None
     print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
 
     spoke = False
