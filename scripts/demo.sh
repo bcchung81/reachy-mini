@@ -134,7 +134,13 @@ else
 fi
 echo
 
-$PY apps/voice_chat/voice_chat/demo.py "${MODE_ARGS[@]}"
+# macOS 기본 bash 는 3.2 다. set -u 아래에서 원소 0개인 배열을 "${A[@]}" 로 펼치면
+# unbound variable 로 죽는다(bash 4.4 부터 고쳐진 동작). 빈 경우를 아예 분기한다.
+if [ ${#MODE_ARGS[@]} -eq 0 ]; then
+  $PY apps/voice_chat/voice_chat/demo.py
+else
+  $PY apps/voice_chat/voice_chat/demo.py "${MODE_ARGS[@]}"
+fi
 
 echo
 echo "${c_dim}서버는 계속 떠 있다. 다시 들어가려면 ./scripts/demo.sh, 완전 종료는 ./scripts/demo.sh --stop${c_off}"
