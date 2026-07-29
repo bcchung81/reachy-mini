@@ -17,7 +17,9 @@ class EnergyVAD:
         self,
         rate: int = 16000,
         threshold: float = 0.010,
-        hangover_s: float = 0.30,
+        # 한국어는 종결어미 앞에서 뜸을 들이는 일이 흔하다("…어디까지 [쉼] 있어?").
+        # 0.30 이면 그 틈에 발화가 끊겨 질문이 잘린 채 전사된다.
+        hangover_s: float = 0.70,
         min_speech_s: float = 0.25,
         pre_roll_s: float = 0.2,
     ):
