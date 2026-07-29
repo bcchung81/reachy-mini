@@ -1,17 +1,30 @@
 # 경영진 시연 런북 (Reachy Mini 음성 일상대화)
 
-## 시작 30분 전 — 기동 순서 (터미널 3개)
+## 기동 — 명령 하나
 
 ```bash
-llama reach-llm                                       # 1) LLM :8080 + 예열
-.venv/bin/python stt_server.py                        # 2) STT :8090 (READY 로그 확인)
-./run-sim.sh --scene minimal                          # 3) 시뮬 데몬 :8000 (뷰어 창 확인)
-./scripts/check_env.sh                                # 4) 4개 전부 OK 확인
-.venv/bin/python apps/voice_chat/voice_chat/demo.py   # 5) 리허설 2~3문장
+./scripts/demo.sh
 ```
 
+이것만 하면 된다. LLM(:8080)·STT(:8090)·시뮬 데몬(:8000)을 **없는 것만** 띄우고,
+예열까지 마친 뒤 마이크 음성 모드로 바로 들어간다. 콜드 스타트는 1~3분
+(모델 예열이 대부분), 이미 떠 있으면 몇 초.
+
+| 명령 | 용도 |
+|---|---|
+| `./scripts/demo.sh` | 음성 모드 (기본, 시연용) |
+| `./scripts/demo.sh --text` | 키보드 모드 — 마이크가 말썽일 때 |
+| `./scripts/demo.sh --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 |
+| `./scripts/demo.sh --check` | 기동 없이 상태만 확인 |
+| `./scripts/demo.sh --stop` | 띄운 서버 전부 종료 |
+
+앱을 Ctrl-C 로 나가도 **서버는 살아 있다.** 다시 `./scripts/demo.sh` 하면 몇 초 만에
+재진입한다 — 시연 중 사고가 나도 빠르게 복구된다.
+
 주의: 시스템 볼륨 70% 이상, 조용한 방(에너지 VAD는 소음에 민감), 전원 연결.
-첫 실행 시 macOS 마이크 권한 팝업이 뜰 수 있다 — 시연 전에 미리 허용해 둔다.
+첫 실행 시 macOS 마이크 권한 팝업이 뜰 수 있다 — **시연 전에 미리 한 번 돌려 허용해 둔다.**
+
+수동으로 하나씩 띄우려면: `llama reach-llm` / `./run-sim.sh --scene minimal`.
 
 ## 시연 시나리오 (3분)
 
@@ -64,9 +77,12 @@ STT가 한국어로 고정돼 있어 오전사된다.
 
 | 증상 | 대응 |
 |---|---|
-| 마이크 인식 불량·주변 소음 | `demo.py --text` — 키보드 입력, 모션·음성 응답은 동일 |
-| 데몬/시뮬 다운 | `demo.py --text --no-robot` — 대화·음성만 (모션 없음) |
-| LLM 다운 | 모션과 폴백 대사는 계속 동작. 재기동 `llama reach-llm` |
+| 마이크 인식 불량·주변 소음 | `./scripts/demo.sh --text` — 키보드 입력, 모션·음성 응답은 동일 |
+| 데몬/시뮬 다운 | `./scripts/demo.sh --no-robot` — 대화·음성만 (모션 없음) |
+| 뭐가 죽었는지 모를 때 | `./scripts/demo.sh --check` 로 4개 상태 확인 |
+| 서버가 꼬였을 때 | `./scripts/demo.sh --stop` 후 `./scripts/demo.sh` 로 전체 재기동 |
+| 시뮬이 안 뜬다 | `tail -30 .demo-logs/sim.log` |
+| LLM 다운 | 모션과 폴백 대사는 계속 동작. `./scripts/demo.sh` 재실행이 알아서 살린다 |
 | STT 오인식 반복 | 마이크에 30cm 이내로 접근, 또는 텍스트 모드 |
 | 로봇이 자기 말에 반응(에코) | 시스템 볼륨을 낮춘다 (게이팅 가드 0.3초 내장) |
 | 응답이 너무 길다 | `prompt.md`의 "1~2문장" 규칙 확인, `llm.py`의 max_tokens 축소 |
