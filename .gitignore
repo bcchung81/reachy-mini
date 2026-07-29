@@ -1,0 +1,7 @@
+.venv/
+.gst-registry.bin
+.disabled-gst-plugins/
+__pycache__/
+*.pyc
+.DS_Store
+*.log

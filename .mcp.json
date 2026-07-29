@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "reachy-mini": {
+      "command": "/Users/bcchung81/.local/bin/reachy-mini-mcp",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "REACHY_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
