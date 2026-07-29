@@ -20,6 +20,7 @@ import cgi
 import io
 import json
 import logging
+import os
 import time
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,12 +50,59 @@ def _decode_wav(raw: bytes) -> np.ndarray:
     return audio
 
 
-def transcribe(audio: np.ndarray, language: str) -> str:
-    """백엔드 경계 — 다른 플랫폼으로 옮길 때 이 함수만 교체한다."""
+# 이보다 짧은 오디오는 자동 감지를 쓰지 않고 기본 언어로 간다.
+# 실측: 0.3초 '예' 가 영어로 판정돼 'Yay!' 가 나왔다. 짧은 발화에는
+# 언어를 판정할 단서가 부족하다. 대화체 문장은 1초를 넘으므로 영향이 없다.
+AUTO_MIN_SECONDS = float(os.environ.get("STT_AUTO_MIN_S", "1.0"))
+
+
+def allowed_languages() -> set[str]:
+    """자동 감지 결과로 인정할 언어. 벗어나면 기본 언어로 재전사한다."""
+    return {s.strip().lower() for s in os.environ.get("STT_ALLOWED_LANGS", "ko,en").split(",") if s.strip()}
+
+
+def should_retry(requested: str | None, detected: str, allowed: set[str]) -> bool:
+    """자동 감지가 허용 밖 언어를 골랐으면 재전사해야 한다.
+
+    짧은 한국어가 특히 위험하다 — 실측에서 '네'가 베트남어로, '고마워'가
+    일본어로 판정되어 각각 'Đề.', 'こまわお。' 라는 쓰레기가 나왔다.
+    언어를 명시한 요청(requested is not None)은 재시도하지 않는다.
+    """
+    return requested is None and detected.lower() not in allowed
+
+
+def resolve_language(raw: str | None) -> str | None:
+    """요청의 language 값을 whisper 인자로 바꾼다.
+
+    None 을 넘기면 whisper 가 자동 감지한다. 예전에는 `or DEFAULT_LANGUAGE` 로
+    떨어뜨려서 자동 감지를 **요청할 방법 자체가 없었다** — 그 탓에 영어를 말하면
+    한국어로 강제 전사되어 반복 환각이 났다.
+    """
+    if raw is None:
+        return DEFAULT_LANGUAGE
+    raw = raw.strip().lower()
+    if raw in ("auto", "detect"):
+        return None
+    return raw or DEFAULT_LANGUAGE
+
+
+def transcribe(audio: np.ndarray, language: str | None) -> tuple[str, str]:
+    """백엔드 경계 — 다른 플랫폼으로 옮길 때 이 함수만 교체한다.
+
+    (전사 텍스트, 실제 사용된 언어) 를 돌려준다. 자동 감지일 때 무엇으로
+    판정됐는지 로그에 남겨야 오인식을 추적할 수 있다.
+    """
     import mlx_whisper
 
-    result = mlx_whisper.transcribe(audio, path_or_hf_repo=MODEL, language=language)
-    return (result.get("text") or "").strip()
+    def run(lang: str | None) -> tuple[str, str]:
+        r = mlx_whisper.transcribe(audio, path_or_hf_repo=MODEL, language=lang)
+        return (r.get("text") or "").strip(), (r.get("language") or lang or "?")
+
+    text, detected = run(language)
+    if should_retry(language, detected, allowed_languages()):
+        log.info("자동 감지가 %r 를 골랐다 — %s 로 재전사", detected, DEFAULT_LANGUAGE)
+        text, detected = run(DEFAULT_LANGUAGE)
+    return text, detected
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -89,17 +137,22 @@ class Handler(BaseHTTPRequestHandler):
             if "file" not in form:
                 self._send(400, {"error": "file 필드가 없다"})
                 return
-            language = form.getvalue("language") or DEFAULT_LANGUAGE
+            language = resolve_language(form.getvalue("language"))
             audio = _decode_wav(form["file"].file.read())
 
+            # 짧은 발화는 자동 감지를 신뢰할 수 없다 — 기본 언어로 간다
+            if language is None and len(audio) / 16000 < AUTO_MIN_SECONDS:
+                language = DEFAULT_LANGUAGE
+
             t0 = time.time()
-            text = transcribe(audio, language)
+            text, detected = transcribe(audio, language)
             elapsed = time.time() - t0
 
             secs = len(audio) / 16000
-            log.info("전사 %.1fs 오디오 → %.2fs (RTF %.2f): %s",
-                     secs, elapsed, elapsed / secs if secs else 0, text[:40])
-            self._send(200, {"text": text})
+            log.info("전사 %.1fs 오디오 → %.2fs (RTF %.2f) [%s%s]: %s",
+                     secs, elapsed, elapsed / secs if secs else 0,
+                     detected, "" if language else " 자동", text[:40])
+            self._send(200, {"text": text, "language": detected})
         except Exception as exc:  # 서버가 죽지 않도록 요청 단위로 막는다
             log.exception("전사 실패")
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -122,7 +175,7 @@ def main() -> None:
     # 첫 요청에서 수 초를 잃지 않도록 모델을 미리 메모리에 올린다.
     log.info("모델 예열: %s", MODEL)
     t0 = time.time()
-    transcribe(np.zeros(16000, dtype=np.float32), DEFAULT_LANGUAGE)
+    transcribe(np.zeros(16000, dtype=np.float32), None)  # 자동 감지 경로까지 예열
     log.info("예열 완료 (%.1fs) — READY http://%s:%d/health", time.time() - t0, args.host, args.port)
 
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()

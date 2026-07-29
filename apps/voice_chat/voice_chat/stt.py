@@ -1,12 +1,17 @@
 """발화 오디오 → 텍스트. 로컬 STT 서버(:8090, OpenAI 호환)를 호출한다."""
 
 import io
+import os
 import wave
 
 import numpy as np
 import requests
 
 DEFAULT_URL = "http://127.0.0.1:8090/v1/audio/transcriptions"
+
+# `auto` 면 whisper 가 언어를 감지한다 — 영어로 말하면 영어로 알아듣는다.
+# 한국어만 쓸 거라면 REACHY_STT_LANG=ko 로 고정하는 편이 짧은 발화에 더 안전하다.
+LANGUAGE = os.environ.get("REACHY_STT_LANG", "auto")
 
 
 def transcribe(audio: np.ndarray, rate: int = 16000, url: str = DEFAULT_URL) -> str:
@@ -21,7 +26,7 @@ def transcribe(audio: np.ndarray, rate: int = 16000, url: str = DEFAULT_URL) -> 
         r = requests.post(
             url,
             files={"file": ("utt.wav", buf.getvalue(), "audio/wav")},
-            data={"language": "ko"},
+            data={"language": LANGUAGE},
             timeout=15,
         )
         r.raise_for_status()
