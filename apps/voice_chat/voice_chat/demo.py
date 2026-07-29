@@ -70,7 +70,9 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         if not spoke:
             speaker.speak(FALLBACK_LINE)
     if rest:
-        speaker.speak(" ".join(rest))
+        # 같은 음성끼리만 묶는다. 전부 합치면 한글 우선 규칙에 걸려
+        # 한국어 음성이 중국어·일본어까지 읽어 발음이 깨진다.
+        speaker.speak_many(rest)
     speaker.wait_idle(timeout=60)
 
 

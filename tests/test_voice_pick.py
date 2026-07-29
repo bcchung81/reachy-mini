@@ -29,3 +29,41 @@ def test_한글이_조금이라도_섞이면_한국어_우선():
 
 def test_숫자나_기호뿐이면_기본값():
     assert pick_voice("123 ... !") == "Yuna"
+
+
+def test_같은_언어_절은_하나로_묶인다():
+    from tts import group_by_voice
+
+    out = group_by_voice(["안녕하세요.", "반가워요.", "오늘 어때요?"])
+    assert out == [("Yuna", "안녕하세요. 반가워요. 오늘 어때요?")]
+
+
+def test_언어가_바뀌면_묶음이_갈린다():
+    # 실제 발생한 결함: 한국어와 중국어를 한 문자열로 합치면 한글 우선 규칙 때문에
+    # 유나가 중국어까지 읽어 발음이 깨졌다.
+    from tts import group_by_voice
+
+    out = group_by_voice(
+        [
+            "하지만 조금 더 이어서 이야기해 드릴게요.",
+            "小兔子很喜欢吃草。",
+            "它总是蹦蹦跳跳的。",
+        ]
+    )
+    assert out == [
+        ("Yuna", "하지만 조금 더 이어서 이야기해 드릴게요."),
+        ("Tingting", "小兔子很喜欢吃草。 它总是蹦蹦跳跳的。"),
+    ]
+
+
+def test_언어가_여러번_바뀌어도_순서가_유지된다():
+    from tts import group_by_voice
+
+    out = group_by_voice(["안녕.", "Hello.", "また会いましょう。", "잘 가."])
+    assert [v for v, _ in out] == ["Yuna", "Samantha", "Kyoko", "Yuna"]
+
+
+def test_빈_절은_묶음에서_빠진다():
+    from tts import group_by_voice
+
+    assert group_by_voice(["안녕.", "   ", ""]) == [("Yuna", "안녕.")]

@@ -39,12 +39,32 @@ def pick_voice(text: str) -> str:
     return DEFAULT_VOICE
 
 
+def group_by_voice(clauses: list[str]) -> list[tuple[str, str]]:
+    """연속한 절 중 **같은 음성끼리만** 묶는다.
+
+    절을 전부 한 문자열로 합치면 안 된다. 한글이 하나라도 섞이면 한글 우선
+    규칙이 걸려 유나가 중국어·일본어까지 읽어 발음이 깨진다(실제 발생).
+    언어가 바뀌는 지점에서만 끊고 나머지는 묶어, 문장 사이 공백은 그대로 없앤다.
+    """
+    out: list[list[str]] = []
+    for c in clauses:
+        c = c.strip()
+        if not c:
+            continue
+        v = pick_voice(c)
+        if out and out[-1][0] == v:
+            out[-1][1] += " " + c
+        else:
+            out.append([v, c])
+    return [(v, t) for v, t in out]
+
+
 class Speaker:
     def __init__(self, voice: str | None = None, cmd: list[str] | None = None):
         # voice 를 고정하면 그 음성만 쓴다. None 이면 문장마다 자동 선택.
         self._voice = voice
         self._cmd = cmd
-        self._q: queue.Queue[str] = queue.Queue()
+        self._q: queue.Queue[tuple[str, str]] = queue.Queue()
         self._speaking = threading.Event()
         self._lock = threading.Lock()
         self._pending = 0
@@ -54,10 +74,23 @@ class Speaker:
         text = text.strip()
         if not text:
             return
+        self._enqueue(self._voice or pick_voice(text), text)
+
+    def speak_many(self, clauses: list[str]) -> None:
+        """여러 절을 한 번에 넘긴다. 같은 음성끼리 묶여 호출 수가 줄어든다."""
+        if self._voice is not None:  # 음성이 고정돼 있으면 묶을 이유가 없다
+            joined = " ".join(c.strip() for c in clauses if c.strip())
+            if joined:
+                self._enqueue(self._voice, joined)
+            return
+        for voice, text in group_by_voice(clauses):
+            self._enqueue(voice, text)
+
+    def _enqueue(self, voice: str, text: str) -> None:
         with self._lock:  # 적재 즉시 — 워커 시작 전에 게이팅부터
             self._pending += 1
             self._speaking.set()
-        self._q.put(text)
+        self._q.put((voice, text))
 
     @property
     def speaking(self) -> bool:
@@ -73,9 +106,9 @@ class Speaker:
 
     def _worker(self) -> None:
         while True:
-            text = self._q.get()
+            voice, text = self._q.get()
             try:
-                cmd = self._cmd or ["say", "-v", self._voice or pick_voice(text)]
+                cmd = self._cmd or ["say", "-v", voice]
                 subprocess.run([*cmd, text], check=False)
             except Exception:
                 pass  # 시연 중 TTS 실패로 워커가 죽지 않게
