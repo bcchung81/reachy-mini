@@ -7,8 +7,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import emotions
 import selfintro
 from animator import Animator
+from idler import Idler
 from llm import LLMClient
 from motion import MotionPlayer, classify
 from tts import Speaker
@@ -37,9 +39,18 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False):
 
         # 말하는 동안 흔들리고 조용할 때 숨 쉬게 한다. 감정 모션이 끝난 뒤
         # 답변이 이어지는 구간에서 로봇이 굳어 보이는 것을 막는다.
-        animator = Animator(mini, lambda: speaker.speaking, lambda: player.busy)
+        animator = Animator(mini, lambda: speaker.speaking, lambda: player.moving)
         animator.start()
         stack.callback(animator.stop)
+
+        # 아무도 말을 걸지 않을 때 혼자 감정 표현을 한다(소리 없이).
+        idler = Idler(
+            player,
+            lambda: speaker.speaking,
+            on_play=lambda n: print(f"  [대기 모션 {n}]"),
+        )
+        idler.start()
+        stack.callback(idler.stop)
     return llm, speaker, player
 
 
@@ -63,10 +74,17 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         speaker.wait_idle(timeout=180)
         return
 
-    category = classify(user)
-    # 공연(노래·춤)은 요청 자체가 목적이라 진행 중인 모션을 끊고서라도 보여준다
-    name = player.play_for(category, force=(category == "perform")) if player else None
-    print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
+    # "슬픈 표정 지어봐" 같은 연기 요청은 그 감정을 그대로 재생한다.
+    # 감정 단어만 있는 "나 슬퍼" 는 여기 걸리지 않고 LLM 이 공감으로 답한다.
+    acted = emotions.find_request(user) if player else None
+    if acted:
+        player.play(acted, force=True)
+        print(f"  [감정 연기 {acted} +{time.time() - t0:.2f}s]")
+    else:
+        category = classify(user)
+        # 공연(노래·춤)은 요청 자체가 목적이라 진행 중인 모션을 끊고서라도 보여준다
+        name = player.play_for(category, force=(category == "perform")) if player else None
+        print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
 
     # 첫 절만 즉시 발화하고 나머지는 묶어서 한 번에 보낸다.
     # say 비용은 대부분 프로세스 고정비라 길이와 거의 무관한데(M0 실측),

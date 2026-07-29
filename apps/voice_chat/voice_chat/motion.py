@@ -43,16 +43,33 @@ def classify(text: str) -> str:
 
 
 class MotionPlayer:
-    """감정 모션을 백그라운드 스레드에서 재생한다. 재생 중 요청은 버린다."""
+    """감정 모션을 백그라운드 스레드에서 재생한다. 재생 중 요청은 버린다.
+
+    모션은 두 종류다.
+    · **응답 모션** — 사용자 발화에 대한 반응. 자체 사운드를 내므로 마이크를 막는다.
+    · **대기 모션** — 아무도 말을 안 걸 때 혼자 움직이는 것. `sound=False` 로 재생해
+      마이크를 막지 않는다. 사용자가 말을 걸면 언제든 밀려난다.
+    """
 
     def __init__(self, mini, moves):
         self._mini = mini
         self._moves = moves  # RecordedMoves
         self._available = set(moves.list_moves())  # 기동 시 1회
         self._busy = threading.Event()
+        self._idle = False  # 지금 도는 것이 대기 모션인가
+
+    @property
+    def available(self) -> set[str]:
+        return self._available
 
     @property
     def busy(self) -> bool:
+        """마이크를 막아야 하는가 — 소리를 내는 응답 모션일 때만 참."""
+        return self._busy.is_set() and not self._idle
+
+    @property
+    def moving(self) -> bool:
+        """어떤 모션이든 돌고 있는가 — 애니메이터가 물러나야 할 때 쓴다."""
         return self._busy.is_set()
 
     def _wait_free(self, timeout: float) -> bool:
@@ -70,25 +87,38 @@ class MotionPlayer:
         force=True 면 진행 중인 모션을 끊고 재생한다. 공연(노래·춤) 요청처럼
         상호작용의 목적 자체인 동작은 겹친다고 버리면 안 된다.
         """
+        candidates = [n for n in CATEGORY_MOVES.get(category, []) if n in self._available]
+        if not candidates:
+            return None
+        return self.play(random.choice(candidates), force=force)
+
+    def play(self, name: str, force: bool = False, idle: bool = False) -> str | None:
+        """모션 이름을 직접 지정해 재생한다.
+
+        대기 모션(idle=True)은 소리 없이 재생하고 마이크를 막지 않으며,
+        응답 모션에 **항상 밀려난다** — 사용자 발화가 혼자 노는 것보다 우선이다.
+        """
+        if name not in self._available:
+            return None
         if self._busy.is_set():
-            if not force:
+            # 대기 모션은 응답 모션에 자리를 내준다
+            if not (force or (self._idle and not idle)):
                 return None
             self._mini.cancel_move()
             if not self._wait_free(timeout=1.0):
                 return None
-        candidates = [n for n in CATEGORY_MOVES.get(category, []) if n in self._available]
-        if not candidates:
-            return None
-        name = random.choice(candidates)
+
         move = self._moves.get(name)
+        self._idle = idle
         self._busy.set()
 
         def _run() -> None:
             try:
-                self._mini.play_move(move, initial_goto_duration=0.3)
+                self._mini.play_move(move, initial_goto_duration=0.3, sound=not idle)
             except Exception:
                 pass  # 시연 중 모션 실패로 앱이 죽지 않게
             finally:
+                self._idle = False
                 self._busy.clear()
 
         threading.Thread(target=_run, daemon=True).start()

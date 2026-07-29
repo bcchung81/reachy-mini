@@ -8,7 +8,9 @@ from motion import CATEGORY_MOVES, MotionPlayer, classify
 
 class FakeMoves:
     def list_moves(self):
-        return sorted({m for ms in CATEGORY_MOVES.values() for m in ms})
+        from emotions import IDLE_MOVES
+
+        return sorted({m for ms in CATEGORY_MOVES.values() for m in ms} | set(IDLE_MOVES))
 
     def get(self, name):
         return name
@@ -19,6 +21,7 @@ class FakeMini:
 
     def __init__(self, duration=5.0):
         self.played = []
+        self.sounds = []
         self.cancelled = 0
         self.duration = duration
         self._cancel = threading.Event()
@@ -27,9 +30,10 @@ class FakeMini:
         self.cancelled += 1
         self._cancel.set()
 
-    def play_move(self, move, initial_goto_duration=0.0):
+    def play_move(self, move, initial_goto_duration=0.0, sound=True):
         self._cancel.clear()
         self.played.append(move)
+        self.sounds.append(sound)
         self._cancel.wait(self.duration)
 
 # 2026-07-29 RecordedMoves('pollen-robotics/reachy-mini-emotions-library')
@@ -83,6 +87,40 @@ def test_재생중_일반요청은_버려진다():
     p = MotionPlayer(FakeMini(duration=5.0), FakeMoves())
     assert p.play_for("ack") is not None
     assert p.play_for("greet") is None  # 겹치는 감정 모션은 버린다
+
+
+def test_대기_모션은_소리를_내지_않고_마이크를_막지_않는다():
+    mini = FakeMini(duration=5.0)
+    p = MotionPlayer(mini, FakeMoves())
+    assert p.play("yes1", idle=True) == "yes1"
+    assert mini.sounds == [False]  # 소리를 내면 마이크를 막아야 한다
+    assert p.moving is True  # 애니메이터는 물러나야 하고
+    assert p.busy is False  # 마이크는 열려 있어야 한다
+
+
+def test_응답_모션은_소리를_내고_마이크를_막는다():
+    mini = FakeMini(duration=5.0)
+    p = MotionPlayer(mini, FakeMoves())
+    p.play_for("ack")
+    assert mini.sounds == [True]
+    assert p.busy is True
+
+
+def test_응답_모션은_대기_모션을_밀어낸다():
+    # 사용자가 말을 걸었는데 혼자 놀던 동작이 막고 있으면 안 된다
+    mini = FakeMini(duration=5.0)
+    p = MotionPlayer(mini, FakeMoves())
+    p.play("waiting", idle=True)
+    assert p.play_for("greet") is not None
+    assert mini.cancelled == 1
+
+
+def test_대기_모션은_응답_모션을_밀어내지_못한다():
+    mini = FakeMini(duration=5.0)
+    p = MotionPlayer(mini, FakeMoves())
+    p.play_for("greet")
+    assert p.play("waiting", idle=True) is None
+    assert mini.cancelled == 0
 
 
 def test_공연은_진행중인_모션을_끊고_재생된다():
