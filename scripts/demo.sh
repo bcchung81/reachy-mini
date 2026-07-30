@@ -238,7 +238,7 @@ if [ "$TTS_BACKEND" = "qwen" ]; then
     fi
   fi
 fi
-export TTS_BACKEND   # 앱(demo.py)이 같은 백엔드를 쓰도록 물려준다
+export TTS_BACKEND   # 앱(main.py/demo.py)이 같은 백엔드를 쓰도록 물려준다
 
 # ── 3. 예열 ─────────────────────────────────────────────────────
 # 첫 질문이 느려지지 않도록 LLM·TTS·STT·모션 경로를 한 번씩 태운다.
@@ -260,11 +260,18 @@ for a in "$@"; do
   case "$a" in --text|--no-robot) MODE_ARGS+=("$a") ;; esac
 done
 
+# 정상 경로는 **실기와 같은 진입점(main.py = ReachyMiniApp)** 으로 띄운다.
+# 시연에서 돌리는 것과 로봇에 배포하는 것을 같게 두려는 것이다 — 예전에는 데모가
+# demo.py 만 태워서, main.py 가 생성 템플릿인 채로 방치된 것을 아무도 몰랐다.
+#
+# --text / --no-robot 은 ReachyMiniApp 이 표현할 수 없는 폴백이라(프레임워크가
+# ReachyMini 를 무조건 잡는다) demo.py 로 내린다. 대화 로직은 둘 다 session.py 다.
 if [ ${#MODE_ARGS[@]} -eq 0 ]; then
   say_step "음성 모드 — 말을 걸어보세요 (Ctrl-C 종료)"
   echo "   ${c_dim}로봇이 대답을 끝낸 뒤에 다음 말을 한다 (한 번에 한 사람씩)${c_off}"
+  echo "   ${c_dim}진입점: main.py (실기와 동일)${c_off}"
 else
-  say_step "실행: demo.py ${MODE_ARGS[*]}"
+  say_step "실행: demo.py ${MODE_ARGS[*]} ${c_dim}(폴백 모드)${c_off}"
 fi
 echo
 
@@ -275,7 +282,7 @@ STARTED_TTS=0
 trap - INT TERM
 
 if [ ${#MODE_ARGS[@]} -eq 0 ]; then
-  $PY apps/voice_chat/voice_chat/demo.py
+  $PY apps/voice_chat/voice_chat/main.py
 else
   $PY apps/voice_chat/voice_chat/demo.py "${MODE_ARGS[@]}"
 fi

@@ -30,9 +30,9 @@ TTS_BACKEND=say ./scripts/demo.sh
 
 | 명령 | 용도 |
 |---|---|
-| `./scripts/demo.sh` | 음성 모드 (기본, 시연용) |
-| `./scripts/demo.sh --text` | 키보드 모드 — 마이크가 말썽일 때 |
-| `./scripts/demo.sh --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 |
+| `./scripts/demo.sh` | 음성 모드 (기본, 시연용) — **실기와 같은 진입점(`main.py`)** |
+| `./scripts/demo.sh --text` | 키보드 모드 — 마이크가 말썽일 때 (`demo.py` 폴백) |
+| `./scripts/demo.sh --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 (`demo.py`) |
 | `./scripts/demo.sh --check` | 기동 없이 상태만 확인 |
 | `./scripts/demo.sh --stop` | 띄운 서버 전부 종료 (PID 파일에 없는 고아까지) |
 | `./scripts/demo.sh --exit-clean` | 앱을 나갈 때 서버까지 함께 내린다 |
@@ -107,6 +107,8 @@ TTS_BACKEND=say ./scripts/demo.sh
   상용 API로 옮긴다. 품질과 비용을 운영 중에 선택할 수 있다.
 - **독립 교체 지점** — 성격(`prompt.md`), 감정 매핑(`motion.py`), 음성(`tts.py`),
   인식(`stt.py`)이 각각 파일 하나다. MCP 도구를 붙이면 사내 시스템 조작으로 확장된다.
+- **시연하는 것과 배포하는 것이 같다** — 기본 경로가 실기 진입점(`main.py`)이라
+  데모가 곧 배포 리허설이다. 대화 로직은 `session.py` 하나이고 진입점만 둘이다.
 - **시뮬 → 실기 이전** — 실기에서는 앱이 로봇(Pi5)에서 돌고 추론(LLM·STT·TTS)만
   PC가 맡아 마이크 오디오가 네트워크를 타지 않는다. 다만 **"주소 3가지만 바꾸면
   된다"는 것은 사실이 아니다** — 실제로 필요한 작업은 `docs/real-robot-deployment.md`

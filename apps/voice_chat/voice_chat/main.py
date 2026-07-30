@@ -22,9 +22,9 @@ from pathlib import Path
 
 from reachy_mini import ReachyMini, ReachyMiniApp
 
-# demo.py 와 같은 평면 import 를 쓴다 — `python main.py` 로 직접 돌려도 깨지지 않는다.
+# 평면 import 를 쓴다 — `python main.py` 로 직접 돌려도 깨지지 않는다.
 sys.path.insert(0, str(Path(__file__).parent))
-from demo import announce_voice, build, respond  # noqa: E402
+from session import announce_voice, build, respond  # noqa: E402
 from voice_loop import voice_loop  # noqa: E402
 
 

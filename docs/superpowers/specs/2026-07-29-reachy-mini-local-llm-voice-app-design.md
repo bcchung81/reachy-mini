@@ -4,6 +4,16 @@
 - 대상: Reachy Mini **시뮬레이터**(MuJoCo) — 실기 없음
 - 검증 환경: macOS 26.5.2 / Apple M5 Pro / 48GB / Python 3.12.13
 
+> ⚠ **이것은 구현 전 설계문서다. 현재 코드와 다르다.** 기록으로 남긴다.
+> 아래 §4 의 모듈 표에 있는 `moves.py`·`capabilities.py`·`mcp_source.py`·
+> `skills.py`·`robot.py` 는 **만들어지지 않았다** — MCP·스킬 레지스트리는 범위에서
+> 빠졌고, 모션은 `motion.py`+`emotions.py`, 로봇 연결은 `session.py` 가 맡는다.
+> 진입점도 `main.py`(실기 `ReachyMiniApp`) / `demo.py`(폴백 CLI) 둘로 갈렸다.
+>
+> 현재 구조와 실측치는 다음을 보라 —
+> `docs/demo-runbook.md`(운영), `docs/latency-m0.md`(지연),
+> `docs/tts-voice-followup.md`(음색), `docs/real-robot-deployment.md`(실기 배포).
+
 ---
 
 ## 1. 목표

@@ -155,8 +155,9 @@ No such file or directory.
 
 당시 "`group_by_voice()` 의 언어별 음성 선택은 재설계가 필요하다"고 적었는데
 **재설계는 필요 없었다.** `speak_many` 가 qwen 경로에서 early-return 해 절마다 따로
-보내므로 `group_by_voice()` 는 호출되지 않는다(`tts.py:232-235`). `pick_voice` 결과는
-`_qwen_synth` 가 무시하고 **say 폴백 음성 선택에만 쓰인다**(`tts.py:273`) — 맞는
+보내므로 `group_by_voice()` 는 호출되지 않는다(`tts.Speaker.speak_many` 의 early-return).
+`pick_voice` 결과는 `_qwen_synth` 가 무시하고 **say 폴백 음성 선택에만 쓰인다**
+(`tts.Speaker._worker`) — 맞는
 동작이다. 근거는 아래 [문자체계 커버리지](#문자체계-커버리지--한-목소리로-전부-읽는다) 절.
 
 *(이 절의 재현 방법·남은 리스크는 아래 최종 절로 옮겼다 — 중복 제거)*
@@ -198,7 +199,7 @@ No such file or directory.
 serena 가 가장 빠른 건 모델이 작아서가 아니라 **발화가 짧아서**다(같은 문장 오디오
 0.96s, ryan·VoiceDesign 은 1.6s). 생성할 코덱 프레임이 적다. RTF 자체는 거의 같다.
 
-### 음색 드리프트가 없다 — `tts.py:40-46` 의 판단이 실측으로 확인됐다
+### 음색 드리프트가 없다 — `tts.QWEN_VOICE` 주석의 판단이 실측으로 확인됐다
 
 `4844946` 에서 시드로 우회했던 문제의 재발 여부를 봤다.
 
@@ -470,7 +471,7 @@ crispasr --server --port 8099 --backend qwen3-tts-1.7b-customvoice \
 ### 미측정
 
 - **음색의 주관적 품질** — `docs/samples/selfintro_english_final.wav` 를 들어야 한다
-- VoiceDesign 의 비결정성 재현 (`tts.py:42-45` 의 실경험)
+- VoiceDesign 의 비결정성 재현 (`tts.QWEN_VOICE` 주석의 실경험)
 - 로봇 데몬 동시 실행 시 GPU 경합 하의 지연
 - 절이 200 코덱 프레임(~600자) 한계에 가까울 때의 거동
 - 대안 러너 3종, `CRISPASR_QWEN3_TTS_O15` 등 최적화 스위치

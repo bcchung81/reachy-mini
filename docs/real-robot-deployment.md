@@ -44,7 +44,7 @@ voice_chat = "voice_chat.main:VoiceChat"
 
 ## 2. [차단] 마이크가 안 열린다 — `osxaudiosrc`
 
-`audio_in.py:88`:
+`audio_in.MicCapture` 의 파이프라인:
 
 ```python
 Gst.parse_launch(
@@ -82,8 +82,8 @@ numpy, requests, sounddevice, pydantic, gi(PyGObject), reachy_mini
 
 폴백 사다리가 macOS 전용이다.
 
-- `tts.py:274` — qwen 실패 시 `["say", "-v", voice]`
-- `tts.py:126` — 스트림을 못 열면 `["afplay", ...]`
+- `tts.Speaker._worker` — qwen 실패 시 `["say", "-v", voice]`
+- `tts._afplay` — 스트림을 못 열면 `["afplay", ...]`
 
 Linux 에는 둘 다 없다. `subprocess.run` 이 `FileNotFoundError` 를 던지고
 `_worker` 의 `except Exception: pass` 가 삼킨다.
@@ -128,7 +128,7 @@ Linux 에는 둘 다 없다. `subprocess.run` 이 `FileNotFoundError` 를 던지
 
 ## 7. [중간] 네트워크가 끊기면 오래 매달린다
 
-`tts.py:38` 의 `QWEN_TIMEOUT` 기본값이 **90초**다. 같은 파일 주석에 이유가 있다 —
+`tts.QWEN_TIMEOUT` 기본값이 **90초**다. 같은 파일 주석에 이유가 있다 —
 "타임아웃으로 연결을 끊으면 서버가 그 소켓에 쓰다 죽는다(실측)".
 
 로컬호스트에서는 타임아웃이 날 일이 거의 없어 안전한 값이었지만, **WiFi 를 타면
@@ -153,8 +153,14 @@ Linux 에는 둘 다 없다. `subprocess.run` 이 `FileNotFoundError` 를 던지
 
 ## 적용한 수정 (2026-07-30)
 
-1. **`main.py`** — `VoiceChat.run(reachy_mini, stop_event)` 이 `demo.py` 의
-   `build`/`respond`/`voice_loop` 를 그대로 쓴다. 대화 로직은 한 곳에만 있다.
+1. **`main.py`** — `VoiceChat.run(reachy_mini, stop_event)` 이 대화 루프를 돌린다.
+   공통 로직은 **`session.py`** 로 뽑았다(`announce_voice`/`build`/`respond`) —
+   진입점이 CLI 스크립트를 import 하던 구조를 없앴다. `demo.py` 는 이제
+   `--text`/`--no-robot` 폴백만 담은 얇은 래퍼다.
+   **`scripts/demo.sh` 의 기본 경로도 `main.py` 로 바꿨다** — 시연에서 돌리는 것과
+   배포하는 것을 같게 두려는 것이다. 예전에는 데모가 `demo.py` 만 태워서
+   `main.py` 가 생성 템플릿인 채로 방치된 것을 아무도 몰랐다.
+   시뮬 데몬에 붙어 음성 모드 진입 → SIGINT 종료(코드 0)까지 확인했다.
    - `build(mini=...)` 로 주입된 인스턴스는 **컨텍스트로 잡지 않는다**(이중 해제 방지).
      직접 만드는 시뮬 경로는 종전대로 `stack.enter_context`.
    - `voice_loop(..., should_stop=stop_event.is_set)` — 프레임마다(30ms) 확인한다.

@@ -11,7 +11,7 @@ CustomVoice 화자 serena 는 문자체계와 무관하게 한 목소리로 읽�
 쓰지 않으므로 `pick_voice` 결과가 합성에 영향을 주지 않는다.
 
 단 `pick_voice` 는 **qwen 서버가 죽었을 때의 say 폴백 음성**을 여전히 고른다
-(`tts.py:273`). 폴백까지 자연스럽게 하려면 한글을 섞어두는 편이 안전하다.
+(`tts.Speaker._worker`). 폴백까지 자연스럽게 하려면 한글을 섞어두는 편이 안전하다.
 """
 
 # 각 원소가 한 문장이다. tts.Speaker.speak_many 가 같은 음성끼리 묶어 발화한다.
