@@ -30,7 +30,9 @@ BACKEND = os.environ.get("TTS_BACKEND", "qwen")
 
 QWEN_URL = os.environ.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
 QWEN_SPEED = float(os.environ.get("TTS_QWEN_SPEED", "1.2"))
-QWEN_TIMEOUT = float(os.environ.get("TTS_QWEN_TIMEOUT", "20"))
+# 넉넉히 잡는다. 타임아웃으로 연결을 끊으면 서버가 그 소켓에 쓰다 죽는다(실측).
+# 절 단위로 보내므로 정상적으로는 1~3초면 끝난다 — 이 값은 안전장치일 뿐이다.
+QWEN_TIMEOUT = float(os.environ.get("TTS_QWEN_TIMEOUT", "90"))
 
 # 채택 음색 — 2026-07-30 청취 비교로 고른 '소년'.
 # 지시문의 속도 제어가 불안정하다(같은 취지의 다른 표현이 오히려 느려진다).
@@ -133,7 +135,20 @@ class Speaker:
         self._enqueue(self._voice or pick_voice(text), text)
 
     def speak_many(self, clauses: list[str]) -> None:
-        """여러 절을 한 번에 넘긴다. 같은 음성끼리 묶여 호출 수가 줄어든다."""
+        """여러 절을 한 번에 넘긴다.
+
+        `say` 는 프로세스 기동이 고정비라 **합치는** 편이 낫다 — 절마다 띄우면
+        문장 사이에 공백과 억양 초기화가 생긴다.
+
+        `qwen` 은 정반대다. 합성 시간이 입력 길이에 선형으로 늘어나(420자 = 32.9초,
+        실측) 합치면 첫 소리까지 한참 걸리고, 클라이언트 타임아웃에 걸려 연결이
+        끊기면 **서버가 죽는다**(그 뒤 모든 발화가 say 로 폴백된다 — 실제로 겪었다).
+        절마다 따로 보내면 다음 절 합성이 앞 절 재생 시간 안에 끝나 끊기지 않는다.
+        """
+        if BACKEND == "qwen" and self._cmd is None:
+            for c in clauses:
+                self.speak(c)
+            return
         if self._voice is not None:  # 음성이 고정돼 있으면 묶을 이유가 없다
             joined = " ".join(c.strip() for c in clauses if c.strip())
             if joined:

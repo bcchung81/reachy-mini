@@ -75,6 +75,44 @@ def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
         importlib.reload(tts_mod)
 
 
+def test_qwen_은_절을_합치지_않는다(monkeypatch):
+    # 합쳐 보내면 합성이 선형으로 길어진다(420자 = 32.9초, 실측). 타임아웃에 걸려
+    # 연결이 끊기면 서버가 죽고, 그 뒤 모든 발화가 say 로 떨어진다 — 실제로 겪었다.
+    # 절마다 따로 보내면 다음 절 합성이 앞 절 재생 시간 안에 끝나 끊기지 않는다.
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        s = tts_mod.Speaker(play=lambda b: None)
+        s.speak_many(["첫째 문장입니다.", "둘째 문장입니다.", "셋째 문장입니다."])
+        s.wait_idle(timeout=5)
+        assert len(SpeechStub.requests) == 3  # 하나로 뭉치지 않았다
+        assert [b["input"] for _, b in SpeechStub.requests] == [
+            "첫째 문장입니다.", "둘째 문장입니다.", "셋째 문장입니다."
+        ]
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_say_는_같은_음성끼리_합친다(monkeypatch, tmp_path):
+    # say 는 프로세스 기동이 고정비라 합치는 편이 낫다(문장 사이 공백 제거)
+    monkeypatch.setenv("TTS_BACKEND", "say")
+    importlib.reload(tts_mod)
+    try:
+        out = tmp_path / "log"
+        fake = ["/bin/sh", "-c", f'echo "$0" >> {out}']
+        s = tts_mod.Speaker(cmd=fake)
+        s.speak_many(["첫째.", "둘째.", "셋째."])
+        s.wait_idle(timeout=5)
+        assert out.read_text().splitlines() == ["첫째. 둘째. 셋째."]
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
 def test_qwen_이_죽으면_say_로_떨어진다(monkeypatch, tmp_path):
     # 시연 중 TTS 서버가 죽어도 로봇은 **반드시 말해야 한다.**
     # 음색이 바뀌는 것보다 소리가 안 나는 쪽이 훨씬 나쁘다.
