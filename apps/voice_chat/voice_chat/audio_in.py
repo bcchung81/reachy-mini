@@ -6,6 +6,7 @@
 """
 
 import collections
+import os
 
 import numpy as np
 
@@ -72,7 +73,15 @@ class EnergyVAD:
 
 
 class MicCapture:
-    """GStreamer osxaudiosrc → 16kHz mono float32 프레임 이터레이터."""
+    """GStreamer 마이크 → 16kHz mono float32 프레임 이터레이터.
+
+    소스는 `autoaudiosrc` 다 — 플랫폼에 맞는 것을 GStreamer 가 고른다.
+    **`osxaudiosrc` 를 박아 두면 실기(Pi5/Linux)에서 엘리먼트가 없어
+    `parse_launch` 부터 실패한다.** macOS 에서도 `autoaudiosrc` 로 캡처되는 것을
+    확인했으므로 시뮬 쪽 손해는 없다.
+    특정 장치를 강제하려면 `REACHY_MIC_SRC` 로 소스 엘리먼트를 통째로 지정한다
+    (예: `alsasrc device=hw:1`).
+    """
 
     def __init__(self, rate: int = 16000, chunk_s: float = 0.03):
         import gi
@@ -84,8 +93,9 @@ class MicCapture:
         self._Gst = Gst
         self._rate = rate
         self._chunk = int(rate * chunk_s)
+        src = os.environ.get("REACHY_MIC_SRC", "autoaudiosrc")
         self._pipe = Gst.parse_launch(
-            "osxaudiosrc ! audioconvert ! audioresample "
+            f"{src} ! audioconvert ! audioresample "
             f"! audio/x-raw,format=F32LE,channels=1,rate={rate} "
             "! appsink name=sink max-buffers=64 drop=true sync=false"
         )

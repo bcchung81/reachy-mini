@@ -4,17 +4,20 @@
 - **실기가 없으므로 정적 분석 + 이 맥에서 재현 가능한 실험으로만 확인했다.**
   하드웨어가 필요한 항목은 아래 "미검증"에 따로 적었다.
 
-## 요약 — 지금 상태로는 배포되지 않는다
+## 요약 — 코드 쪽 차단 요인은 해소됐다 (2026-07-30 수정)
 
-| | 항목 | 근거 |
+| | 항목 | 상태 |
 |---|---|---|
-| **차단** | `main.py` 가 생성 템플릿 그대로 — 음성대화가 없다 | 코드 확인 |
-| **차단** | `osxaudiosrc` 하드코딩 — Linux 에 없는 엘리먼트 | 코드 + 엘리먼트 조회 |
-| **차단** | 의존성 미선언 — `pyproject` 에 `reachy-mini` 만 | import 대조 |
-| **높음** | TTS 실패 시 **조용히 벙어리** (폴백이 macOS 전용) | 재현 실험 |
-| **높음** | STT·LLM 주소를 환경변수로 못 바꾼다 | 코드 확인 |
-| 중간 | `demo.sh`·`check_env.sh` 가 macOS 전용 | 코드 확인 |
-| 중간 | 네트워크 단절 시 90초 행 + 서버 사망 위험 | 코드 + 기존 실측 주석 |
+| ~~차단~~ | `main.py` 가 생성 템플릿 그대로 | **고침** — `VoiceChat.run` 이 대화 루프를 돌린다 |
+| ~~차단~~ | `osxaudiosrc` 하드코딩 | **고침** — `autoaudiosrc`(+ `REACHY_MIC_SRC`) |
+| ~~차단~~ | 의존성 미선언 | **고침** — numpy·requests·sounddevice·PyGObject 선언 |
+| ~~높음~~ | TTS 실패 시 조용히 벙어리 | **고침** — 플랫폼별 폴백 + 경고 로그 |
+| ~~높음~~ | STT·LLM 주소 고정 | **고침** — `REACHY_STT_URL`·`REACHY_LLM_URL` |
+| 중간 | `demo.sh`·`check_env.sh` 가 macOS 전용 | 남음 — PC 쪽 스크립트로 쓰면 문제 없다 |
+| 중간 | 네트워크 단절 시 90초 행 | 남음 — 실기 네트워크에서 재조정 필요 |
+| **미검증** | 스피커 출력 경로, Pi5 성능, 샘플레이트 | 하드웨어 필요 |
+
+**아래 1~5 는 수정 전 진단 기록이다.** 무엇을 왜 고쳤는지 남긴다.
 
 ---
 
@@ -148,10 +151,28 @@ Linux 에는 둘 다 없다. `subprocess.run` 이 `FileNotFoundError` 를 던지
 5. **오디오 샘플레이트.** TTS 출력이 24 kHz 다. 로봇 스피커가 받는 레이트와
    맞는지, 리샘플이 필요한지 미확인.
 
-## 권장 순서
+## 적용한 수정 (2026-07-30)
 
-1. `main.py` 에 `demo.py` 루프 이식 (**이게 없으면 나머지는 의미 없다**)
-2. `osxaudiosrc` → `autoaudiosrc`, `pyproject` 의존성 채우기
-3. STT·LLM 주소 환경변수화
-4. TTS 실패를 로그로 남기고, Linux 폴백 또는 사전 녹음 안내음 결정
-5. 실기에서 스피커 출력 경로 확인 → 필요하면 `StreamPlayer` 교체
+1. **`main.py`** — `VoiceChat.run(reachy_mini, stop_event)` 이 `demo.py` 의
+   `build`/`respond`/`voice_loop` 를 그대로 쓴다. 대화 로직은 한 곳에만 있다.
+   - `build(mini=...)` 로 주입된 인스턴스는 **컨텍스트로 잡지 않는다**(이중 해제 방지).
+     직접 만드는 시뮬 경로는 종전대로 `stack.enter_context`.
+   - `voice_loop(..., should_stop=stop_event.is_set)` — 프레임마다(30ms) 확인한다.
+     단 `respond()` 안에서는 확인하지 않는다(자기소개 대본은 한 번 시작하면 ~50초).
+2. **`audio_in.py`** — `autoaudiosrc`. 장치를 강제하려면 `REACHY_MIC_SRC`
+   (예: `alsasrc device=hw:1`). macOS 에서 캡처 회귀 확인.
+3. **`pyproject.toml`** — 실제 import 를 대조해 `numpy`·`requests`·`sounddevice`·
+   `PyGObject` 추가. (`pydantic` 은 템플릿의 설정 페이지를 걷어내며 함께 빠졌다.)
+4. **`stt.py`·`llm.py`** — `REACHY_STT_URL`·`REACHY_LLM_URL`.
+   TTS 의 `TTS_QWEN_URL` 과 합쳐 **세 주소 모두 코드 수정 없이 PC 를 가리킨다.**
+5. **`tts.py`** — 폴백 사다리를 `shutil.which` 로 고른다:
+   합성은 `say` → `espeak-ng` → `espeak`, 재생은 `afplay` → `paplay` → `aplay`.
+   아무것도 없으면 **경고를 남긴다**(발화마다 반복하지 않고 한 번). `_worker` 의
+   `except Exception: pass` 도 예외를 찍도록 바꿨다 — 이게 무음의 진짜 원인이었다.
+
+### 남은 일
+
+- 실기에서 **스피커 출력 경로** 확인. PortAudio 로 안 잡히면 `StreamPlayer` 를
+  `reachy_mini.media` 기반으로 교체해야 한다(아래 미검증 1번).
+- `QWEN_TIMEOUT` 90초를 실기 네트워크에서 재조정.
+- 절 단위 직렬 재생(합성↔재생이 겹치지 않음) — 오디오 49초가 68초에 재생된다.

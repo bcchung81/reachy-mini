@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 from collections.abc import Iterator
 
 import requests
@@ -12,10 +13,14 @@ import requests
 from clauses import ClauseBuffer
 
 
+# 실기에서는 PC 를 가리켜야 한다 — REACHY_LLM_URL=http://<PC>:8080
+DEFAULT_BASE_URL = os.environ.get("REACHY_LLM_URL", "http://127.0.0.1:8080")
+
+
 class LLMClient:
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:8080",
+        base_url: str = DEFAULT_BASE_URL,
         model: str = "local",
         system_prompt: str = "",
         history_pairs: int = 3,

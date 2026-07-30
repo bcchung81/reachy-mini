@@ -16,12 +16,19 @@ from stt import transcribe
 POST_PLAYBACK_GUARD_S = 0.3  # 재생 종료 후 잔향이 VAD에 잡히지 않게
 
 
-def voice_loop(llm, speaker, player, respond) -> None:
+def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
+    """`should_stop` 은 매 프레임 확인하는 종료 조건이다(실기의 stop_event.is_set).
+
+    프레임이 30ms 마다 오므로 그 간격으로 반응한다. 다만 `respond()` 안에서는
+    확인하지 않는다 — 자기소개 대본은 한 번 시작하면 약 50초간 이어진다.
+    """
     mic, vad = MicCapture(), EnergyVAD()
     print("음성 모드 — 말을 걸어보세요 (Ctrl-C 종료)", flush=True)
     guard_until = 0.0
     try:
         for frame in mic.frames():
+            if should_stop is not None and should_stop():
+                break
             # 게이팅: TTS 재생 중, 모션(자체 사운드) 중이면 버리고 가드를 갱신한다
             if speaker.speaking or (player is not None and player.busy):
                 vad.reset()

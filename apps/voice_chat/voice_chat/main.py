@@ -1,70 +1,48 @@
+"""실기 진입점 — `reachy_mini_apps` 엔트리포인트가 이 클래스를 실행한다.
+
+**대화 로직은 demo.py 와 같은 것을 쓴다.** 여기서 다른 점은 둘뿐이다:
+
+1. `ReachyMini` 인스턴스를 프레임워크가 주입한다 — 우리가 만들지도, 닫지도 않는다.
+   `build(mini=...)` 로 넘기면 컨텍스트로 잡지 않는다(이중 해제 방지).
+2. 종료가 Ctrl-C 가 아니라 `stop_event` 다 — `voice_loop` 에 `should_stop` 으로 넘긴다.
+
+경로 주의: LLM·STT·TTS 는 실기에서 **PC 를 가리켜야 한다.** 셋 다 환경변수로 바꾼다.
+
+    REACHY_LLM_URL=http://<PC>:8080
+    REACHY_STT_URL=http://<PC>:8090/v1/audio/transcriptions
+    TTS_QWEN_URL=http://<PC>:8099/v1/audio/speech
+
+미검증 항목(실기가 있어야 확인된다)은 `docs/real-robot-deployment.md` 참고.
+"""
+
+import contextlib
+import sys
 import threading
+from pathlib import Path
+
 from reachy_mini import ReachyMini, ReachyMiniApp
-from reachy_mini.utils import create_head_pose
-import numpy as np
-import time
-from pydantic import BaseModel
+
+# demo.py 와 같은 평면 import 를 쓴다 — `python main.py` 로 직접 돌려도 깨지지 않는다.
+sys.path.insert(0, str(Path(__file__).parent))
+from demo import announce_voice, build, respond  # noqa: E402
+from voice_loop import voice_loop  # noqa: E402
 
 
 class VoiceChat(ReachyMiniApp):
-    # Optional: URL to a custom configuration page for the app
-    # eg. "http://localhost:8042"
-    custom_app_url: str | None = "http://0.0.0.0:8042"
-    # Optional: specify a media backend ("gstreamer", "gstreamer_no_video", "default", etc.)
-    # On the wireless, use gstreamer_no_video to optimise CPU usage if the app does not use video streaming
+    # 설정 페이지를 쓰지 않는다. 쓰려면 여기에 URL 을 주고 settings_app 라우트를 단다.
+    custom_app_url: str | None = None
+
+    # 영상 스트리밍을 쓰지 않으므로 wireless 에서는 "gstreamer_no_video" 로 CPU 를
+    # 아낄 수 있다. 다만 우리 MicCapture 가 **자체 GStreamer 파이프라인**을 열기
+    # 때문에 SDK 미디어 백엔드와의 상호작용이 실기에서 미검증이다 — 기본값을 둔다.
     request_media_backend: str | None = None
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
-        t0 = time.time()
-
-        antennas_enabled = True
-        sound_play_requested = False
-
-        # You can ignore this part if you don't want to add settings to your app. If you set custom_app_url to None, you have to remove this part as well.
-        # === vvv ===
-        class AntennaState(BaseModel):
-            enabled: bool
-
-        @self.settings_app.post("/antennas")
-        def update_antennas_state(state: AntennaState):
-            nonlocal antennas_enabled
-            antennas_enabled = state.enabled
-            return {"antennas_enabled": antennas_enabled}
-
-        @self.settings_app.post("/play_sound")
-        def request_sound_play():
-            nonlocal sound_play_requested
-            sound_play_requested = True
-
-        # === ^^^ ===
-
-        # Main control loop
-        while not stop_event.is_set():
-            t = time.time() - t0
-
-            yaw_deg = 30.0 * np.sin(2.0 * np.pi * 0.2 * t)
-            head_pose = create_head_pose(yaw=yaw_deg, degrees=True)
-
-            if antennas_enabled:
-                amp_deg = 25.0
-                a = amp_deg * np.sin(2.0 * np.pi * 0.5 * t)
-                antennas_deg = np.array([a, -a])
-            else:
-                antennas_deg = np.array([0.0, 0.0])
-
-            if sound_play_requested:
-                print("Playing sound...")
-                reachy_mini.media.play_sound("wake_up.wav")
-                sound_play_requested = False
-
-            antennas_rad = np.deg2rad(antennas_deg)
-
-            reachy_mini.set_target(
-                head=head_pose,
-                antennas=antennas_rad,
-            )
-
-            time.sleep(0.02)
+        with contextlib.ExitStack() as stack:
+            announce_voice()
+            llm, speaker, player = build(stack, mini=reachy_mini)
+            voice_loop(llm, speaker, player, respond, should_stop=stop_event.is_set)
+        print("종료했습니다.")
 
 
 if __name__ == "__main__":

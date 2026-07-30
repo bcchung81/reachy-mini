@@ -7,7 +7,12 @@ import wave
 import numpy as np
 import requests
 
-DEFAULT_URL = "http://127.0.0.1:8090/v1/audio/transcriptions"
+# 실기에서는 앱이 로봇에서 돌고 추론은 PC 가 맡으므로 **이 주소가 PC 를 가리켜야
+# 한다.** 코드를 고치지 않고 환경변수로 바꾼다.
+#   REACHY_STT_URL=http://<PC>:8090/v1/audio/transcriptions
+DEFAULT_URL = os.environ.get(
+    "REACHY_STT_URL", "http://127.0.0.1:8090/v1/audio/transcriptions"
+)
 
 # `auto` 면 whisper 가 언어를 감지한다 — 영어로 말하면 영어로 알아듣는다.
 # 한국어만 쓸 거라면 REACHY_STT_LANG=ko 로 고정하는 편이 짧은 발화에 더 안전하다.

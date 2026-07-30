@@ -38,22 +38,28 @@ def announce_voice() -> None:
         print(f"목소리: macOS {tts_mod.DEFAULT_VOICE} (TTS_BACKEND=say)")
 
 
-def build(stack: contextlib.ExitStack, no_robot: bool = False):
-    """ReachyMini 는 반드시 컨텍스트로 잡는다.
+def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
+    """대화에 필요한 것들을 만든다. 시뮬(demo.py)과 실기(main.py)가 공유한다.
 
-    __enter__ 는 self 만 돌려주지만 __exit__ 이 media_manager.close() 와
-    client.disconnect() 를 한다. 이걸 빠뜨리면 대화가 끝나도 살아남은
-    스레드가 프로세스를 붙잡아 종료되지 않는다.
+    `mini` 를 주면 **그것을 쓰고 닫지 않는다** — 실기에서는 ReachyMiniApp
+    프레임워크가 인스턴스의 생성·해제를 책임지므로 우리가 컨텍스트로 잡으면
+    이중 해제가 된다.
+
+    직접 만드는 경우(시뮬)에는 반드시 컨텍스트로 잡는다. `__enter__` 는 self 만
+    돌려주지만 `__exit__` 이 media_manager.close() 와 client.disconnect() 를 한다.
+    이걸 빠뜨리면 대화가 끝나도 살아남은 스레드가 프로세스를 붙잡아 종료되지 않는다.
     """
     llm = LLMClient(system_prompt=(HERE / "prompt.md").read_text())
     speaker = Speaker()
     player = None
     if not no_robot:
-        from reachy_mini import ReachyMini
         from reachy_mini.motion.recorded_move import RecordedMoves
 
         moves = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
-        mini = stack.enter_context(ReachyMini())
+        if mini is None:
+            from reachy_mini import ReachyMini
+
+            mini = stack.enter_context(ReachyMini())
         player = MotionPlayer(mini, moves)
 
         # 말하는 동안 흔들리고 조용할 때 숨 쉬게 한다. 감정 모션이 끝난 뒤

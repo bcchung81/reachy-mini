@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -118,12 +119,52 @@ def _qwen_synth(text: str, seed: int | None = None) -> bytes | None:
         return None
 
 
+# 폴백 사다리는 **플랫폼마다 다르다.** macOS 전용 이름을 박아 두면 실기(Linux)에서
+# FileNotFoundError 가 나고, 그걸 _worker 의 except 가 삼켜 **소리도 로그도 없이
+# 벙어리가 된다**(실측으로 재현했다: 재생 0건, 로그 0줄, 0.02초 만에 통과).
+# 여기서 있는 것을 고르고, 아무것도 없으면 반드시 경고를 남긴다.
+_warned: set[str] = set()
+
+
+def _warn_once(key: str, msg: str) -> None:
+    """같은 경고를 발화마다 반복하지 않는다 — 한 번은 반드시 남긴다."""
+    if key in _warned:
+        return
+    _warned.add(key)
+    print(f"  [TTS 경고] {msg}", flush=True)
+
+
+def _external_player() -> list[str] | None:
+    """오디오 장치를 직접 못 열 때 쓸 외부 재생기. macOS/Linux 를 모두 본다."""
+    for cmd in (["afplay"], ["paplay"], ["aplay", "-q"]):
+        if shutil.which(cmd[0]):
+            return cmd
+    return None
+
+
+def fallback_tts_cmd(voice: str) -> list[str] | None:
+    """TTS 서버가 죽었을 때 쓸 로컬 합성기. 없으면 None(= 그 발화는 무음)."""
+    if shutil.which("say"):
+        return ["say", "-v", voice]
+    for cmd in (["espeak-ng", "-v", "ko"], ["espeak", "-v", "ko"]):
+        if shutil.which(cmd[0]):
+            return cmd
+    return None
+
+
 def _afplay(data: bytes) -> None:
     """폴백 재생 — 오디오 장치를 못 열 때만 쓴다. 기동에 0.8초가 든다(실측)."""
+    cmd = _external_player()
+    if cmd is None:
+        _warn_once(
+            "noplayer",
+            "외부 재생기가 없다(afplay/paplay/aplay) — 오디오 장치를 못 열면 무음이다",
+        )
+        return
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
         f.write(data)
         f.flush()
-        subprocess.run(["afplay", f.name], check=False)
+        subprocess.run([*cmd, f.name], check=False)
 
 
 def _open_stream(rate: int):
@@ -269,15 +310,29 @@ class Speaker:
                     if audio is not None:
                         self._play(audio)
                     else:
-                        # 서버가 죽었다 — say 로라도 말한다. 음색이 바뀌는 건
+                        # 서버가 죽었다 — 로컬 합성기로라도 말한다. 음색이 바뀌는 건
                         # 어색하지만 조용히 벙어리가 되는 것보다 낫다.
-                        fb = self._fallback_cmd or ["say", "-v", voice]
-                        subprocess.run([*fb, text], check=False)
+                        fb = self._fallback_cmd or fallback_tts_cmd(voice)
+                        if fb is None:
+                            _warn_once(
+                                "nofallback",
+                                f"TTS 서버 응답 없음({QWEN_URL}) + 로컬 합성기 없음"
+                                " (say/espeak-ng) — 이 발화는 무음이다",
+                            )
+                        else:
+                            subprocess.run([*fb, text], check=False)
                 else:
-                    cmd = self._cmd or ["say", "-v", voice]
-                    subprocess.run([*cmd, text], check=False)
-            except Exception:
-                pass  # 시연 중 TTS 실패로 워커가 죽지 않게
+                    cmd = self._cmd or fallback_tts_cmd(voice)
+                    if cmd is None:
+                        _warn_once(
+                            "nosay", "로컬 합성기가 없다(say/espeak-ng) — 무음이다"
+                        )
+                    else:
+                        subprocess.run([*cmd, text], check=False)
+            except Exception as exc:
+                # 워커는 죽이지 않되 **조용히 넘어가지도 않는다.** 예전에는 여기서
+                # 통째로 삼켜, 실기에서 무슨 일이 났는지 알 방법이 없었다.
+                print(f"  [TTS 실패: {type(exc).__name__}: {exc}]", flush=True)
             finally:
                 with self._lock:
                     self._pending -= 1
