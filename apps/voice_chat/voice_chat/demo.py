@@ -19,6 +19,24 @@ HERE = Path(__file__).parent
 FALLBACK_LINE = "음, 잠깐 생각이 안 나요. 다시 한 번 말해 줄래요?"
 
 
+def announce_voice() -> None:
+    """어느 목소리로 도는지 화면에 밝힌다.
+
+    폴백이 조용히 유나로 떨어지면 눈으로는 구별할 방법이 없다 —
+    실제로 '음색이 안 바뀐다'는 혼란이 있었다.
+    """
+    import tts as tts_mod
+
+    if tts_mod.BACKEND == "qwen":
+        ok = tts_mod._qwen_synth("준비") is not None
+        if ok:
+            print(f"목소리: Qwen3-TTS 소년 ({tts_mod.QWEN_URL}, x{tts_mod.QWEN_SPEED})")
+        else:
+            print(f"목소리: ⚠ Qwen3-TTS 응답 없음 → 유나(say)로 폴백 중 — {tts_mod.QWEN_URL}")
+    else:
+        print(f"목소리: macOS {tts_mod.DEFAULT_VOICE} (TTS_BACKEND=say)")
+
+
 def build(stack: contextlib.ExitStack, no_robot: bool = False):
     """ReachyMini 는 반드시 컨텍스트로 잡는다.
 
@@ -130,6 +148,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-robot", action="store_true", help="데몬 없이 (대화·TTS만)")
     args = ap.parse_args()
     with contextlib.ExitStack() as stack:
+        announce_voice()
         llm, speaker, player = build(stack, no_robot=args.no_robot)
         if args.text:
             text_loop(llm, speaker, player)
