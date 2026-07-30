@@ -24,7 +24,8 @@ import wave
 import numpy as np
 
 # ── 백엔드 선택 ──────────────────────────────────────────────────
-# 기본은 채택 음색(Qwen3-TTS '소년')이다. macOS 유나로 되돌리려면 TTS_BACKEND=say.
+# 기본은 채택 음색(Qwen3-TTS CustomVoice 화자 'serena')이다.
+# macOS 유나로 되돌리려면 TTS_BACKEND=say.
 #
 # qwen 은 별도 서버(:8099)를 요구하므로 그게 죽으면 소리가 안 난다. 그래서
 # **합성 실패 시 say 로 떨어뜨린다.** 대화 도중 음색이 바뀌는 건 어색하지만,
