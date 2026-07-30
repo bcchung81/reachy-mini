@@ -65,14 +65,117 @@ No such file or directory.
 한 번 생성해 파일로 두고, 이후에는 `CustomVoice` 모델에 그 파일을 물린다.
 (GitHub README 의 `design_model` → `ref_audio` 예제)
 
-### 검증해야 할 것 (미확인)
+### 검증 결과 (2026-07-30 실측 — 전부 이 맥에서 직접 확인)
 
-1. **애플 실리콘에서 도는가.** 공식 예제가 전부 `device_map="cuda:0"` +
-   `flash_attention_2` 다. MPS 언급이 없다. GGUF 판(`cstr/qwen3-tts-*-GGUF`)이
-   있어 llama.cpp 경로가 가능해 보이지만 확인 안 했다.
-2. **한국어 음색 품질.** 10개 언어 지원이라고만 돼 있고 한국어 실물을 못 들어봤다.
-3. **실제 지연.** 97ms 는 스트리밍 기준 주장이다. 우리 수용 기준(합성 1.2초 이내)에
-   드는지 직접 재야 한다.
+**결론: 채택 가능하다.** 음색·속도 모두 기준을 통과했다.
+
+#### 1. transformers + MPS 는 실격이다
+
+| 모델 | `'안녕하세요.'` 합성 | RTF |
+|---|---|---|
+| 1.7B VoiceDesign, float32 | 3.02s | 1.11 |
+| 1.7B VoiceDesign, bfloat16 | 3.27s | 1.46 |
+| 0.6B CustomVoice, float32 | 2.64s | 0.90 |
+
+기준(1.2초)의 2배 이상이다. **모델을 줄여도 12% 밖에 안 준다** — 병목이 모델
+크기가 아니라 MPS 자기회귀 생성이다. `qwen-tts` 패키지에 **진짜 스트리밍이 없다**
+(소스 확인: `non_streaming_mode=False` 는 텍스트 입력을 흉내낼 뿐).
+
+#### 2. GGUF + CrispASR 이 답이다 — 5.6배 빠르다
+
+**순수 llama.cpp 로는 안 된다.** 러너는 [CrispASR](https://github.com/CrispStrobe/CrispASR)
+(whisper.cpp 파생 포크)이고, **오디오 코덱 GGUF 가 별도로 반드시 필요하다**
+(`qwen3-tts-tokenizer-12hz.gguf`, f16 342MB). 코덱은 양자화하지 말 것(문서 권고).
+
+상주 서버 HTTP 왕복 실측(0.6B CustomVoice, `voice=ryan`):
+
+| 문장 | 왕복 | 비교: `say` | 비교: MPS |
+|---|---|---|---|
+| `안녕하세요.` | **0.47s** | 0.51s | 2.64s |
+| `좋아요, 보여드릴게요.` | **0.74s** | 0.51s | — |
+| `오늘 기분이 아주 좋아요.` | **1.00s** | 0.51s | — |
+
+서버 기동은 2초, 가중치를 mmap 하므로 모델 크기와 거의 무관하다.
+
+---
+
+## 채택 설정 (2026-07-30 확정)
+
+음색 후보 5종을 청취해 **3번(로봇친구) 계열**을 골랐고, 발화가 느린 문제를
+지시문 수정으로 잡았다.
+
+**모델**: `Qwen3-TTS-12Hz-1.7B-VoiceDesign` q8_0 + 코덱 f16
+**지시문 (V3 — 상수로 고정할 것)**:
+
+```
+작은 데스크톱 로봇의 목소리. 어린아이처럼 높고 맑고 친근하다.
+또박또박 빠르게 말하고 문장을 간결하게 끊는다.
+```
+
+**배속**: `speed = 1.2`
+
+### 이 설정의 실측치
+
+| | 원본 3번 지시문 | **V3 + 1.2배속** |
+|---|---|---|
+| 첫 절 `안녕하세요.` 왕복 | 1.19s | **0.69s** |
+| 그 재생 길이 | 3.52s | **1.67s** |
+| 긴 문장 왕복 | 1.93s | **1.39s** |
+| 그 재생 길이 | 5.76s | **3.47s** |
+
+첫 절 0.69초는 `say`(0.51초)와 실용상 동급이고 기준 1.2초 안이다.
+`speed` 는 합성 후 리샘플러라 **합성 시간은 안 줄고 재생 길이만 준다**(음높이 상승).
+
+### ⚠ 지시문의 속도 제어는 불안정하다
+
+같은 "빠르게" 취지인데 표현에 따라 결과가 뒤집힌다. 실측:
+
+| 변형 | 오디오 길이 |
+|---|---|
+| V1 원본 | 5.76s |
+| V2 "말이 빠르고 경쾌하며 말끝을 늘이지 않는다" | 6.08s ↑ |
+| **V3 "또박또박 빠르게, 간결하게 끊는다"** | **4.40s** ↓ |
+| V4 "군더더기 없이 짧게 말한다" | 7.44s ↑ |
+
+**지시문을 코드 상수로 고정하고, 손댈 때마다 길이를 다시 재라.**
+
+### 재현 방법
+
+```bash
+# 빌드 (cmake 가 이 맥에 없어 pip 로 넣었다. --recursive 없이 clone 하면 configure 실패)
+git clone --recursive https://github.com/CrispStrobe/CrispASR
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
+cmake --build build -j 10 --target crispasr
+
+# 서버 기동
+crispasr --server --port 8099 --backend qwen3-tts-1.7b-voicedesign \
+  -m qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf \
+  --codec-model qwen3-tts-tokenizer-12hz.gguf
+
+# 호출 (OpenAI 호환)
+POST /v1/audio/speech  {"input": "...", "instructions": "<V3>", "speed": 1.2}
+```
+
+CLI 로 쓸 때의 플래그는 `--tts` / `--tts-output` / `--codec-model` / `--instruct` 다.
+
+### 남은 리스크
+
+1. **첫 실행 Metal 커널 JIT 약 8.5초** — 기동 시 예열 요청을 반드시 한 번 보낸다
+   (`scripts/warmup.py` 에 STT·LLM 과 같이 넣으면 된다).
+2. **단일 메인테이너 포크 의존** — CrispASR 은 mainline 이 아니다. 채택하면
+   **커밋을 고정**할 것. 검증 커밋 `9cde22b0b60a0d4b7d524c1186f7ab5dc6d1caa4` (v0.8.24).
+3. **진짜 스트리밍 없음** (`docs/server.md:508` Pending). 우리 앱은 이미 절 단위로
+   끊어 보내므로 그 파이프라이닝으로 우회된다.
+4. 대안 러너 3종(HaujetZhao/Qwen3-TTS-GGUF, Danmoreng/qwen3-tts-cpp,
+   hans00 GGUF)은 **미측정**. CrispASR 로 기준을 통과해 파보지 않았다.
+
+### 교체 작업 범위 (시연 이후)
+
+`tts.py` 의 `Speaker._worker` 안 `subprocess.run(["say", ...])` 를 HTTP 호출로
+바꾸는 것이 전부다. `speak()` / `speak_many()` 인터페이스는 그대로 두면 된다.
+`group_by_voice()` 의 언어별 음성 선택은 **재설계가 필요하다** — Qwen3-TTS 는
+언어를 지시문/입력으로 처리하므로 macOS 음성 이름 매핑이 의미가 없어진다.
+`scripts/demo.sh` 에 TTS 서버 기동·헬스체크·예열을 추가한다.
 
 ### 대안
 
