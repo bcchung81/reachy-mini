@@ -18,7 +18,16 @@ LLAMACTL="$HOME/workspace/llamactl.sh"   # `llama` 는 셸 별칭이라 스크�
 PY=".venv/bin/python"
 LOG_DIR=".demo-logs"
 SIM_PID_FILE="$LOG_DIR/sim.pid"
+TTS_PID_FILE="$LOG_DIR/tts.pid"
 SCENE="minimal"
+
+# 새 음색(Qwen3-TTS)을 쓸 때만 TTS 서버를 띄운다. 기본은 macOS say 라 아무것도 안 한다.
+#   TTS_BACKEND=qwen ./scripts/demo.sh
+TTS_BACKEND="${TTS_BACKEND:-say}"
+TTS_PORT="${TTS_QWEN_PORT:-8099}"
+CRISPASR="${CRISPASR_BIN:-}"
+TTS_MODEL="${TTS_QWEN_MODEL:-}"
+TTS_CODEC="${TTS_QWEN_CODEC:-}"
 
 mkdir -p "$LOG_DIR"
 
@@ -45,11 +54,20 @@ status() {
   up http://localhost:8080/health              && say_ok "LLM  :8080" || say_bad "LLM  :8080"
   up http://localhost:8090/health              && say_ok "STT  :8090" || say_bad "STT  :8090"
   up http://localhost:8000/api/state/full      && say_ok "데몬 :8000" || say_bad "데몬 :8000"
-  say -v '?' | grep -q Yuna                    && say_ok "TTS  Yuna"  || say_bad "TTS  Yuna"
+  if [ "$TTS_BACKEND" = "qwen" ]; then
+    up "http://localhost:$TTS_PORT/health"     && say_ok "TTS  Qwen3(:$TTS_PORT)" || say_bad "TTS  Qwen3(:$TTS_PORT)"
+  else
+    say -v '?' | grep -q Yuna                  && say_ok "TTS  Yuna(say)" || say_bad "TTS  Yuna(say)"
+  fi
 }
 
 stop_all() {
   say_step "종료"
+  if [ -f "$TTS_PID_FILE" ]; then
+    local tp; tp=$(cat "$TTS_PID_FILE")
+    if kill -0 "$tp" 2>/dev/null; then kill "$tp" 2>/dev/null && echo "   TTS 서버 종료 (pid $tp)"; fi
+    rm -f "$TTS_PID_FILE"
+  fi
   if [ -f "$SIM_PID_FILE" ]; then
     local pid; pid=$(cat "$SIM_PID_FILE")
     if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null && echo "   시뮬 데몬 종료 (pid $pid)"; fi
@@ -95,6 +113,24 @@ else
     say_bad "데몬 기동 실패 — tail -30 $LOG_DIR/sim.log 로 확인"
     tail -15 "$LOG_DIR/sim.log"
     exit 1
+  fi
+fi
+
+# ── 2.5 TTS 서버 (새 음색을 쓸 때만) ────────────────────────────
+if [ "$TTS_BACKEND" = "qwen" ]; then
+  say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS"
+  if up "http://localhost:$TTS_PORT/health"; then
+    echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+  elif [ -z "$CRISPASR" ] || [ ! -x "$CRISPASR" ]; then
+    say_bad "CRISPASR_BIN 이 없다. TTS_BACKEND=say 로 돌리거나 경로를 지정한다"
+    echo "   ${c_dim}예: CRISPASR_BIN=/path/to/crispasr TTS_QWEN_MODEL=... TTS_QWEN_CODEC=...${c_off}"
+    exit 1
+  else
+    nohup "$CRISPASR" --server --port "$TTS_PORT" --backend qwen3-tts-1.7b-voicedesign \
+      -m "$TTS_MODEL" --codec-model "$TTS_CODEC" > "$LOG_DIR/tts.log" 2>&1 &
+    echo $! > "$TTS_PID_FILE"
+    wait_for "http://localhost:$TTS_PORT/health" "TTS" 90 || {
+      say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"; exit 1; }
   fi
 fi
 

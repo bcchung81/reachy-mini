@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import sys
 import tempfile
@@ -88,10 +89,26 @@ def _say_to_wav(text: str, path: Path) -> None:
 
 
 def warm_tts() -> str:
-    """첫 say 호출은 음성 리소스를 올리느라 느리다. 소리 없이 한 번 태운다."""
+    """첫 호출은 리소스를 올리느라 느리다. 소리 없이 한 번 태운다.
+
+    Qwen3-TTS 는 **첫 실행에 Metal 커널 JIT 로 8.5초**가 걸린다(실측).
+    예열을 빠뜨리면 시연 첫 발화가 그만큼 늦는다.
+    """
+    if os.environ.get("TTS_BACKEND") == "qwen":
+        import json
+        import urllib.request
+
+        url = os.environ.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
+        payload = json.dumps({"input": "준비되었습니다.", "model": "tts"}).encode()
+        req = urllib.request.Request(url, data=payload,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            r.read()
+        return "(Qwen3-TTS)"
+
     with tempfile.TemporaryDirectory() as d:
         _say_to_wav("준비되었습니다.", Path(d) / "w.wav")
-    return ""
+    return "(say)"
 
 
 def warm_stt() -> str:
