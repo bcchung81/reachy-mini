@@ -14,6 +14,14 @@ def test_만들어진_방식을_묻는_질문을_잡는다():
     assert matches("구조가 어떻게 돼?")
 
 
+def test_대본이라고_말하면_잡는다():
+    # 시연에서 확실히 트리거하려는 열쇠말
+    assert matches("대본")
+    assert matches("대본 읽어줘")
+    assert matches("대본 말해봐")
+    assert matches("자기소개 대본 부탁해")
+
+
 def test_띄어쓰기가_달라도_잡는다():
     # STT 결과는 띄어쓰기가 들쭉날쭉하다
     assert matches("넌어떻게만들어졌어")
