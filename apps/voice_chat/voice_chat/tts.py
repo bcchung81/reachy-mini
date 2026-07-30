@@ -90,11 +90,19 @@ def group_by_voice(clauses: list[str]) -> list[tuple[str, str]]:
     return [(v, t) for v, t in out]
 
 
-def _qwen_synth(text: str) -> bytes | None:
-    """Qwen3-TTS 서버에 합성을 요청한다. 실패하면 None — 앱은 계속 돌아야 한다."""
+def _qwen_synth(text: str, seed: int | None = None) -> bytes | None:
+    """Qwen3-TTS 서버에 합성을 요청한다. 실패하면 None — 앱은 계속 돌아야 한다.
+
+    합성은 결정적이다 — 같은 문장은 항상 같은 소리가 난다(PCM 해시로 확인.
+    응답 바이트가 매번 다른 것은 C2PA 워터마크 메타데이터 때문이지 오디오가
+    아니다). seed 는 운율 재추첨 레버다: 특정 문장의 음높이가 튀면 시드를
+    바꿔 뽑고, 마음에 드는 값을 문장별로 고정한다(selfintro.SEEDS 참조).
+    """
     body = {"input": text, "model": "tts", "voice": QWEN_VOICE, "speed": QWEN_SPEED}
     if QWEN_INSTRUCT:
         body["instructions"] = QWEN_INSTRUCT
+    if seed is not None:
+        body["seed"] = seed
     payload = json.dumps(body).encode()
     req = urllib.request.Request(
         QWEN_URL, data=payload, headers={"Content-Type": "application/json"}
@@ -127,17 +135,17 @@ class Speaker:
         self._cmd = cmd  # 주면 say 경로를 강제한다(테스트용)
         self._fallback_cmd = fallback_cmd  # qwen 실패 시 쓸 명령(테스트용)
         self._play = play or _play_wav  # 테스트에서 재생을 가로채는 지점
-        self._q: queue.Queue[tuple[str, str]] = queue.Queue()
+        self._q: queue.Queue[tuple[str, str, int | None]] = queue.Queue()
         self._speaking = threading.Event()
         self._lock = threading.Lock()
         self._pending = 0
         threading.Thread(target=self._worker, daemon=True).start()
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, seed: int | None = None) -> None:
         text = text.strip()
         if not text:
             return
-        self._enqueue(self._voice or pick_voice(text), text)
+        self._enqueue(self._voice or pick_voice(text), text, seed)
 
     def speak_many(self, clauses: list[str]) -> None:
         """여러 절을 한 번에 넘긴다.
@@ -162,11 +170,11 @@ class Speaker:
         for voice, text in group_by_voice(clauses):
             self._enqueue(voice, text)
 
-    def _enqueue(self, voice: str, text: str) -> None:
+    def _enqueue(self, voice: str, text: str, seed: int | None = None) -> None:
         with self._lock:  # 적재 즉시 — 워커 시작 전에 게이팅부터
             self._pending += 1
             self._speaking.set()
-        self._q.put((voice, text))
+        self._q.put((voice, text, seed))
 
     @property
     def speaking(self) -> bool:
@@ -182,10 +190,10 @@ class Speaker:
 
     def _worker(self) -> None:
         while True:
-            voice, text = self._q.get()
+            voice, text, seed = self._q.get()
             try:
                 if BACKEND == "qwen" and self._cmd is None:
-                    audio = _qwen_synth(text)
+                    audio = _qwen_synth(text, seed)
                     if audio is not None:
                         self._play(audio)
                     else:

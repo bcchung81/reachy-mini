@@ -78,6 +78,51 @@ def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
         importlib.reload(tts_mod)
 
 
+def test_seed_를_주면_요청에_실린다(monkeypatch):
+    # 음높이가 튀는 문장은 시드를 골라 고정한다. 같은 시드 + 같은 문장은
+    # 비트 단위로 동일한 오디오를 낸다(PCM 해시로 실측 확인).
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        s = tts_mod.Speaker(play=lambda b: None)
+        s.speak("시드 있는 문장.", seed=42)
+        s.speak("시드 없는 문장.")
+        s.wait_idle(timeout=5)
+        bodies = [b for _, b in SpeechStub.requests]
+        assert bodies[0]["seed"] == 42
+        assert "seed" not in bodies[1]  # 안 주면 보내지 않는다(서버 기본 = 결정적)
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_대본의_시드_보정이_적용된다(monkeypatch):
+    import selfintro
+
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        s = tts_mod.Speaker(play=lambda b: None)
+        for i, line in enumerate(selfintro.SCRIPT, 1):
+            s.speak(line, seed=selfintro.SEEDS.get(i))
+        s.wait_idle(timeout=10)
+        assert len(SpeechStub.requests) == len(selfintro.SCRIPT)
+        for i, (_, body) in enumerate(SpeechStub.requests, 1):
+            if i in selfintro.SEEDS:
+                assert body["seed"] == selfintro.SEEDS[i], f"{i}번 문장 시드 누락"
+            else:
+                assert "seed" not in body
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
 def test_qwen_은_절을_합치지_않는다(monkeypatch):
     # 합쳐 보내면 합성이 선형으로 길어진다(420자 = 32.9초, 실측). 타임아웃에 걸려
     # 연결이 끊기면 서버가 죽고, 그 뒤 모든 발화가 say 로 떨어진다 — 실제로 겪었다.

@@ -83,9 +83,10 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         if player:
             player.play_for("curious", force=True)
         print(f"  [자기소개 대본 {len(selfintro.SCRIPT)}문장]")
-        for line in selfintro.SCRIPT:
+        for i, line in enumerate(selfintro.SCRIPT, 1):
             print(f"미니> {line}")
-        speaker.speak_many(selfintro.SCRIPT)
+            # 음높이가 튀는 문장은 보정 시드로 고정한다(selfintro.SEEDS)
+            speaker.speak(line, seed=selfintro.SEEDS.get(i))
         llm.history += [
             {"role": "user", "content": user},
             {"role": "assistant", "content": selfintro.HISTORY_SUMMARY},
