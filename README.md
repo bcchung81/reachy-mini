@@ -195,7 +195,7 @@ LLM 서버
 | 바꿀 것 | 건드릴 곳 |
 |---|---|
 | 성격·말투 | `prompt.md` |
-| 음색 | `TTS_QWEN_VOICE` (9화자) 또는 `tts.py` |
+| 음색 | `TTS_QWEN_VOICE` — 모델 내장 9화자 중 선택. 새 음색을 **만드는** 것은 별개 작업이다(`docs/tts-voice-followup.md` 의 향후 계획) |
 | 감정 매핑 | `motion.py` / `emotions.py` |
 | 클라우드 LLM | `REACHY_LLM_URL` — OpenAI 호환이라 주소만 바꾼다 |
 | 자기소개 대본 | `selfintro.py` (표기 규칙은 `apps/voice_chat/selfintro-script.md`) |

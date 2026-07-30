@@ -449,7 +449,8 @@ crispasr --server --port 8099 --backend qwen3-tts-1.7b-customvoice \
 | `models/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf` | 923 MB | 폴백/비교용으로 남김 |
 | ~~`models/…-1.7b-voicedesign-q8_0.gguf`~~ | ~~1.9 GB~~ | **삭제됨** — 폐기한 경로 |
 | `models/tok/` | 619 MB | 코덱 저장소 통째 다운로드 잔여(다른 quant) |
-| `voices/mini-boy.wav`, `bin/`, `models/.cache/` | 156 KB | VoiceDesign 시도 잔여 / 빈 디렉토리 |
+| `voices/mini-boy.wav` | 156 KB | VoiceDesign 시도 잔여. **지우지 말 것** — 커스텀 음색 베이킹의 참조 후보다(3.27초 24 kHz, 대사 "저는 인터넷에 연결되어 있지 않아요." STT 로 확인). 위 [향후 계획](#향후-계획--커스텀-음색을-만들려면) 참고 |
+| `bin/`, `models/.cache/` | 0 B, 16 KB | 빈 디렉토리 |
 
 `demo.sh` 는 1.7B + 코덱 + 바이너리만 참조한다. 0.6B 를 지우면 실사용은 2.3 GB 다.
 `models/tok/` 619 MB 도 지울 수 있다(같은 코덱의 다른 quant 뿐).
@@ -467,6 +468,58 @@ crispasr --server --port 8099 --backend qwen3-tts-1.7b-customvoice \
    `install_name_tool -add_rpath "@loader_path" crispasr` 를 배포 시점에 해두면 깔끔하다
 4. 첫 기동 후 **예열 1회 필수** — Metal JIT 캐시(`~/Library/Caches/ggml-metal/`)는
    기계·모델별이라 새 기계에서는 다시 컴파일된다(실측 8.5~10.0초)
+
+## `serena` 는 내장 화자다 — 우리가 만든 음색이 아니다 (2026-07-30 확인)
+
+질문이 나와 확인했다. 런타임이 직접 밝힌다:
+
+```
+qwen3_tts: selected CustomVoice speaker 'serena' (spk_id=3066)
+crispasr[qwen3-tts]: CustomVoice speaker = 'serena'
+  (available: aiden, dylan, eric, ono_anna, ryan, serena, sohee, uncle_fu, vivian)
+```
+
+`spk_id=3066` 은 **모델 가중치에 학습돼 있는 화자 임베딩**이다. 9명 중 이름으로
+골라 쓴 것뿐이고, `tts.py` 는 `{"voice": "serena"}` 라는 **문자열만** 보낸다 —
+참조 음성을 쓰는 경로가 코드에 없다.
+
+**그래서 "음색을 생성한 로직" 은 존재하지 않는다.** 뽑아낼 것이 없다.
+`selfintro.py` 9번 문장이 한때 "원하는 목소리를 문장으로 설명해서 만든 음색"
+이라고 읽던 것이 사실과 달랐던 이유가 이것이다(정정 완료).
+
+### 향후 계획 — 커스텀 음색을 만들려면
+
+**하지 않기로 했다. 필요해지면 이 절대로 진행한다.**
+
+CrispASR 에 도구가 있다 — `models/bake-qwen3-tts-voice-pack.py`.
+
+```
+참조 WAV(3~15초) + 정확한 대사
+   ↓ ECAPA-TDNN 화자 인코더  → ref_spk_embedding (1024-d float32)
+   ↓ 12 Hz RVQ 코덱 인코더    → ref_code (T×16 int32)
+   ↓
+voice-pack.gguf  →  qwen3-tts **Base** 백엔드 + `--voice my-voice.gguf`
+```
+
+**핵심 제약: CustomVoice 는 화자 이름만 받는다.** 커스텀 음색을 쓰려면
+**Base 모델로 갈아타야 한다** — 지금 안정화해 둔 경로가 아니다.
+
+| 필요한 것 | 현재 | 비용 |
+|---|---|---|
+| Base 모델 | 없음 | 0.6B ~1.3 GB / 1.7B ~2.07 GB 추가 다운로드 |
+| `qwen-tts`, `transformers` | 없음 | **베이킹 시에만** 필요(합성 시엔 불필요) |
+| `torch` | 있음 | |
+| 참조 WAV | `voices/mini-boy.wav` 하나 있음 | 아래 참고 |
+
+참조 음성을 얻는 세 갈래: ① 기존 `mini-boy.wav` 재사용 ② VoiceDesign 으로 새로
+생성(지운 1.9 GB 재다운로드) ③ 실제 사람 녹음(권리 문제 — CrispASR 에
+`--i-have-rights` 게이트가 있다).
+
+> ⚠ **가장 큰 위험은 재측정이다.** 지금 TTS 는 1.7B CustomVoice/serena 기준으로
+> 시드 12개·모델명 표기·지연을 전부 맞춰 놓은 상태다. Base + 보이스팩으로 옮기면
+> **그게 전부 무효가 된다** — 시드가 모델에 종속된다는 것은 이번에 사고로 확인했다
+> (11번 문장 환각). 옮긴다면 보이스팩을 **별도 백엔드로 붙이고 환경변수로 전환**해
+> 기존 경로를 건드리지 않는 편이 안전하다.
 
 ### 미측정
 
