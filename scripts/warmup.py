@@ -103,12 +103,15 @@ def warm_tts() -> str:
         sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
         import tts as tts_mod
 
-        payload = json.dumps({
+        body = {
             "input": "준비되었습니다.",
             "model": "tts",
-            "instructions": tts_mod.QWEN_INSTRUCT,
+            "voice": tts_mod.QWEN_VOICE,
             "speed": tts_mod.QWEN_SPEED,
-        }).encode()
+        }
+        if tts_mod.QWEN_INSTRUCT:
+            body["instructions"] = tts_mod.QWEN_INSTRUCT
+        payload = json.dumps(body).encode()
         req = urllib.request.Request(tts_mod.QWEN_URL, data=payload,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=120) as r:

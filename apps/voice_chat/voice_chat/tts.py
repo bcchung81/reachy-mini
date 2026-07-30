@@ -34,13 +34,17 @@ QWEN_SPEED = float(os.environ.get("TTS_QWEN_SPEED", "1.2"))
 # 절 단위로 보내므로 정상적으로는 1~3초면 끝난다 — 이 값은 안전장치일 뿐이다.
 QWEN_TIMEOUT = float(os.environ.get("TTS_QWEN_TIMEOUT", "90"))
 
-# 채택 음색 — 2026-07-30 청취 비교로 고른 '소년'.
-# 지시문의 속도 제어가 불안정하다(같은 취지의 다른 표현이 오히려 느려진다).
-# **상수로 고정하고, 손대면 반드시 발화 길이를 다시 잴 것.** docs/tts-voice-followup.md 참조.
-QWEN_INSTRUCT = os.environ.get(
-    "TTS_QWEN_INSTRUCT",
-    "활발한 남자아이 목소리. 밝고 에너지가 넘치며 말끝이 통통 튄다.",
-)
+# 채택 음색 — 2026-07-30 청취 비교로 고른 CustomVoice 화자 'serena'.
+#
+# VoiceDesign(지시문으로 음색을 묘사하는 방식)은 쓰지 않는다. 요청마다 음색을
+# 새로 만들어서 **문장마다 목소리가 달라진다**(실제로 겪었다). 시드 고정도
+# 듣지 않고(같은 문장 2회가 서로 다름), CrispASR 은 참조 WAV 복제도 지원하지
+# 않는다("CustomVoice expects a speaker NAME for --voice").
+# 내장 화자는 학습된 임베딩이라 매번 완전히 동일하다.
+QWEN_VOICE = os.environ.get("TTS_QWEN_VOICE", "serena")
+
+# 어조를 더 얹고 싶을 때만 채운다(예: "밝고 씩씩하게"). 비우면 보내지 않는다.
+QWEN_INSTRUCT = os.environ.get("TTS_QWEN_INSTRUCT", "")
 
 # 한국어 음성은 REACHY_VOICE 로 바꾼다. macOS 에는 ko_KR 음성이 9종 있다:
 #   Yuna / Eddy / Flo / Grandma / Grandpa / Reed / Rocko / Sandy / Shelley
@@ -88,9 +92,10 @@ def group_by_voice(clauses: list[str]) -> list[tuple[str, str]]:
 
 def _qwen_synth(text: str) -> bytes | None:
     """Qwen3-TTS 서버에 합성을 요청한다. 실패하면 None — 앱은 계속 돌아야 한다."""
-    payload = json.dumps(
-        {"input": text, "model": "tts", "instructions": QWEN_INSTRUCT, "speed": QWEN_SPEED}
-    ).encode()
+    body = {"input": text, "model": "tts", "voice": QWEN_VOICE, "speed": QWEN_SPEED}
+    if QWEN_INSTRUCT:
+        body["instructions"] = QWEN_INSTRUCT
+    payload = json.dumps(body).encode()
     req = urllib.request.Request(
         QWEN_URL, data=payload, headers={"Content-Type": "application/json"}
     )

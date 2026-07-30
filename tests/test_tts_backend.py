@@ -68,7 +68,10 @@ def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
         assert path == "/v1/audio/speech"
         assert body["input"] == "안녕하세요."
         assert body["speed"] == 1.2
-        assert "남자아이" in body["instructions"]  # 채택한 소년 음색
+        # 화자 이름으로 음색을 고정한다. VoiceDesign 의 instruct 방식은 요청마다
+        # 음색이 달라져서 못 쓴다(문장마다 목소리가 바뀌는 문제를 실제로 겪었다).
+        assert body["voice"] == "serena"
+        assert "instructions" not in body
         assert len(played) == 1  # 받은 오디오를 재생했다
     finally:
         monkeypatch.delenv("TTS_BACKEND")

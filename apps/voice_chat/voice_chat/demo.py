@@ -30,7 +30,8 @@ def announce_voice() -> None:
     if tts_mod.BACKEND == "qwen":
         ok = tts_mod._qwen_synth("준비") is not None
         if ok:
-            print(f"목소리: Qwen3-TTS 소년 ({tts_mod.QWEN_URL}, x{tts_mod.QWEN_SPEED})")
+            print(f"목소리: Qwen3-TTS '{tts_mod.QWEN_VOICE}' "
+                  f"({tts_mod.QWEN_URL}, x{tts_mod.QWEN_SPEED})")
         else:
             print(f"목소리: ⚠ Qwen3-TTS 응답 없음 → 유나(say)로 폴백 중 — {tts_mod.QWEN_URL}")
     else:

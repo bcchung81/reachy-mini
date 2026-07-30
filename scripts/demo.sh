@@ -30,7 +30,8 @@ TTS_BACKEND="${TTS_BACKEND:-qwen}"
 TTS_PORT="${TTS_QWEN_PORT:-8099}"
 TTS_ASSETS="${TTS_ASSETS:-$HOME/.local/share/reachy-mini-tts}"
 CRISPASR="${CRISPASR_BIN:-$TTS_ASSETS/crispasr-bin/crispasr}"
-TTS_MODEL="${TTS_QWEN_MODEL:-$TTS_ASSETS/models/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf}"
+# CustomVoice 를 쓴다 — 화자 이름으로 음색이 고정된다(VoiceDesign 은 매 요청 달라짐).
+TTS_MODEL="${TTS_QWEN_MODEL:-$TTS_ASSETS/models/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf}"
 TTS_CODEC="${TTS_QWEN_CODEC:-$TTS_ASSETS/models/qwen3-tts-tokenizer-12hz.gguf}"
 
 mkdir -p "$LOG_DIR"
@@ -135,7 +136,7 @@ if [ "$TTS_BACKEND" = "qwen" ]; then
     TTS_BACKEND=say
   else
     echo "   기동 중... 로그: $LOG_DIR/tts.log"
-    nohup "$CRISPASR" --server --port "$TTS_PORT" --backend qwen3-tts-1.7b-voicedesign \
+    nohup "$CRISPASR" --server --port "$TTS_PORT" --backend qwen3-tts-customvoice \
       -m "$TTS_MODEL" --codec-model "$TTS_CODEC" > "$LOG_DIR/tts.log" 2>&1 &
     echo $! > "$TTS_PID_FILE"
     if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
