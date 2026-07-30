@@ -34,11 +34,21 @@ def _serve():
     return f"http://127.0.0.1:{srv.server_port}"
 
 
-def test_기본값은_say_다(monkeypatch):
-    # 시연 안전장치 — 환경변수를 안 주면 지금까지와 완전히 같아야 한다
+def test_기본값은_qwen_이다(monkeypatch):
+    # 채택한 소년 음색이 기본이어야 한다 — 환경변수를 따로 주지 않아도.
     monkeypatch.delenv("TTS_BACKEND", raising=False)
     importlib.reload(tts_mod)
-    assert tts_mod.BACKEND == "say"
+    assert tts_mod.BACKEND == "qwen"
+
+
+def test_say_로_되돌릴_수_있다(monkeypatch):
+    monkeypatch.setenv("TTS_BACKEND", "say")
+    importlib.reload(tts_mod)
+    try:
+        assert tts_mod.BACKEND == "say"
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
 
 
 def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
@@ -65,18 +75,21 @@ def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
         importlib.reload(tts_mod)
 
 
-def test_qwen_이_죽으면_say_로_떨어진다(monkeypatch):
-    # 시연 중 TTS 서버가 죽어도 로봇은 계속 말해야 한다
+def test_qwen_이_죽으면_say_로_떨어진다(monkeypatch, tmp_path):
+    # 시연 중 TTS 서버가 죽어도 로봇은 **반드시 말해야 한다.**
+    # 음색이 바뀌는 것보다 소리가 안 나는 쪽이 훨씬 나쁘다.
     monkeypatch.setenv("TTS_BACKEND", "qwen")
     monkeypatch.setenv("TTS_QWEN_URL", "http://127.0.0.1:1/v1/audio/speech")  # 죽은 포트
     importlib.reload(tts_mod)
     try:
-        spoken = []
-        s = tts_mod.Speaker(cmd=["/usr/bin/true"], play=lambda b: spoken.append(b))
+        out = tmp_path / "log"
+        fallback = ["/bin/sh", "-c", f'echo "$0" >> {out}']
+        played = []
+        s = tts_mod.Speaker(fallback_cmd=fallback, play=played.append)
         s.speak("안녕하세요.")
         s.wait_idle(timeout=5)
-        assert spoken == []  # 오디오를 못 받았고
-        assert not s.speaking  # 큐는 정상적으로 비워졌다(멈추지 않는다)
+        assert played == []  # qwen 오디오는 못 받았지만
+        assert out.read_text().strip() == "안녕하세요."  # say 로 발화했다
     finally:
         monkeypatch.delenv("TTS_BACKEND")
         importlib.reload(tts_mod)

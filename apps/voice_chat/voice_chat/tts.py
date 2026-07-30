@@ -21,10 +21,12 @@ import urllib.error
 import urllib.request
 
 # ── 백엔드 선택 ──────────────────────────────────────────────────
-# 기본은 `say` 다. 새 음색을 쓰려면 TTS_BACKEND=qwen.
-# 기본값을 바꾸지 않는 이유: say 는 검증됐고 의존성이 없다. qwen 은 별도 서버가
-# 떠 있어야 하므로, 서버가 없을 때 조용히 벙어리가 되는 일이 없어야 한다.
-BACKEND = os.environ.get("TTS_BACKEND", "say")
+# 기본은 채택 음색(Qwen3-TTS '소년')이다. macOS 유나로 되돌리려면 TTS_BACKEND=say.
+#
+# qwen 은 별도 서버(:8099)를 요구하므로 그게 죽으면 소리가 안 난다. 그래서
+# **합성 실패 시 say 로 떨어뜨린다.** 대화 도중 음색이 바뀌는 건 어색하지만,
+# 로봇이 조용히 벙어리가 되는 것보다는 훨씬 낫다.
+BACKEND = os.environ.get("TTS_BACKEND", "qwen")
 
 QWEN_URL = os.environ.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
 QWEN_SPEED = float(os.environ.get("TTS_QWEN_SPEED", "1.2"))
@@ -111,10 +113,12 @@ class Speaker:
         voice: str | None = None,
         cmd: list[str] | None = None,
         play=None,
+        fallback_cmd: list[str] | None = None,
     ):
         # voice 를 고정하면 그 음성만 쓴다. None 이면 문장마다 자동 선택.
         self._voice = voice
-        self._cmd = cmd
+        self._cmd = cmd  # 주면 say 경로를 강제한다(테스트용)
+        self._fallback_cmd = fallback_cmd  # qwen 실패 시 쓸 명령(테스트용)
         self._play = play or _play_wav  # 테스트에서 재생을 가로채는 지점
         self._q: queue.Queue[tuple[str, str]] = queue.Queue()
         self._speaking = threading.Event()
@@ -164,8 +168,11 @@ class Speaker:
                     audio = _qwen_synth(text)
                     if audio is not None:
                         self._play(audio)
-                    # 서버가 죽었으면 이 발화는 건너뛴다. 여기서 say 로 되돌리면
-                    # 음색이 갑자기 바뀌어 더 어색하다 — 모션과 대화는 계속 돈다.
+                    else:
+                        # 서버가 죽었다 — say 로라도 말한다. 음색이 바뀌는 건
+                        # 어색하지만 조용히 벙어리가 되는 것보다 낫다.
+                        fb = self._fallback_cmd or ["say", "-v", voice]
+                        subprocess.run([*fb, text], check=False)
                 else:
                     cmd = self._cmd or ["say", "-v", voice]
                     subprocess.run([*cmd, text], check=False)

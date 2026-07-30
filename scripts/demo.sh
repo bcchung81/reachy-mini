@@ -21,12 +21,12 @@ SIM_PID_FILE="$LOG_DIR/sim.pid"
 TTS_PID_FILE="$LOG_DIR/tts.pid"
 SCENE="minimal"
 
-# 새 음색(Qwen3-TTS)을 쓸 때만 TTS 서버를 띄운다. 기본은 macOS say 라 아무것도 안 한다.
-#   TTS_BACKEND=qwen ./scripts/demo.sh
+# TTS 는 LLM·STT 와 함께 기본으로 서빙한다(채택 음색 = Qwen3-TTS '소년').
+# macOS 유나로 되돌리려면 TTS_BACKEND=say ./scripts/demo.sh
 #
 # 자산은 아래 표준 위치에서 자동으로 찾는다(3.8GB). 세션 임시 폴더에 두면
 # 사라지므로 반드시 영구 경로여야 한다. 옮겼다면 TTS_ASSETS 로 지정한다.
-TTS_BACKEND="${TTS_BACKEND:-say}"
+TTS_BACKEND="${TTS_BACKEND:-qwen}"
 TTS_PORT="${TTS_QWEN_PORT:-8099}"
 TTS_ASSETS="${TTS_ASSETS:-$HOME/.local/share/reachy-mini-tts}"
 CRISPASR="${CRISPASR_BIN:-$TTS_ASSETS/crispasr-bin/crispasr}"
@@ -126,20 +126,26 @@ if [ "$TTS_BACKEND" = "qwen" ]; then
   if up "http://localhost:$TTS_PORT/health"; then
     echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
   elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
+    # 자산이 없다고 시연을 막지 않는다 — say 로 물러나 계속 진행한다
     say_bad "TTS 자산을 찾을 수 없다: $TTS_ASSETS"
     [ -x "$CRISPASR" ]   || echo "   없음: $CRISPASR"
     [ -f "$TTS_MODEL" ]  || echo "   없음: $TTS_MODEL"
     [ -f "$TTS_CODEC" ]  || echo "   없음: $TTS_CODEC"
-    echo "   ${c_dim}TTS_ASSETS 로 위치를 지정하거나, TTS_BACKEND 를 빼고 say 로 돌린다${c_off}"
-    exit 1
+    echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+    TTS_BACKEND=say
   else
+    echo "   기동 중... 로그: $LOG_DIR/tts.log"
     nohup "$CRISPASR" --server --port "$TTS_PORT" --backend qwen3-tts-1.7b-voicedesign \
       -m "$TTS_MODEL" --codec-model "$TTS_CODEC" > "$LOG_DIR/tts.log" 2>&1 &
     echo $! > "$TTS_PID_FILE"
-    wait_for "http://localhost:$TTS_PORT/health" "TTS" 90 || {
-      say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"; exit 1; }
+    if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
+      say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
+      echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+      TTS_BACKEND=say
+    fi
   fi
 fi
+export TTS_BACKEND   # 앱(demo.py)이 같은 백엔드를 쓰도록 물려준다
 
 # ── 3. 예열 ─────────────────────────────────────────────────────
 # 첫 질문이 느려지지 않도록 LLM·TTS·STT·모션 경로를 한 번씩 태운다.
