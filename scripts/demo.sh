@@ -23,11 +23,15 @@ SCENE="minimal"
 
 # 새 음색(Qwen3-TTS)을 쓸 때만 TTS 서버를 띄운다. 기본은 macOS say 라 아무것도 안 한다.
 #   TTS_BACKEND=qwen ./scripts/demo.sh
+#
+# 자산은 아래 표준 위치에서 자동으로 찾는다(3.8GB). 세션 임시 폴더에 두면
+# 사라지므로 반드시 영구 경로여야 한다. 옮겼다면 TTS_ASSETS 로 지정한다.
 TTS_BACKEND="${TTS_BACKEND:-say}"
 TTS_PORT="${TTS_QWEN_PORT:-8099}"
-CRISPASR="${CRISPASR_BIN:-}"
-TTS_MODEL="${TTS_QWEN_MODEL:-}"
-TTS_CODEC="${TTS_QWEN_CODEC:-}"
+TTS_ASSETS="${TTS_ASSETS:-$HOME/.local/share/reachy-mini-tts}"
+CRISPASR="${CRISPASR_BIN:-$TTS_ASSETS/crispasr-bin/crispasr}"
+TTS_MODEL="${TTS_QWEN_MODEL:-$TTS_ASSETS/models/qwen3-tts-12hz-1.7b-voicedesign-q8_0.gguf}"
+TTS_CODEC="${TTS_QWEN_CODEC:-$TTS_ASSETS/models/qwen3-tts-tokenizer-12hz.gguf}"
 
 mkdir -p "$LOG_DIR"
 
@@ -121,9 +125,12 @@ if [ "$TTS_BACKEND" = "qwen" ]; then
   say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS"
   if up "http://localhost:$TTS_PORT/health"; then
     echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
-  elif [ -z "$CRISPASR" ] || [ ! -x "$CRISPASR" ]; then
-    say_bad "CRISPASR_BIN 이 없다. TTS_BACKEND=say 로 돌리거나 경로를 지정한다"
-    echo "   ${c_dim}예: CRISPASR_BIN=/path/to/crispasr TTS_QWEN_MODEL=... TTS_QWEN_CODEC=...${c_off}"
+  elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
+    say_bad "TTS 자산을 찾을 수 없다: $TTS_ASSETS"
+    [ -x "$CRISPASR" ]   || echo "   없음: $CRISPASR"
+    [ -f "$TTS_MODEL" ]  || echo "   없음: $TTS_MODEL"
+    [ -f "$TTS_CODEC" ]  || echo "   없음: $TTS_CODEC"
+    echo "   ${c_dim}TTS_ASSETS 로 위치를 지정하거나, TTS_BACKEND 를 빼고 say 로 돌린다${c_off}"
     exit 1
   else
     nohup "$CRISPASR" --server --port "$TTS_PORT" --backend qwen3-tts-1.7b-voicedesign \

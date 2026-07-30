@@ -10,6 +10,20 @@
 예열까지 마친 뒤 마이크 음성 모드로 바로 들어간다.
 콜드 스타트 실측 약 15초(LLM 5s · STT 2s · 데몬 5s), 이미 떠 있으면 즉시.
 
+### 음색 선택
+
+`./scripts/demo.sh` 는 **macOS 유나 목소리**로 돈다(기본, 검증됨).
+새 음색(Qwen3-TTS '소년')으로 쓰려면 앞에 환경변수를 붙인다:
+
+```bash
+TTS_BACKEND=qwen ./scripts/demo.sh
+```
+
+자산(3.8GB)은 `~/.local/share/reachy-mini-tts/` 에서 자동으로 찾는다.
+서버 기동 10초 + 예열이 추가되며, 이 값들은 `docs/tts-voice-followup.md` 참조.
+**기본값을 바꾸지 않은 이유**: 서버가 안 뜨면 로봇이 조용히 벙어리가 된다.
+문제가 생기면 `TTS_BACKEND` 만 빼면 즉시 유나로 돌아온다.
+
 | 명령 | 용도 |
 |---|---|
 | `./scripts/demo.sh` | 음성 모드 (기본, 시연용) |

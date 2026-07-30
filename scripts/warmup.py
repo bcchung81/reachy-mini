@@ -98,9 +98,18 @@ def warm_tts() -> str:
         import json
         import urllib.request
 
-        url = os.environ.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
-        payload = json.dumps({"input": "준비되었습니다.", "model": "tts"}).encode()
-        req = urllib.request.Request(url, data=payload,
+        # 앱과 **같은** 지시문·배속으로 태워야 한다. VoiceDesign 은 instructions 가
+        # 없으면 빈 오디오를 내고(500 synthesis_failed), 조건이 다르면 예열도 헛돈다.
+        sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
+        import tts as tts_mod
+
+        payload = json.dumps({
+            "input": "준비되었습니다.",
+            "model": "tts",
+            "instructions": tts_mod.QWEN_INSTRUCT,
+            "speed": tts_mod.QWEN_SPEED,
+        }).encode()
+        req = urllib.request.Request(tts_mod.QWEN_URL, data=payload,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=120) as r:
             r.read()
