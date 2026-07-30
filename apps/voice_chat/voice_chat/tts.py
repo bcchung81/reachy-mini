@@ -19,6 +19,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import wave
+
+import numpy as np
 
 # ── 백엔드 선택 ──────────────────────────────────────────────────
 # 기본은 채택 음색(Qwen3-TTS '소년')이다. macOS 유나로 되돌리려면 TTS_BACKEND=say.
@@ -114,12 +117,78 @@ def _qwen_synth(text: str, seed: int | None = None) -> bytes | None:
         return None
 
 
-def _play_wav(data: bytes) -> None:
-    """받은 wav 를 재생한다. afplay 는 파일만 받으므로 임시 파일을 거친다."""
+def _afplay(data: bytes) -> None:
+    """폴백 재생 — 오디오 장치를 못 열 때만 쓴다. 기동에 0.8초가 든다(실측)."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
         f.write(data)
         f.flush()
         subprocess.run(["afplay", f.name], check=False)
+
+
+def _open_stream(rate: int):
+    """PortAudio 출력 스트림을 연다. 실패하면 None — 호출부가 afplay 로 떨어진다."""
+    try:
+        import sounddevice as sd
+
+        stream = sd.OutputStream(samplerate=rate, channels=1, dtype="int16")
+        stream.start()
+        return stream
+    except Exception:
+        return None
+
+
+class StreamPlayer:
+    """상주 오디오 스트림. 열어둔 채 재사용한다.
+
+    `afplay` 는 발화마다 프로세스를 띄워 CoreAudio 를 새로 초기화하는데,
+    실측하면 **파일 길이와 무관하게 0.8초 고정비**다(0.1초 파일도 0.83초).
+    전체 응답 지연 2.60초 중 31% 가 여기였다. 스트림을 한 번만 열면 0.00초다.
+
+    스레드 안전하지 않다 — Speaker 의 워커 스레드 하나만 쓴다는 전제다.
+    """
+
+    def __init__(self) -> None:
+        self._stream = None
+        self._rate: int | None = None
+        self.opened = 0  # 스트림을 실제로 연 횟수(테스트가 재사용을 확인한다)
+
+    def play(self, data: bytes) -> None:
+        try:
+            with wave.open(io.BytesIO(data)) as w:
+                rate = w.getframerate()
+                pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+        except Exception:
+            _afplay(data)  # wav 로 못 읽으면 외부 재생기에 맡긴다
+            return
+
+        if self._stream is None or self._rate != rate:
+            self._close_stream()
+            self._stream = _open_stream(rate)
+            self._rate = rate
+            if self._stream is not None:
+                self.opened += 1
+
+        if self._stream is None:
+            _afplay(data)
+            return
+        try:
+            self._stream.write(pcm)
+        except Exception:
+            # 장치가 중간에 사라진 경우 — 다음 발화는 다시 열어보고, 이번 건 폴백
+            self._close_stream()
+            _afplay(data)
+
+    def _close_stream(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
+    def close(self) -> None:
+        self._close_stream()
 
 
 class Speaker:
@@ -134,7 +203,9 @@ class Speaker:
         self._voice = voice
         self._cmd = cmd  # 주면 say 경로를 강제한다(테스트용)
         self._fallback_cmd = fallback_cmd  # qwen 실패 시 쓸 명령(테스트용)
-        self._play = play or _play_wav  # 테스트에서 재생을 가로채는 지점
+        # 상주 스트림 하나를 워커 스레드가 독점한다(afplay 0.8초 고정비 제거)
+        self._player = StreamPlayer()
+        self._play = play or self._player.play  # 테스트에서 재생을 가로채는 지점
         self._q: queue.Queue[tuple[str, str, int | None]] = queue.Queue()
         self._speaking = threading.Event()
         self._lock = threading.Lock()

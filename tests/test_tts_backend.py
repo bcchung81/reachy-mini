@@ -78,6 +78,53 @@ def test_qwen_백엔드는_지시문과_배속을_실어_보낸다(monkeypatch):
         importlib.reload(tts_mod)
 
 
+def _wav_bytes(seconds: float = 0.05, rate: int = 24000) -> bytes:
+    import io
+    import wave
+
+    import numpy as np
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(np.zeros(int(rate * seconds), dtype=np.int16).tobytes())
+    return buf.getvalue()
+
+
+def test_상주_스트림으로_재생한다():
+    # afplay 는 발화마다 CoreAudio 를 새로 올려 0.8초를 고정으로 먹는다(실측).
+    # 스트림을 한 번만 열고 재사용해야 그 비용이 사라진다.
+    player = tts_mod.StreamPlayer()
+    try:
+        player.play(_wav_bytes())
+        player.play(_wav_bytes())
+        assert player.opened == 1, "스트림을 매번 새로 열면 안 된다"
+    finally:
+        player.close()
+
+
+def test_스트림이_안_열리면_afplay_로_떨어진다(monkeypatch):
+    # 오디오 장치가 없거나 sounddevice 가 없을 때도 소리는 나야 한다
+    monkeypatch.setattr(tts_mod, "_open_stream", lambda rate: None)
+    calls = []
+    monkeypatch.setattr(tts_mod, "_afplay", lambda data: calls.append(len(data)))
+    player = tts_mod.StreamPlayer()
+    player.play(_wav_bytes())
+    assert len(calls) == 1
+
+
+def test_샘플레이트가_바뀌면_스트림을_다시_연다():
+    player = tts_mod.StreamPlayer()
+    try:
+        player.play(_wav_bytes(rate=24000))
+        player.play(_wav_bytes(rate=16000))
+        assert player.opened == 2
+    finally:
+        player.close()
+
+
 def test_seed_를_주면_요청에_실린다(monkeypatch):
     # 음높이가 튀는 문장은 시드를 골라 고정한다. 같은 시드 + 같은 문장은
     # 비트 단위로 동일한 오디오를 낸다(PCM 해시로 실측 확인).
