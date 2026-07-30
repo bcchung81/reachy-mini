@@ -95,27 +95,14 @@ def warm_tts() -> str:
     예열을 빠뜨리면 시연 첫 발화가 그만큼 늦는다.
     """
     if os.environ.get("TTS_BACKEND") == "qwen":
-        import json
-        import urllib.request
-
-        # 앱과 **같은** 지시문·배속으로 태워야 한다. VoiceDesign 은 instructions 가
-        # 없으면 빈 오디오를 내고(500 synthesis_failed), 조건이 다르면 예열도 헛돈다.
+        # 앱이 쓰는 함수를 그대로 호출한다 — 요청 본문을 여기서 다시 짜면
+        # tts.py 와 갈라지고, **Metal JIT 캐시는 모델·화자별이라** 조건이 어긋나면
+        # 예열이 헛돈다(0.6B 로 예열한 캐시가 1.7B 에는 안 먹혔다, 실측 10.0초).
         sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
         import tts as tts_mod
 
-        body = {
-            "input": "준비되었습니다.",
-            "model": "tts",
-            "voice": tts_mod.QWEN_VOICE,
-            "speed": tts_mod.QWEN_SPEED,
-        }
-        if tts_mod.QWEN_INSTRUCT:
-            body["instructions"] = tts_mod.QWEN_INSTRUCT
-        payload = json.dumps(body).encode()
-        req = urllib.request.Request(tts_mod.QWEN_URL, data=payload,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            r.read()
+        if tts_mod._qwen_synth("준비되었습니다.") is None:
+            raise RuntimeError(f"TTS 서버 응답 없음: {tts_mod.QWEN_URL}")
         return "(Qwen3-TTS)"
 
     with tempfile.TemporaryDirectory() as d:
