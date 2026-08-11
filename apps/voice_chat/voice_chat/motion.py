@@ -6,7 +6,6 @@ classify()는 교체 지점이다 — 시그니처(str -> str)만 지키면
 
 import random
 import threading
-import time
 
 # 이름은 전부 pollen-robotics/reachy-mini-emotions-library 실측(85개)에서 확인함
 CATEGORY_MOVES: dict[str, list[str]] = {
@@ -43,43 +42,48 @@ def classify(text: str) -> str:
 
 
 class MotionPlayer:
-    """감정 모션을 백그라운드 스레드에서 재생한다. 재생 중 요청은 버린다.
+    """어떤 모션을 걸지 정하고 사운드를 붙인다. **로봇에 직접 쓰지 않는다.**
+
+    쓰는 것은 `driver.RobotDriver` 하나다 — 공식 규칙이 set_target 을 한 곳에서만
+    부르라고 하고, 예전 구조(여기서 `play_move` 를 도는 스레드 + 애니메이터 스레드)가
+    그걸 어기고 있었다. 여기 남은 것은 **정책**뿐이다: 무엇을 고를지, 무엇이 무엇을
+    밀어내는지, 소리를 낼지.
 
     모션은 두 종류다.
-    · **응답 모션** — 사용자 발화에 대한 반응. 자체 사운드를 내므로 마이크를 막는다.
-    · **대기 모션** — 아무도 말을 안 걸 때 혼자 움직이는 것. `sound=False` 로 재생해
-      마이크를 막지 않는다. 사용자가 말을 걸면 언제든 밀려난다.
+    · **응답 모션** — 사용자 발화에 대한 반응. 자체 발성을 낸다.
+    · **대기 모션** — 아무도 말을 안 걸 때 혼자 움직이는 것. 소리를 내지 않고,
+      사용자가 말을 걸면 언제든 밀려난다.
+
+    사운드는 `speaker` 를 통해 나간다(`sound.py` 참조). SDK 의 `play_move(sound=True)`
+    경로는 `no_media` 에서 무음이 되고, 우리 경로를 타야 에코 프로브와 마이크 게이팅이
+    발성을 인지한다.
     """
 
-    def __init__(self, mini, moves):
-        self._mini = mini
+    def __init__(self, driver, moves, speaker=None):
+        self._driver = driver
         self._moves = moves  # RecordedMoves
         self._available = set(moves.list_moves())  # 기동 시 1회
-        self._busy = threading.Event()
-        self._idle = False  # 지금 도는 것이 대기 모션인가
+        self._speaker = speaker
+        # **우선순위 검사와 걸기를 한 덩어리로 묶는다.** 호출자가 둘이다 —
+        # 응답 모션(voice_loop 스레드)과 대기 모션(Idler 스레드). 잠금 없이
+        # `playing` 검사 후 `driver.play()` 를 부르면, 검사와 걸기 사이에 응답
+        # 모션이 시작됐을 때 대기 모션이 그걸 덮는다 — 드라이버를 단일화하며
+        # 없앤 바로 그 TOCTOU 를 정책 계층에서 재현하는 꼴이다.
+        self._gate = threading.Lock()
 
     @property
     def available(self) -> set[str]:
         return self._available
 
     @property
-    def busy(self) -> bool:
-        """마이크를 막아야 하는가 — 소리를 내는 응답 모션일 때만 참."""
-        return self._busy.is_set() and not self._idle
-
-    @property
     def moving(self) -> bool:
-        """어떤 모션이든 돌고 있는가 — 애니메이터가 물러나야 할 때 쓴다."""
-        return self._busy.is_set()
+        """어떤 모션이든 돌고 있는가 — 대기 모션이 끼어들지 판단할 때 쓴다."""
+        return self._driver.playing
 
-    def _wait_free(self, timeout: float) -> bool:
-        """취소 요청 후 재생 스레드가 정리될 때까지 기다린다."""
-        deadline = time.time() + timeout
-        while self._busy.is_set():
-            if time.time() >= deadline:
-                return False
-            time.sleep(0.01)
-        return True
+    def cancel(self) -> None:
+        """모션을 즉시 끊는다. 끼어들기에서 부른다 — 춤은 18초짜리라 안 끊으면
+        '그만'이라고 해도 계속 춘다."""
+        self._driver.cancel()
 
     def play_for(self, category: str, force: bool = False) -> str | None:
         """범주에 맞는 모션을 골라 비차단 재생. 시작했으면 모션 이름을 돌려준다.
@@ -90,36 +94,50 @@ class MotionPlayer:
         candidates = [n for n in CATEGORY_MOVES.get(category, []) if n in self._available]
         if not candidates:
             return None
-        return self.play(random.choice(candidates), force=force)
+        return self.play(
+            random.choice(candidates), force=force, full_sound=(category == "perform")
+        )
 
-    def play(self, name: str, force: bool = False, idle: bool = False) -> str | None:
+    def play(
+        self,
+        name: str,
+        force: bool = False,
+        idle: bool = False,
+        full_sound: bool = False,
+    ) -> str | None:
         """모션 이름을 직접 지정해 재생한다.
 
-        대기 모션(idle=True)은 소리 없이 재생하고 마이크를 막지 않으며,
-        응답 모션에 **항상 밀려난다** — 사용자 발화가 혼자 노는 것보다 우선이다.
+        대기 모션(idle=True)은 소리 없이 재생하고, 응답 모션에 **항상 밀려난다** —
+        사용자 발화가 혼자 노는 것보다 우선이다.
+
+        `full_sound=True` 면 발성을 통째로 재생한다(공연). 그 외에는 앞부분만 쓴다 —
+        리액션 발성이 2~12초라 통째로 붙이면 답변이 그만큼 늦는다(`sound.REACTION_S`).
         """
         if name not in self._available:
             return None
-        if self._busy.is_set():
-            # 대기 모션은 응답 모션에 자리를 내준다
-            if not (force or (self._idle and not idle)):
-                return None
-            self._mini.cancel_move()
-            if not self._wait_free(timeout=1.0):
-                return None
-
-        move = self._moves.get(name)
-        self._idle = idle
-        self._busy.set()
-
-        def _run() -> None:
-            try:
-                self._mini.play_move(move, initial_goto_duration=0.3, sound=not idle)
-            except Exception:
-                pass  # 시연 중 모션 실패로 앱이 죽지 않게
-            finally:
-                self._idle = False
-                self._busy.clear()
-
-        threading.Thread(target=_run, daemon=True).start()
+        with self._gate:  # 검사와 걸기 사이에 다른 스레드가 끼어들지 못하게
+            if self._driver.playing:
+                # 대기 모션은 응답 모션에 자리를 내준다
+                if not (force or (self._driver.playing_idle and not idle)):
+                    return None
+            move = self._moves.get(name)
+            self._driver.play(move, idle=idle)
+        if not idle:
+            self._queue_sound(move, full=full_sound)
         return name
+
+    def _queue_sound(self, move, full: bool) -> None:
+        """모션 발성을 발화 큐에 넣는다. 실패해도 모션은 돌아야 한다."""
+        if self._speaker is None:
+            return
+        try:
+            import sound as sound_mod
+            import tts as tts_mod
+
+            pcm = sound_mod.load(
+                getattr(move, "sound_path", None), tts_mod.QWEN_PCM_RATE, full=full
+            )
+            if pcm:
+                self._speaker.play_sound(pcm, tts_mod.QWEN_PCM_RATE)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [모션 사운드 실패: {type(exc).__name__}: {exc}]", flush=True)

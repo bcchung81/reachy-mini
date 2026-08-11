@@ -1,6 +1,6 @@
 """시뮬·개발용 진입점 — 실기가 못 하는 폴백 모드를 제공한다.
 
-**정상 경로는 `main.py` 다**(실기와 같은 `ReachyMiniApp`). `scripts/demo.sh` 도
+**정상 경로는 `main.py` 다**(실기와 같은 `ReachyMiniApp`). `./reachy.sh demo` 도
 기본으로 그것을 띄운다 — 시연에서 돌리는 것과 배포하는 것을 같게 두기 위해서다.
 
 이 파일은 `main.py` 로는 안 되는 두 가지를 위해 남아 있다:
@@ -30,6 +30,10 @@ def text_loop(llm, speaker, player) -> None:
         if user in ("", "q", "quit"):
             break
         respond(user, llm, speaker, player)
+        # 키보드 모드에는 끼어들기가 없다 — 다 말한 뒤에 다음 프롬프트를 낸다.
+        # (respond 는 큐에 넣고 바로 반환한다. 음성 모드에서 대본 도중에도
+        #  끼어들 수 있게 하려고 그렇게 바꿨다.)
+        speaker.wait_idle(timeout=180)
 
 
 if __name__ == "__main__":

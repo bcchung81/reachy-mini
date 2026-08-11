@@ -22,8 +22,14 @@ import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT = ROOT / "apps/voice_chat/voice_chat/prompt.md"
-LLM_URL = "http://127.0.0.1:8080/v1/chat/completions"
-STT_URL = "http://127.0.0.1:8090/v1/audio/transcriptions"
+# **앱과 같은 환경변수를 읽는다**(CLAUDE.md: "주소는 전부 환경변수다").
+# 하드코딩하면 실기 분리 배치(앱은 로봇, 추론은 PC)에서 예열이 엉뚱한 호스트를
+# 조용히 데우고 — _step 이 실패를 '건너뜀'으로 삼킨다 — 첫 발화가 콜드스타트를
+# 그대로 문다(리뷰 확인). 예열의 존재 이유가 사라지는 실패다.
+LLM_URL = os.environ.get("REACHY_LLM_URL", "http://127.0.0.1:8080").rstrip("/") + "/v1/chat/completions"
+STT_URL = os.environ.get("REACHY_STT_URL", "http://127.0.0.1:8090/v1/audio/transcriptions")
+# 언어도 앱과 같게 — 다르면 다른 디코드 경로를 데운다.
+STT_LANG = os.environ.get("REACHY_STT_LANG", "auto")
 VOICE = "Yuna"
 
 
@@ -126,7 +132,7 @@ def warm_stt() -> str:
         r = requests.post(
             STT_URL,
             files={"file": ("w.wav", buf.getvalue(), "audio/wav")},
-            data={"language": "ko"},
+            data={"language": STT_LANG},
             timeout=120,
         )
         r.raise_for_status()

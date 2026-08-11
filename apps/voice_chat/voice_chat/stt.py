@@ -18,6 +18,11 @@ DEFAULT_URL = os.environ.get(
 # 한국어만 쓸 거라면 REACHY_STT_LANG=ko 로 고정하는 편이 짧은 발화에 더 안전하다.
 LANGUAGE = os.environ.get("REACHY_STT_LANG", "auto")
 
+# keep-alive 연결 재사용 — 실기 분리 배치에서 발화마다 TCP 핸드셰이크를 아낀다.
+# (본 루프와 호출어 확인 스레드가 동시에 부를 수 있다 — Session 의 커넥션 풀은
+#  스레드 안전하다.)
+_session = requests.Session()
+
 
 def transcribe(audio: np.ndarray, rate: int = 16000, url: str = DEFAULT_URL) -> str:
     """float32 mono 배열을 16-bit WAV로 조립해 전사한다. 실패·침묵이면 빈 문자열."""
@@ -28,7 +33,7 @@ def transcribe(audio: np.ndarray, rate: int = 16000, url: str = DEFAULT_URL) -> 
         w.setframerate(rate)
         w.writeframes((np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
     try:
-        r = requests.post(
+        r = _session.post(
             url,
             files={"file": ("utt.wav", buf.getvalue(), "audio/wav")},
             data={"language": LANGUAGE},

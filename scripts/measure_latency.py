@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -13,7 +14,8 @@ from pathlib import Path
 
 import requests
 
-BASE = "http://127.0.0.1:8080"
+# 앱과 같은 환경변수를 읽는다 — 하드코딩하면 분리 배치에서 엉뚱한 호스트를 잰다.
+BASE = os.environ.get("REACHY_LLM_URL", "http://127.0.0.1:8080").rstrip("/")
 SYSTEM = "너는 데스크톱 로봇 '미니'야. 한국어로 짧고 다정하게 1~2문장으로 답해. 사용자 말을 그대로 반복하지 마."
 QUESTIONS = ["안녕, 오늘 기분 어때?", "점심에 뭐 먹을지 고민이야.", "재밌는 얘기 하나 해줘."]
 BOUNDARY = ".!?…。"

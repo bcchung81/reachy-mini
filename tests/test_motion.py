@@ -1,9 +1,19 @@
 import pathlib
 import sys
-import threading
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
-from motion import CATEGORY_MOVES, MotionPlayer, classify
+import sound as sound_mod  # noqa: E402
+from motion import CATEGORY_MOVES, MotionPlayer, classify  # noqa: E402
+
+
+class FakeMove:
+    def __init__(self, name, duration=3.0):
+        self.name = name
+        self.duration = duration
+        self.sound_path = f"/fake/{name}.ogg"
+
+    def __repr__(self):
+        return f"<{self.name}>"
 
 
 class FakeMoves:
@@ -13,28 +23,59 @@ class FakeMoves:
         return sorted({m for ms in CATEGORY_MOVES.values() for m in ms} | set(IDLE_MOVES))
 
     def get(self, name):
-        return name
+        return FakeMove(name)
 
 
-class FakeMini:
-    """play_move 가 duration 동안 블록하고, cancel_move 로 즉시 끊긴다."""
+class FakeDriver:
+    """`RobotDriver` 계약만 흉내낸다 — 로봇에 쓰는 것은 드라이버뿐이다."""
 
-    def __init__(self, duration=5.0):
-        self.played = []
-        self.sounds = []
+    def __init__(self):
+        self.played: list[tuple[str, bool]] = []
         self.cancelled = 0
-        self.duration = duration
-        self._cancel = threading.Event()
+        self._playing = False
+        self._idle = False
 
-    def cancel_move(self):
+    def play(self, move, idle=False, blend_s=0.3):
+        self.played.append((move.name, idle))
+        self._playing, self._idle = True, idle
+
+    def cancel(self):
         self.cancelled += 1
-        self._cancel.set()
+        self._playing, self._idle = False, False
 
-    def play_move(self, move, initial_goto_duration=0.0, sound=True):
-        self._cancel.clear()
-        self.played.append(move)
-        self.sounds.append(sound)
-        self._cancel.wait(self.duration)
+    @property
+    def playing(self):
+        return self._playing
+
+    @property
+    def playing_idle(self):
+        return self._idle
+
+    def finish(self):
+        """모션이 자연스럽게 끝난 상황."""
+        self._playing, self._idle = False, False
+
+
+class FakeSpeaker:
+    def __init__(self):
+        self.sounds: list[tuple[int, int]] = []  # (바이트수, 레이트)
+
+    def play_sound(self, pcm, rate):
+        self.sounds.append((len(pcm), rate))
+
+
+def _player(monkeypatch, *, sound_bytes=4800):
+    """디코딩을 타지 않는 MotionPlayer. `full` 인자를 그대로 기록한다."""
+    calls: list[bool] = []
+
+    def fake_load(path, rate, full=False):
+        calls.append(full)
+        return b"\x00" * (sound_bytes * (10 if full else 1))
+
+    monkeypatch.setattr(sound_mod, "load", fake_load)
+    driver, speaker = FakeDriver(), FakeSpeaker()
+    return MotionPlayer(driver, FakeMoves(), speaker), driver, speaker, calls
+
 
 # 2026-07-29 RecordedMoves('pollen-robotics/reachy-mini-emotions-library')
 # .list_moves() 실측 85개 중 이 앱이 쓰는 부분집합
@@ -83,52 +124,158 @@ def test_공연이_기쁨보다_우선():
     assert classify("재밌는 노래 불러줘") == "perform"
 
 
-def test_재생중_일반요청은_버려진다():
-    p = MotionPlayer(FakeMini(duration=5.0), FakeMoves())
+# ── 로봇에 직접 쓰지 않는다 ─────────────────────────────────────
+
+
+def test_로봇에_직접_쓰지_않고_드라이버에만_건다(monkeypatch):
+    """공식 규칙: set_target 을 부르는 곳은 하나여야 한다.
+
+    MotionPlayer 가 예전처럼 자기 스레드에서 play_move 를 돌면 쓰는 주체가 둘이 된다.
+    여기서는 드라이버에 거는 것 말고 아무것도 하지 않는지 본다.
+    """
+    p, driver, _, _ = _player(monkeypatch)
+    p.play_for("ack")
+    assert len(driver.played) == 1
+    assert not hasattr(p, "_mini"), "MotionPlayer 가 로봇 핸들을 들고 있으면 안 된다"
+
+
+# ── 우선순위 ───────────────────────────────────────────────────
+
+
+def test_재생중_일반요청은_버려진다(monkeypatch):
+    p, driver, _, _ = _player(monkeypatch)
     assert p.play_for("ack") is not None
     assert p.play_for("greet") is None  # 겹치는 감정 모션은 버린다
+    assert len(driver.played) == 1
 
 
-def test_대기_모션은_소리를_내지_않고_마이크를_막지_않는다():
-    mini = FakeMini(duration=5.0)
-    p = MotionPlayer(mini, FakeMoves())
-    assert p.play("yes1", idle=True) == "yes1"
-    assert mini.sounds == [False]  # 소리를 내면 마이크를 막아야 한다
-    assert p.moving is True  # 애니메이터는 물러나야 하고
-    assert p.busy is False  # 마이크는 열려 있어야 한다
-
-
-def test_응답_모션은_소리를_내고_마이크를_막는다():
-    mini = FakeMini(duration=5.0)
-    p = MotionPlayer(mini, FakeMoves())
-    p.play_for("ack")
-    assert mini.sounds == [True]
-    assert p.busy is True
-
-
-def test_응답_모션은_대기_모션을_밀어낸다():
+def test_응답_모션은_대기_모션을_밀어낸다(monkeypatch):
     # 사용자가 말을 걸었는데 혼자 놀던 동작이 막고 있으면 안 된다
-    mini = FakeMini(duration=5.0)
-    p = MotionPlayer(mini, FakeMoves())
+    p, driver, _, _ = _player(monkeypatch)
     p.play("waiting", idle=True)
     assert p.play_for("greet") is not None
-    assert mini.cancelled == 1
+    assert len(driver.played) == 2
+    assert driver.played[1][1] is False  # 두 번째는 응답 모션
 
 
-def test_대기_모션은_응답_모션을_밀어내지_못한다():
-    mini = FakeMini(duration=5.0)
-    p = MotionPlayer(mini, FakeMoves())
+def test_대기_모션은_응답_모션을_밀어내지_못한다(monkeypatch):
+    p, driver, _, _ = _player(monkeypatch)
     p.play_for("greet")
     assert p.play("waiting", idle=True) is None
-    assert mini.cancelled == 0
+    assert len(driver.played) == 1
 
 
-def test_공연은_진행중인_모션을_끊고_재생된다():
+def test_공연은_진행중인_모션을_끊고_재생된다(monkeypatch):
     # 노래 요청은 상호작용의 목적 자체다 — busy 라고 버리면 시연이 깨진다
-    mini = FakeMini(duration=5.0)
-    p = MotionPlayer(mini, FakeMoves())
+    p, driver, _, _ = _player(monkeypatch)
     p.play_for("ack")
     name = p.play_for("perform", force=True)
     assert name in ("dance2", "dance3")
-    assert mini.cancelled == 1
-    assert len(mini.played) == 2
+    assert len(driver.played) == 2
+
+
+def test_모션이_끝나면_다음_요청을_받는다(monkeypatch):
+    p, driver, _, _ = _player(monkeypatch)
+    p.play_for("ack")
+    driver.finish()
+    assert p.play_for("greet") is not None
+
+
+# ── 사운드 ─────────────────────────────────────────────────────
+
+
+def test_응답_모션은_발성을_발화_큐에_넣는다(monkeypatch):
+    """SDK 의 play_move(sound=True) 는 no_media 에서 무음이다 — 우리가 낸다."""
+    p, _, speaker, _ = _player(monkeypatch)
+    p.play_for("ack")
+    assert len(speaker.sounds) == 1
+
+
+def test_대기_모션은_소리를_내지_않는다(monkeypatch):
+    """소리를 내면 마이크 게이팅이 걸려 말을 못 걸게 된다."""
+    p, _, speaker, _ = _player(monkeypatch)
+    assert p.play("yes1", idle=True) == "yes1"
+    assert speaker.sounds == []
+    assert p.moving is True  # 다만 몸은 움직인다
+
+
+def test_리액션은_앞부분만_공연은_전체(monkeypatch):
+    """리액션 발성은 2~12초라 통째로 붙이면 답변이 그만큼 늦는다."""
+    p, driver, speaker, calls = _player(monkeypatch)
+    p.play_for("ack")
+    assert calls == [False], "리액션은 잘라 써야 한다"
+    driver.finish()
+    p.play_for("perform")
+    assert calls == [False, True], "공연은 통째로 재생해야 한다"
+    assert speaker.sounds[1][0] > speaker.sounds[0][0]
+
+
+def test_발성_디코딩이_실패해도_모션은_돈다(monkeypatch):
+    def boom(path, rate, full=False):
+        raise RuntimeError("디코딩 실패")
+
+    monkeypatch.setattr(sound_mod, "load", boom)
+    driver, speaker = FakeDriver(), FakeSpeaker()
+    p = MotionPlayer(driver, FakeMoves(), speaker)
+    assert p.play_for("ack") is not None
+    assert len(driver.played) == 1
+    assert speaker.sounds == []
+
+
+def test_스피커가_없어도_동작한다(monkeypatch):
+    """--no-robot 이나 테스트 경로에서 speaker 없이 쓸 수 있어야 한다."""
+    monkeypatch.setattr(sound_mod, "load", lambda *a, **k: b"\x00" * 100)
+    p = MotionPlayer(FakeDriver(), FakeMoves())
+    assert p.play_for("ack") is not None
+
+
+def test_우선순위_검사와_걸기가_원자적이다(monkeypatch):
+    """호출자가 둘이다(voice_loop·Idler). 검사 후 걸기 전에 다른 스레드가
+    끼어들면 대기 모션이 방금 시작된 응답 모션을 덮는다 — TOCTOU.
+
+    Idler 의 `playing` 검사 순간에 응답 모션 요청이 도착한 상황을 재현한다:
+    검사 지점에서 응답 스레드를 출발시키고 잠깐 기다린다. 잠금이 있으면 응답은
+    잠금 밖에서 대기하다가 **대기 모션이 걸린 뒤에** 들어와 그걸 밀어낸다(정상
+    우선순위). 잠금이 없으면 응답이 먼저 걸리고 대기 모션이 그걸 덮는다.
+    """
+    import threading as th
+
+    monkeypatch.setattr(sound_mod, "load", lambda *a, **k: b"\x00" * 100)
+    driver = FakeDriver()
+    p = MotionPlayer(driver, FakeMoves(), FakeSpeaker())
+
+    cls = type(driver)
+    real = cls.playing
+    rival = {"thread": None}
+
+    def hijack(self):
+        cls.playing = real  # 한 번만 — 응답 스레드의 재검사는 진짜를 본다
+        t = th.Thread(target=lambda: p.play_for("greet"), daemon=True)
+        rival["thread"] = t
+        t.start()
+        t.join(timeout=0.05)  # 잠금이 제대로면 여기서 타임아웃된다(밖에서 대기 중)
+        return real.fget(self)
+
+    cls.playing = property(hijack)
+    try:
+        p.play("waiting", idle=True)
+    finally:
+        cls.playing = real
+    assert rival["thread"] is not None
+    rival["thread"].join(timeout=1.0)  # 응답 스레드가 끝난 뒤에 판정한다
+    assert not rival["thread"].is_alive(), "응답 스레드가 교착됐다"
+    # 응답 모션(greet)이 최종 승자여야 한다 — 마지막에 걸린 것이 idle 이면 덮인 것
+    assert driver.played, "아무것도 안 걸렸다"
+    assert driver.played[-1][1] is False, "대기 모션이 응답 모션을 덮었다(TOCTOU)"
+
+
+# ── 끼어들기 ───────────────────────────────────────────────────
+
+
+def test_취소하면_드라이버가_모션을_끊는다(monkeypatch):
+    """춤은 18초짜리다 — 소리만 끊고 몸이 계속 추면 안 끊긴 것이다."""
+    p, driver, _, _ = _player(monkeypatch)
+    p.play_for("perform")
+    p.cancel()
+    assert driver.cancelled == 1
+    assert p.moving is False

@@ -3,7 +3,7 @@
 ## 기동 — 명령 하나
 
 ```bash
-./scripts/demo.sh
+./reachy.sh demo
 ```
 
 이것만 하면 된다. LLM(:8080)·STT(:8090)·시뮬 데몬(:8000)을 **없는 것만** 띄우고,
@@ -12,7 +12,7 @@
 
 ### 음색
 
-`./scripts/demo.sh` 는 **채택 음색(Qwen3-TTS CustomVoice 화자 `serena`)** 으로 돈다.
+`./reachy.sh demo` 는 **채택 음색(Qwen3-TTS CustomVoice 화자 `serena`)** 으로 돈다.
 LLM·STT·데몬과 함께 TTS 서버(:8099)도 같이 띄운다. 자산은
 `~/.local/share/reachy-mini-tts/` 에서 자동으로 찾는다(옮겼다면 `TTS_ASSETS`).
 모델은 **1.7B CustomVoice**(1.9GB) + 코덱(342MB) + 바이너리(45MB) 를 쓴다.
@@ -21,7 +21,7 @@ LLM·STT·데몬과 함께 TTS 서버(:8099)도 같이 띄운다. 자산은
 macOS 유나로 되돌리려면:
 
 ```bash
-TTS_BACKEND=say ./scripts/demo.sh
+TTS_BACKEND=say ./reachy.sh demo
 ```
 
 **소리가 안 날 걱정은 없다.** 자산이 없거나 서버가 안 뜨면 경고만 남기고
@@ -30,20 +30,20 @@ TTS_BACKEND=say ./scripts/demo.sh
 
 | 명령 | 용도 |
 |---|---|
-| `./scripts/demo.sh` | 음성 모드 (기본, 시연용) — **실기와 같은 진입점(`main.py`)** |
-| `./scripts/demo.sh --text` | 키보드 모드 — 마이크가 말썽일 때 (`demo.py` 폴백) |
-| `./scripts/demo.sh --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 (`demo.py`) |
-| `./scripts/demo.sh --check` | 기동 없이 상태만 확인 |
-| `./scripts/demo.sh --stop` | 띄운 서버 전부 종료 (PID 파일에 없는 고아까지) |
-| `./scripts/demo.sh --exit-clean` | 앱을 나갈 때 서버까지 함께 내린다 |
+| `./reachy.sh demo` | 음성 모드 (기본, 시연용) — **실기와 같은 진입점(`main.py`)** |
+| `./reachy.sh demo --text` | 키보드 모드 — 마이크가 말썽일 때 (`demo.py` 폴백) |
+| `./reachy.sh demo --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 (`demo.py`) |
+| `./reachy.sh check` | 기동 없이 상태만 확인 |
+| `./reachy.sh stop` | 띄운 서버 전부 종료 (PID 파일에 없는 고아까지) |
+| `./reachy.sh demo --exit-clean` | 앱을 나갈 때 서버까지 함께 내린다 |
 
-앱을 Ctrl-C 로 나가도 **서버는 살아 있다.** 다시 `./scripts/demo.sh` 하면 몇 초 만에
+앱을 Ctrl-C 로 나가도 **서버는 살아 있다.** 다시 `./reachy.sh demo` 하면 몇 초 만에
 재진입한다 — 시연 중 사고가 나도 빠르게 복구된다. 한 번에 다 내리려면 `--exit-clean`.
 
 주의: 시스템 볼륨 70% 이상, 조용한 방(에너지 VAD는 소음에 민감), 전원 연결.
 첫 실행 시 macOS 마이크 권한 팝업이 뜰 수 있다 — **시연 전에 미리 한 번 돌려 허용해 둔다.**
 
-수동으로 하나씩 띄우려면: `llama reach-llm` / `./run-sim.sh --scene minimal`.
+수동으로 하나씩 띄우려면: `llama reach-llm` / `./reachy.sh sim --scene minimal`.
 
 ## 시연 시나리오 (3분)
 
@@ -109,7 +109,7 @@ TTS_BACKEND=say ./scripts/demo.sh
   인식(`stt.py`)이 각각 파일 하나다. MCP 도구를 붙이면 사내 시스템 조작으로 확장된다.
 - **시연하는 것과 배포하는 것이 같다** — 기본 경로가 실기 진입점(`main.py`)이라
   데모가 곧 배포 리허설이다. 대화 로직은 `session.py` 하나이고 진입점만 둘이다.
-- **시뮬 → 실기 이전** — 실기에서는 앱이 로봇(Pi5)에서 돌고 추론(LLM·STT·TTS)만
+- **시뮬 → 실기 이전** — 실기에서는 앱이 로봇(CM4)에서 돌고 추론(LLM·STT·TTS)만
   PC가 맡아 마이크 오디오가 네트워크를 타지 않는다. 다만 **"주소 3가지만 바꾸면
   된다"는 것은 사실이 아니다** — 실제로 필요한 작업은 `docs/real-robot-deployment.md`
   에 정리했다(가장 큰 것은 `main.py` 가 아직 생성 템플릿이라는 점이다).
@@ -120,12 +120,12 @@ TTS_BACKEND=say ./scripts/demo.sh
 
 | 증상 | 대응 |
 |---|---|
-| 마이크 인식 불량·주변 소음 | `./scripts/demo.sh --text` — 키보드 입력, 모션·음성 응답은 동일 |
-| 데몬/시뮬 다운 | `./scripts/demo.sh --no-robot` — 대화·음성만 (모션 없음) |
-| 뭐가 죽었는지 모를 때 | `./scripts/demo.sh --check` 로 4개 상태 확인 |
-| 서버가 꼬였을 때 | `./scripts/demo.sh --stop` 후 `./scripts/demo.sh` 로 전체 재기동 |
+| 마이크 인식 불량·주변 소음 | `./reachy.sh demo --text` — 키보드 입력, 모션·음성 응답은 동일 |
+| 데몬/시뮬 다운 | `./reachy.sh demo --no-robot` — 대화·음성만 (모션 없음) |
+| 뭐가 죽었는지 모를 때 | `./reachy.sh check` 로 4개 상태 확인 |
+| 서버가 꼬였을 때 | `./reachy.sh stop` 후 `./reachy.sh demo` 로 전체 재기동 |
 | 시뮬이 안 뜬다 | `tail -30 .demo-logs/sim.log` |
-| LLM 다운 | 모션과 폴백 대사는 계속 동작. `./scripts/demo.sh` 재실행이 알아서 살린다 |
+| LLM 다운 | 모션과 폴백 대사는 계속 동작. `./reachy.sh demo` 재실행이 알아서 살린다 |
 | STT 오인식 반복 | 마이크에 30cm 이내로 접근, 또는 텍스트 모드 |
 | 로봇이 자기 말에 반응(에코) | 시스템 볼륨을 낮춘다 (게이팅 가드 0.3초 내장) |
 | 응답이 너무 길다 | `prompt.md`의 "1~2문장" 규칙 확인, `llm.py`의 max_tokens 축소 |

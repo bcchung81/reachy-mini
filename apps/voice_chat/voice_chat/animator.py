@@ -1,24 +1,24 @@
-"""말할 때 자연스럽게 흔들리고, 조용할 때는 숨 쉬는 동작.
+"""말할 때 자연스럽게 흔들리고, 조용할 때는 숨 쉬는 동작 — **순수 상태기계**.
 
-답변이 길어지면 감정 모션(3초 남짓)이 끝난 뒤 로봇이 굳어 보인다.
-그 구간을 채운다.
+답변이 길어지면 감정 모션(3초 남짓)이 끝난 뒤 로봇이 굳어 보인다. 그 구간을 채운다.
 
 오실레이터 상수는 SDK의 `reachy_mini.motion.speech_tapper` 에서 그대로 가져왔다.
 공식 대화 앱이 음성에 맞춰 흔드는 데 쓰는 값이라 움직임의 성격이 같다.
-다만 우리 TTS(`say`)는 데몬 오디오 파이프라인을 거치지 않아 PCM 을 먹일 수 없으므로,
+다만 우리 TTS 는 데몬 오디오 파이프라인을 거치지 않아 PCM 을 먹일 수 없으므로,
 음량 포락선 대신 **발화 중인지 여부**로 포락선을 만든다. 로봇에 입이 없어
 음절 단위 동기화는 어차피 지각되지 않는다.
 
-녹화 모션이 재생 중일 때는 절대 개입하지 않는다 — play_move 가 같은
-set_target 을 100Hz 로 쓰고 있어서 겹치면 서로 밀어낸다.
+**여기에는 스레드가 없다.** 예전에는 이 파일의 `Animator` 가 자기 스레드에서
+`set_target()` 을 썼는데, 그러면 모션을 도는 스레드와 함께 **쓰는 주체가 둘**이 돼
+공식 규칙(`skills/control-loops.md` — "Never call set_target() from multiple
+threads")을 어긴다. 지금은 `driver.RobotDriver` 가 유일한 쓰기 주체이고, 이 파일은
+그 루프가 매 틱 부르는 계산만 갖는다. 로봇 없이 테스트할 수 있는 것도 그 덕이다.
 """
 
 from __future__ import annotations
 
 import math
 import random
-import threading
-import time
 from dataclasses import dataclass
 
 # ── speech_tapper 에서 가져온 상수 ────────────────────────────────
@@ -91,57 +91,3 @@ class SwayState:
             antenna_deg=(ANTENNA_A_DEG * e * self._osc(ANTENNA_F, "ant")
                          + ANTENNA_IDLE_DEG * idle * breath),
         )
-
-
-class Animator:
-    """백그라운드에서 흔들림을 로봇에 적용한다.
-
-    is_speaking / is_busy 는 각각 Speaker.speaking, MotionPlayer.busy 를 넘긴다.
-    busy 인 동안에는 손을 떼서 녹화 모션과 충돌하지 않게 한다.
-    """
-
-    def __init__(self, mini, is_speaking, is_busy, rate_hz: float = 50.0):
-        self._mini = mini
-        self._is_speaking = is_speaking
-        self._is_busy = is_busy
-        self._dt = 1.0 / rate_hz
-        self._state = SwayState()
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-
-    def _run(self) -> None:
-        from reachy_mini.utils import create_head_pose
-
-        while not self._stop.is_set():
-            t0 = time.time()
-            try:
-                if self._is_busy():
-                    # 녹화 모션이 몰고 있다 — 개입하지 않되 위상은 계속 굴려
-                    # 모션이 끝났을 때 갑자기 튀지 않게 한다.
-                    self._state.step(self._dt, speaking=False)
-                else:
-                    self._state.step(self._dt, speaking=self._is_speaking())
-                    o = self._state.offsets()
-                    self._mini.set_target(
-                        head=create_head_pose(
-                            x=o.x_mm, y=o.y_mm, z=o.z_mm,
-                            roll=o.roll_deg, pitch=o.pitch_deg, yaw=o.yaw_deg,
-                            mm=True, degrees=True,
-                        ),
-                        antennas=[math.radians(o.antenna_deg), math.radians(-o.antenna_deg)],
-                    )
-            except Exception:
-                pass  # 시연 중 한 프레임 실패로 스레드가 죽지 않게
-
-            slept = time.time() - t0
-            if slept < self._dt:
-                time.sleep(self._dt - slept)

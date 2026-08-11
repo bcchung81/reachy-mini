@@ -16,6 +16,10 @@ from clauses import ClauseBuffer
 # 실기에서는 PC 를 가리켜야 한다 — REACHY_LLM_URL=http://<PC>:8080
 DEFAULT_BASE_URL = os.environ.get("REACHY_LLM_URL", "http://127.0.0.1:8080")
 
+# keep-alive 연결 재사용. localhost 에서는 차이가 없지만 실기 분리 배치에서는
+# 턴마다 WiFi 위 TCP 핸드셰이크를 새로 하는 비용이 응답 지연에 그대로 얹힌다.
+_session = requests.Session()
+
 
 class LLMClient:
     def __init__(
@@ -40,7 +44,7 @@ class LLMClient:
             + self.history
             + [{"role": "user", "content": user_text}]
         )
-        r = requests.post(
+        r = _session.post(
             f"{self.base_url}/v1/chat/completions",
             json={
                 "model": self.model,

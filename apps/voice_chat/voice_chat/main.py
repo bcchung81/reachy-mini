@@ -32,10 +32,22 @@ class VoiceChat(ReachyMiniApp):
     # 설정 페이지를 쓰지 않는다. 쓰려면 여기에 URL 을 주고 settings_app 라우트를 단다.
     custom_app_url: str | None = None
 
-    # 영상 스트리밍을 쓰지 않으므로 wireless 에서는 "gstreamer_no_video" 로 CPU 를
-    # 아낄 수 있다. 다만 우리 MicCapture 가 **자체 GStreamer 파이프라인**을 열기
-    # 때문에 SDK 미디어 백엔드와의 상호작용이 실기에서 미검증이다 — 기본값을 둔다.
-    request_media_backend: str | None = None
+    # **오디오 장치를 우리가 직접 연다고 SDK 에 알린다.**
+    #
+    # 기본값(None)은 SDK 에서 "default" 로 해석돼 LOCAL/WEBRTC 미디어 백엔드가
+    # 뜨고, 그러면 **데몬이 마이크·카메라를 쥔 채로** 우리 MicCapture 가 같은
+    # 장치를 또 연다(`audio_in.py` 의 autoaudiosrc). USB 오디오는 보통 캡처
+    # 클라이언트를 하나만 받으므로 실기에서 캡처가 통째로 실패한다.
+    #
+    # "no_media" 는 SDK 가 `release_media()` 를 부르게 하는 값이다
+    # (`reachy_mini.py:342-350`). 그 docstring 이 우리 설계를 그대로 적고 있다 —
+    # *"the camera and microphone are available for direct access via
+    # OpenCV / sounddevice / etc."* 앱이 끝나면 `__exit__` 이 acquire_media() 로
+    # 되돌리므로 데몬 상태를 망가뜨리지 않는다(idempotent).
+    #
+    # 영상 스트리밍을 안 쓰는 만큼 CPU 도 같이 아낀다 — Wireless 는 CM4(RAM 4GB)라
+    # 여유가 없다.
+    request_media_backend: str | None = "no_media"
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
         with contextlib.ExitStack() as stack:

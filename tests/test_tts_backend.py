@@ -3,6 +3,7 @@ import json
 import pathlib
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
@@ -225,4 +226,186 @@ def test_qwen_이_죽으면_say_로_떨어진다(monkeypatch, tmp_path):
         assert out.read_text().strip() == "안녕하세요."  # say 로 발화했다
     finally:
         monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+class StreamStub(BaseHTTPRequestHandler):
+    """chunked PCM 을 흘리는 서버 흉내 — 청크 사이에 지연을 준다."""
+
+    requests: list = []
+    chunks = 5
+    delay = 0.05
+
+    def do_POST(self):
+        import time
+
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        StreamStub.requests.append(body)
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/pcm")
+        self.send_header("X-Sample-Rate", "24000")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for _ in range(StreamStub.chunks):
+            payload = b"\x00\x01" * 512
+            self.wfile.write(b"%x\r\n" % len(payload) + payload + b"\r\n")
+            self.wfile.flush()
+            time.sleep(StreamStub.delay)
+        self.wfile.write(b"0\r\n\r\n")
+
+    def log_message(self, *a):
+        pass
+
+
+def _serve_stream():
+    srv = HTTPServer(("127.0.0.1", 0), StreamStub)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{srv.server_port}"
+
+
+def test_스트리밍이면_첫_청크에_재생을_시작한다(monkeypatch):
+    # 전체 응답을 기다리면 첫 소리까지 입력 길이에 비례해 늘어난다(77자 3.67초, 실측).
+    # 청크가 도착하는 대로 재생해야 그 지연이 사라진다.
+    import time
+
+    base = _serve_stream()
+    StreamStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        marks = []
+        t0 = time.time()
+
+        def collect(chunks, rate):
+            for c in chunks:
+                marks.append((time.time() - t0, len(c), rate))
+
+        s = tts_mod.Speaker(play_pcm=collect)
+        s.speak("안녕하세요.")
+        s.wait_idle(timeout=10)
+
+        assert StreamStub.requests[0]["stream"] is True
+        assert StreamStub.requests[0]["response_format"] == "pcm"
+        assert len(marks) >= StreamStub.chunks, "청크를 나눠 받지 못했다"
+        assert marks[0][2] == 24000, "X-Sample-Rate 를 읽지 않았다"
+        # 첫 청크가 마지막 청크보다 확실히 먼저 와야 한다(= 모아서 주지 않았다)
+        assert marks[-1][0] - marks[0][0] > StreamStub.delay
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_서버가_stream_을_모르면_wav_경로로_돌아간다(monkeypatch):
+    # 구버전 서버는 stream 필드를 무시하고 wav 를 한 방에 준다. 그때도 소리는 나야 한다.
+    base = _serve()  # audio/wav 를 주는 기존 스텁
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        played, streamed = [], []
+        s = tts_mod.Speaker(play=played.append, play_pcm=lambda c, r: streamed.append(r))
+        s.speak("안녕하세요.")
+        s.wait_idle(timeout=5)
+        assert len(played) == 1 and streamed == []
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_스트리밍_비활성화_환경변수(monkeypatch):
+    # 서버가 이상할 때 되돌릴 레버가 있어야 한다.
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_STREAM", "0")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        s = tts_mod.Speaker(play=lambda b: None)
+        s.speak("안녕하세요.")
+        s.wait_idle(timeout=5)
+        assert "stream" not in SpeechStub.requests[0][1]
+    finally:
+        monkeypatch.delenv("TTS_QWEN_STREAM")
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_선요청은_현재_요청_뒤에_나간다(monkeypatch):
+    """다음 문장을 미리 요청하되 **현재 요청이 서버에 도달한 뒤**여야 한다.
+
+    순서가 뒤집히면 서버(요청을 직렬 처리한다)가 다음 문장을 먼저 만들어
+    현재 발화가 오히려 늦어진다.
+    """
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        s = tts_mod.Speaker(play=lambda b: None, play_pcm=lambda c, r: list(c))
+        for line in ["첫째.", "둘째.", "셋째.", "넷째."]:
+            s.speak(line)
+        s.wait_idle(timeout=10)
+        got = [b["input"] for _, b in SpeechStub.requests]
+        assert got == ["첫째.", "둘째.", "셋째.", "넷째."], f"요청 순서가 어긋났다: {got}"
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_끼어들기는_선요청한_문장까지_버린다(monkeypatch):
+    """미리 꺼내 둔 항목을 안 버리면 끊었는데도 그 문장이 뒤늦게 나온다."""
+    base = _serve()
+    SpeechStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        played = []
+        s = tts_mod.Speaker(play=played.append, play_pcm=lambda c, r: list(c))
+        for i in range(6):
+            s.speak(f"{i}번 문장입니다.")
+        s.stop()
+        s.wait_idle(timeout=10)
+        assert not s.speaking, "끊었는데 speaking 이 남아 있다"
+        # 큐에 남은 것이 뒤늦게 재생되면 안 된다
+        n = len(played)
+        time.sleep(0.5)
+        assert len(played) == n, "끊은 뒤에도 재생이 이어졌다"
+    finally:
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
+def test_선버퍼링이_첫_청크만으로_재생을_시작하지_않는다(monkeypatch):
+    """출력 버퍼가 119ms 인데 청크가 85ms 라, 첫 청크만 쓰고 시작하면 굶는다
+    (실측: 옵션을 켜면 첫 음절이 깨졌다)."""
+    import numpy as np
+
+    monkeypatch.setenv("REACHY_TTS_PREBUFFER", "0.25")
+    importlib.reload(tts_mod)
+    try:
+        writes = []
+
+        class FakeStream:
+            active = True
+
+            def write(self, data):
+                writes.append(len(data))
+
+            def start(self):
+                pass
+
+        player = tts_mod.StreamPlayer()
+        player._stream = FakeStream()
+        player._rate = 24000
+        chunk = np.zeros(2048, dtype=np.int16).tobytes()  # 4096바이트 = 85ms
+        player.play_pcm_stream(iter([chunk] * 10), 24000)
+        # 첫 write 는 선버퍼(0.25초 = 6000샘플) 이상이어야 한다
+        assert writes and writes[0] >= 6000, f"첫 write 가 너무 작다: {writes[:3]}"
+    finally:
+        monkeypatch.delenv("REACHY_TTS_PREBUFFER")
         importlib.reload(tts_mod)

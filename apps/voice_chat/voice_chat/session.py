@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import emotions
 import selfintro
-from animator import Animator
+from driver import RobotDriver
 from idler import Idler
 from llm import LLMClient
 from motion import MotionPlayer, classify
@@ -68,13 +68,17 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
             from reachy_mini import ReachyMini
 
             mini = stack.enter_context(ReachyMini())
-        player = MotionPlayer(mini, moves)
 
-        # 말하는 동안 흔들리고 조용할 때 숨 쉬게 한다. 감정 모션이 끝난 뒤
-        # 답변이 이어지는 구간에서 로봇이 굳어 보이는 것을 막는다.
-        animator = Animator(mini, lambda: speaker.speaking, lambda: player.moving)
-        animator.start()
-        stack.callback(animator.stop)
+        # **로봇에 쓰는 스레드는 이것 하나다**(공식 control-loops 규칙).
+        # 말할 때 흔들리고 조용할 때 숨 쉬는 것도, 녹화 모션을 도는 것도 여기서
+        # 합성한다 — 예전처럼 애니메이터와 모션이 각자 set_target 을 쓰지 않는다.
+        driver = RobotDriver(mini, lambda: speaker.speaking)
+        driver.start()
+        stack.callback(driver.stop)
+
+        # 모션 발성은 speaker 로 나간다 — SDK 미디어를 안 쓰기 때문이기도 하고
+        # (`main.py` 의 no_media), 그래야 에코 프로브·마이크 게이팅이 인지한다.
+        player = MotionPlayer(driver, moves, speaker)
 
         # 아무도 말을 걸지 않을 때 혼자 감정 표현을 한다(소리 없이).
         idler = Idler(
@@ -105,7 +109,11 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
             {"role": "user", "content": user},
             {"role": "assistant", "content": selfintro.HISTORY_SUMMARY},
         ]
-        speaker.wait_idle(timeout=180)
+        # **여기서 재생 완료를 기다리지 않는다.** 기다리면 마이크 루프가 약 55초간
+        # 멈춰 있어 대본 도중에는 끼어들 수 없었다(REACHY_BARGE_IN 이 켜져 있어도).
+        # 일반 답변과 같은 규칙으로 맞춘다 — 큐에 넣고 곧바로 반환하고, 재생 중
+        # 마이크를 어떻게 다룰지는 호출부(voice_loop 의 게이팅)가 정한다.
+        # 끼어들기가 걸리면 speaker.stop() 이 남은 문장을 큐에서 버린다.
         return
 
     # "슬픈 표정 지어봐" 같은 연기 요청은 그 감정을 그대로 재생한다.
@@ -141,4 +149,10 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         # 같은 음성끼리만 묶는다. 전부 합치면 한글 우선 규칙에 걸려
         # 한국어 음성이 중국어·일본어까지 읽어 발음이 깨진다.
         speaker.speak_many(rest)
-    speaker.wait_idle(timeout=60)
+
+    # **여기서 재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
+    # 끼어들기 판정이 한 번도 돌지 않는다 — 대본은 되는데 일반 답변은 안 끊기던
+    # 이유가 이 한 줄이었다(대본 분기에서는 걷어냈는데 여기를 놓쳤다).
+    # 재생 중 마이크를 어떻게 다룰지는 호출부가 정한다:
+    #   voice_loop  — speaking 플래그로 게이팅하거나 끼어들기로 끊는다
+    #   demo.py     — 키보드 모드라 끼어들기가 없으니 거기서 wait_idle 한다

@@ -17,7 +17,7 @@ AI 에이전트용 로컬 설정. 공식 템플릿(`harness/agents.local.md.temp
 ```
 robot_type: simulation          # Wireless / Lite 실기 없음. MuJoCo 시뮬레이터만.
 daemon_url: http://localhost:8000
-launcher: ./run-sim.sh          # macOS는 mjpython 필수 — 아래 Notes 참조
+launcher: ./reachy.sh sim          # macOS는 mjpython 필수 — 아래 Notes 참조
 media: enabled                  # 3D 뷰어 + 오디오 동시 동작 (아래 Notes 참조). 끄려면 --no-media
 ```
 
@@ -50,8 +50,8 @@ python: 3.12.13        # 3.14 불가 — 아래 Notes 참조
 로컬 실측으로 확인한 제약이다. 에이전트는 코드를 쓰기 전에 이 항목들을 전제로 삼는다.
 
 - **Python 3.14 사용 금지.** `reachy-mini[mujoco]`가 `mujoco==3.3.0`을 고정하는데 이 버전에 cp314 휠이 없다. 이 프로젝트의 인터프리터는 `.venv/bin/python`(3.12.13) 하나뿐이다. 시스템 `python3`(homebrew 3.14.6)로 SDK를 import하지 않는다.
-- **데몬 기동은 반드시 `./run-sim.sh`.** macOS에서 MuJoCo 뷰어는 Cocoa 메인스레드를 요구해 `mjpython` 런처가 필요하다. `reachy-mini-daemon --sim`으로 실행하면 `launch_passive requires that the Python script be run under mjpython on macOS` RuntimeError가 난다. SDK 저장소는 이를 자동 처리하지 않는다(이슈 #79 open).
-- **오디오는 쓸 수 있다. 단 `./run-sim.sh`로 띄웠을 때만이다.** mjpython으로 데몬을 그냥 띄우면 GStreamer 장치 모니터가 CoreAudio를 프로브하다 교착한다(`gst_device_monitor_start` → `gst_core_audio_bind_device`). mjpython이 Cocoa GUI용으로 메인스레드를 점유하는데 CoreAudio 장치 조회도 메인 런루프를 요구하기 때문이다(마이크 권한 문제가 아니다 — 일반 python으로는 장치가 즉시 잡힌다). `run-sim.sh`가 `GST_PLUGIN_FEATURE_RANK=osxaudiodeviceprovider:NONE,avfdeviceprovider:NONE`으로 교착을 일으키는 *장치 프로바이더*만 배제하고 입출력 요소(`osxaudiosrc`/`osxaudiosink`)는 살려 둔다. 이 상태에서 3D 뷰어·오디오·시뮬 카메라 스트림이 한 프로세스에서 공존한다. 실측: 감정 모션 재생 시 `Audio system is not initialized` 0회.
+- **데몬 기동은 반드시 `./reachy.sh sim`.** macOS에서 MuJoCo 뷰어는 Cocoa 메인스레드를 요구해 `mjpython` 런처가 필요하다. `reachy-mini-daemon --sim`으로 실행하면 `launch_passive requires that the Python script be run under mjpython on macOS` RuntimeError가 난다. SDK 저장소는 이를 자동 처리하지 않는다(이슈 #79 open).
+- **오디오는 쓸 수 있다. 단 `./reachy.sh sim`로 띄웠을 때만이다.** mjpython으로 데몬을 그냥 띄우면 GStreamer 장치 모니터가 CoreAudio를 프로브하다 교착한다(`gst_device_monitor_start` → `gst_core_audio_bind_device`). mjpython이 Cocoa GUI용으로 메인스레드를 점유하는데 CoreAudio 장치 조회도 메인 런루프를 요구하기 때문이다(마이크 권한 문제가 아니다 — 일반 python으로는 장치가 즉시 잡힌다). `reachy.sh`가 `GST_PLUGIN_FEATURE_RANK=osxaudiodeviceprovider:NONE,avfdeviceprovider:NONE`으로 교착을 일으키는 *장치 프로바이더*만 배제하고 입출력 요소(`osxaudiosrc`/`osxaudiosink`)는 살려 둔다. 이 상태에서 3D 뷰어·오디오·시뮬 카메라 스트림이 한 프로세스에서 공존한다. 실측: 감정 모션 재생 시 `Audio system is not initialized` 0회.
 - **오디오 하드웨어 대체 관계**: Reachy Mini Audio USB 카드가 없으므로 시스템 기본 마이크/스피커로 폴백하고, 하드웨어 에코캔슬(XMOS) 대신 GStreamer 소프트웨어 에코캔슬이 걸린다. `No Reachy Mini Audio USB device found!` ERROR 로그는 이 폴백의 정상 신호다.
 - **DoA(음원 방향)는 기대하지 않는다.** 4채널 마이크 어레이가 없어 시뮬에서는 의미 있는 값이 나오지 않는다.
 - **시뮬에서 동작하지 않는 것**: 컴플라이언트 모드(손으로 움직여 모션 녹화)는 no-op다. 녹화된 모션 *재생*은 정상. IMU는 Wireless 전용. 데몬측 얼굴추적은 시뮬 루프에서 호출되지 않는다.

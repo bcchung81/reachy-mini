@@ -17,7 +17,16 @@ dependencies = [
     "numpy",           # audio_in.py, stt.py, tts.py
     "requests",        # llm.py, stt.py — 추론 서버 호출
     "sounddevice",     # tts.py — 상주 오디오 출력 스트림
-    "PyGObject",       # audio_in.py — GStreamer 마이크 캡처(gi)
+    # audio_in.py·tts.py 가 `gi`(GStreamer)를 쓴다. **공급자가 플랫폼마다 다르다** —
+    # reachy-mini 자신이 이렇게 갈라 둔다:
+    #     PyGObject<=3.46.0,>=3.42.2 ; sys_platform == "linux"
+    #     gstreamer-bundle==1.28.3   ; sys_platform != "linux"
+    # 그래서 여기서도 Linux 에서만 선언한다. 조건 없이 "PyGObject" 로 두면
+    # macOS/Windows(Lite 구성 — 데몬·앱이 PC 에서 돈다)에서 pip 가 소스 빌드로
+    # 들어가 깨지고, 상한이 없어 3.46 초과가 잡히면 SDK 핀과 충돌한다.
+    # 비-Linux 의 `gi` 는 reachy-mini 가 끌어오는 gstreamer-bundle 이 공급하므로
+    # 우리가 다시 선언하지 않는다(SDK 가 정확 핀이라 재선언이 충돌만 만든다).
+    "PyGObject>=3.42.2,<=3.46.0; sys_platform == 'linux'",
 ]
 keywords = ["reachy-mini-app"]
 

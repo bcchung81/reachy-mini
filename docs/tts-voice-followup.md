@@ -150,7 +150,7 @@ No such file or directory.
 
 ### 교체 작업 범위 — 전부 끝났다
 
-`tts.py` 의 `Speaker._worker` 를 HTTP 호출로 바꾸고, `scripts/demo.sh` 에 TTS 서버
+`tts.py` 의 `Speaker._worker` 를 HTTP 호출로 바꾸고, `reachy.sh` 에 TTS 서버
 기동·헬스체크·예열을 넣는 것이 범위였다. 둘 다 완료됐다.
 
 당시 "`group_by_voice()` 의 언어별 음성 선택은 재설계가 필요하다"고 적었는데
@@ -306,7 +306,7 @@ serena 가 영문을 읽을 수 있으니 `selfintro.SCRIPT` 의 한글 음차 �
 
 ### 배포 자산에서 잡은 버그 2건 (2026-07-30)
 
-`scripts/demo.sh` 를 실제로 태워보니 **시연이 조용히 유나 목소리로 돌아가고 있었다.**
+`reachy.sh` 를 실제로 태워보니 **시연이 조용히 유나 목소리로 돌아가고 있었다.**
 
 #### 1. crispasr 바이너리의 rpath 가 삭제된 빌드 디렉토리를 가리킨다
 
@@ -326,13 +326,13 @@ exec 할 때 `DYLD_*` 를 전부 지운다 — 직접 실행은 되고 `nohup` �
 원인을 오해하기 쉽다(실제로 한 번 헤맸다).
 
 해결: 바이너리에 `@loader_path` rpath 를 박아 dylib 을 자기 옆에서 찾게 한다.
-`demo.sh` 의 `ensure_crispasr()` 가 기동 전에 검사하고 필요하면 자동으로 넣는다
+`reachy.sh` 의 `ensure_crispasr()` 가 기동 전에 검사하고 필요하면 자동으로 넣는다
 (재배포로 rpath 가 되돌아가도 다시 고친다). rpath 를 지워 깨진 상태를 만들고
 복구를 확인했다.
 
 #### 2. 서버 기동 시 화자를 안 넘겨 기본값이 'aiden' 이었다
 
-`demo.sh` 가 `--voice` 없이 띄우고 있었다. `tts.py` 는 요청마다 `voice: serena` 를
+`reachy.sh` 가 `--voice` 없이 띄우고 있었다. `tts.py` 는 요청마다 `voice: serena` 를
 보내므로 정상 경로는 문제가 없지만, **voice 필드 없이 들어온 요청은 전부 `aiden`**
 으로 나간다(실측: 같은 문장이 43482B vs 56280B). 기동 시에도 `--voice` 를 넘겨
 서버 기본값을 코드와 일치시켰다. 화자 값은 `tts.QWEN_VOICE` 에서 읽어 단일 출처로 뒀다.
@@ -415,7 +415,7 @@ crispasr --server --port 8099 --backend qwen3-tts-1.7b-customvoice \
 ### ⚠ 1.7B 로 잰 수치는 배포된 0.6B 에 그대로 옮겨지지 않는다
 
 이 문서의 앞부분 수치는 대부분 **1.7B CustomVoice** 기준이고, 실제 배포는
-**0.6B** 다(`demo.sh` 의 `TTS_MODEL`). 같은 대본을 두 모델로 돌려보니 차이가 컸다.
+**0.6B** 다(`reachy.sh` 의 `TTS_MODEL`). 같은 대본을 두 모델로 돌려보니 차이가 컸다.
 
 | | 1.7B | 배포된 0.6B |
 |---|---|---|
@@ -452,19 +452,19 @@ crispasr --server --port 8099 --backend qwen3-tts-1.7b-customvoice \
 | `voices/mini-boy.wav` | 156 KB | VoiceDesign 시도 잔여. **지우지 말 것** — 커스텀 음색 베이킹의 참조 후보다(3.27초 24 kHz, 대사 "저는 인터넷에 연결되어 있지 않아요." STT 로 확인). 위 [향후 계획](#향후-계획--커스텀-음색을-만들려면) 참고 |
 | `bin/`, `models/.cache/` | 0 B, 16 KB | 빈 디렉토리 |
 
-`demo.sh` 는 1.7B + 코덱 + 바이너리만 참조한다. 0.6B 를 지우면 실사용은 2.3 GB 다.
+`reachy.sh` 는 1.7B + 코덱 + 바이너리만 참조한다. 0.6B 를 지우면 실사용은 2.3 GB 다.
 `models/tok/` 619 MB 도 지울 수 있다(같은 코덱의 다른 quant 뿐).
 
 **백엔드 이름이 모델 크기에 종속된다** — 0.6B 는 `qwen3-tts-customvoice`,
 1.7B 는 `qwen3-tts-1.7b-customvoice`. 모델만 바꾸고 이걸 안 바꾸면 기동이 깨지므로
-`demo.sh` 가 파일명에서 유추한다(`TTS_QWEN_BACKEND` 로 재정의 가능).
+`reachy.sh` 가 파일명에서 유추한다(`TTS_QWEN_BACKEND` 로 재정의 가능).
 
 #### 새 기계에 배포할 때 필요한 것
 
 1. `crispasr` 바이너리 + `crispasr-bin/` 의 dylib 전부 (같은 디렉토리에)
 2. talker `0.6b-customvoice-q8_0.gguf` + 코덱 `tokenizer-12hz.gguf` (f16)
 3. **rpath 확인** — 빌드 디렉토리에서 복사해 오면 `@rpath` 가 깨진다.
-   `demo.sh` 의 `ensure_crispasr()` 가 `@loader_path` 를 자동으로 넣지만,
+   `reachy.sh` 의 `ensure_crispasr()` 가 `@loader_path` 를 자동으로 넣지만,
    `install_name_tool -add_rpath "@loader_path" crispasr` 를 배포 시점에 해두면 깔끔하다
 4. 첫 기동 후 **예열 1회 필수** — Metal JIT 캐시(`~/Library/Caches/ggml-metal/`)는
    기계·모델별이라 새 기계에서는 다시 컴파일된다(실측 8.5~10.0초)
@@ -534,7 +534,7 @@ voice-pack.gguf  →  qwen3-tts **Base** 백엔드 + `--voice my-voice.gguf`
 코드 변경은 작다.
 
 - 한국어 음성만 바꾸는 경우: `REACHY_VOICE` 환경변수. 예)
-  `REACHY_VOICE="Rocko (한국어(한국))" ./scripts/demo.sh`
+  `REACHY_VOICE="Rocko (한국어(한국))" ./reachy.sh demo`
   (Yuna 외에는 `"이름 (한국어(한국))"` 전체 이름이라야 로케일이 맞는다)
 - 엔진 자체를 바꾸는 경우: `apps/voice_chat/voice_chat/tts.py` 의 `Speaker._worker`
   안 `subprocess.run` 만 교체한다. 나머지 코드는 `speak(text)` 만 쓴다.
@@ -558,10 +558,10 @@ LLM·STT 를 거기서 돌리므로, TTS 도 같은 자리에서 HTTP 서버로 
 취약하지만 TTS 는 발화당 파일 하나라 한 번에 던지고 끝나므로 성격이 다르다.
 
 이 배치의 부수 이점: 나중에 Qwen3-TTS 로 바꿔도 **배포 구조가 안 바뀐다.**
-1.7B 모델은 Pi5 에 무리이므로 어차피 PC 에서 돌려야 한다.
+1.7B 모델은 CM4(RAM 4 GB)에 무리이므로 어차피 PC 에서 돌려야 한다.
 
 전제: **운영 PC 가 맥이어야 한다.** 윈도우면 `say` 가 없어 그때 엔진을 바꿔야 하는데,
-Pi5 가 아니라 PC 라 성능 여유는 크다.
+CM4 가 아니라 PC 라 성능 여유는 크다.
 
 ### 수용 기준
 
