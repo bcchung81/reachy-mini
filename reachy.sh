@@ -12,6 +12,8 @@
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
 #   ./reachy.sh logs [줄수]            마지막 세션 로그 (앱 + 서버 오류) — 문제 생기면 여기부터
 #   ./reachy.sh stop                   띄운 것 전부 종료 (고아까지 쓸어낸다)
+#   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
+#   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
 #
 # `sim` 은 포그라운드다(Ctrl-C 로 끝). `demo` 는 없는 서버만 띄우고 앱으로 들어간다 —
 # 앱을 Ctrl-C 로 나가도 서버는 살려 둔다(재진입이 빨라야 한다). 완전히 내리려면 stop.
@@ -34,7 +36,7 @@ say_ok()   { echo "${c_ok}OK${c_off}   $1"; }
 say_bad()  { echo "${c_bad}FAIL${c_off} $1"; }
 say_step() { echo; echo "▶ $1"; }
 
-usage() { sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ════════════════════════════════════════════════════════════════
 #  sim — 시뮬레이터 데몬 (구 run-sim.sh)
@@ -398,6 +400,16 @@ case "$cmd" in
   check) say_step "상태"; status ;;
   stop)  stop_all ;;
   logs)  show_logs "$@" ;;
+  # 측정·예열도 이 진입점 하나로 통한다 — 파이썬 도구는 scripts/ 에 있지만
+  # 인터프리터(.venv 강제)·작업 디렉토리를 여기서 보장해 주는 것이 안전하다.
+  warmup) exec "$PY" scripts/warmup.py "$@" ;;
+  measure)
+    sub="${1:-}"; [ $# -gt 0 ] && shift
+    case "$sub" in
+      aec)     exec "$PY" scripts/measure_aec.py "$@" ;;
+      latency) exec "$PY" scripts/measure_latency.py "$@" ;;
+      *) say_bad "measure 대상은 aec | latency 다"; exit 2 ;;
+    esac ;;
   ""|-h|--help|help) usage ;;
   *)     say_bad "모르는 명령: $cmd"; echo; usage; exit 2 ;;
 esac

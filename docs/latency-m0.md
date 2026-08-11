@@ -4,7 +4,7 @@
 - 환경: macOS 26.5.2 / Apple M5 Pro / 48GB / Python 3.12.13
 - LLM: `unsloth/gemma-4-E4B-it-GGUF:Q4_K_M` @ llama-server :8080 (`--reasoning off`)
 - TTS: macOS `say -v Yuna`
-- 스크립트: `scripts/measure_latency.py`
+- 스크립트: `scripts/measure_latency.py` (`./reachy.sh measure latency`)
 
 ## 측정값
 

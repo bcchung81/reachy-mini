@@ -4,7 +4,7 @@
 앱이 보내는 것과 같은 시스템 블록으로 예열해야 한다. 시스템 프롬프트 없이
 "안녕"만 보내면 접두사가 달라 앱의 첫 요청이 프리필 비용을 그대로 문다.
 
-실행: .venv/bin/python scripts/warmup.py
+실행: ./reachy.sh warmup   (demo 가 자동으로 태우지만 단독 실행도 된다)
 """
 
 from __future__ import annotations

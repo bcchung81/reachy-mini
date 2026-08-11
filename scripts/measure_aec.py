@@ -5,7 +5,7 @@ AEC 가 제 몫을 하면 그때 마이크에 남는 소리(잔여 에코)가 �
 아래로 떨어지고, 오탐이 0 이 된다.
 
     ./reachy.sh check                      # TTS 서버(:8099)가 떠 있어야 한다
-    .venv/bin/python scripts/measure_aec.py
+    ./reachy.sh measure aec
 
 같은 발화를 AEC 끄고 / 켜고 두 번 재생해 비교한다. 판정 기준은 셋:
 

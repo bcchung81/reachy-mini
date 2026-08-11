@@ -316,7 +316,7 @@ AEC 없이 계속한다.
 ### 검증 — 켜기 전에 잰다
 
 ```bash
-.venv/bin/python scripts/measure_aec.py     # 스피커로 소리가 난다
+./reachy.sh measure aec                     # 스피커로 소리가 난다
 ```
 
 같은 발화를 AEC 끄고/켜고 재생하며 **사람은 조용히 있는 상태로** 마이크를 관찰한다.
