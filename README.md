@@ -170,6 +170,8 @@ REACHY_BARGE_IN=1 ./reachy.sh demo                 # 헤드셋(에코 없음)이
 | `REACHY_AEC` | `0` | 소프트웨어 에코 제거 — **재생 경로가 GStreamer 로 바뀐다** |
 | `REACHY_AEC_SUPPRESSION` | `moderate` | `low`/`moderate`/`high` |
 | `REACHY_BARGE_IN_GRACE` | `1.0` | 끊은 직후 게이팅을 푸는 시간 — **연장하지 않는다** |
+| `REACHY_MOTOR_QUIET` | `1` | 사용자 발화 중 sway·대기모션 정지 — 서보 소음이 STT 를 오염시킨다(실기용, §12) |
+| `REACHY_ECHO_TAIL` | `3.0` | 자기 목소리 방어선의 적용 창(초) — 마지막 출력 이후 이만큼만 검사 |
 
 ### 가장 확실한 길 — 호출어 "미니야"
 
@@ -365,9 +367,16 @@ REACHY_STT_URL=http://<PC>:8090/v1/audio/transcriptions
 TTS_QWEN_URL=http://<PC>:8099/v1/audio/speech
 ```
 
-> ⚠ **Wireless 에서는 이 export 가 앱에 안 닿을 수 있다.** 앱은 데몬 프로세스의 환경을
-> 상속하는데(`apps/manager.py`) 데몬이 systemd 유닛이라 운영자 셸의 export 를 못 본다.
-> 그러면 조용히 `127.0.0.1` 로 붙는다 — `docs/real-robot-deployment.md` §10.
+> ⚠ **Wireless 에서는 이 export 가 앱에 안 닿는다.** 앱은 systemd 데몬의 자식이라
+> 운영자 셸의 export 를 못 본다. 그래서 사다리가 하나 더 있다 —
+> **환경변수 → 설정파일 → 기본값** (`config.py`):
+>
+> ```
+> ~/.config/reachy-mini-voice-chat/config.json     # 키 이름은 환경변수와 동일
+> ```
+>
+> 기동 첫 줄이 세 주소와 출처를 밝히고, **실기(Linux)에서 loopback 이면 크게
+> 경고한다** — `docs/real-robot-deployment.md` §10.
 
 ### 진입점이 둘인 이유
 

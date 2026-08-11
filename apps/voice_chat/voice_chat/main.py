@@ -24,7 +24,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 
 # 평면 import 를 쓴다 — `python main.py` 로 직접 돌려도 깨지지 않는다.
 sys.path.insert(0, str(Path(__file__).parent))
-from session import announce_voice, build, respond  # noqa: E402
+from session import announce_endpoints, announce_voice, build, respond  # noqa: E402
 from voice_loop import voice_loop  # noqa: E402
 
 
@@ -51,6 +51,7 @@ class VoiceChat(ReachyMiniApp):
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
         with contextlib.ExitStack() as stack:
+            announce_endpoints()  # 주소·출처 + 실기 loopback 경고 (§10)
             announce_voice()
             llm, speaker, player = build(stack, mini=reachy_mini)
             voice_loop(llm, speaker, player, respond, should_stop=stop_event.is_set)

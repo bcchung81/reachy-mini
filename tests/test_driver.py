@@ -256,6 +256,84 @@ def test_모션_진입이_갑자기_튀지_않는다():
     assert max(abs(b - a) for a, b in zip(seq, seq[1:])) < 5.0
 
 
+# ── 모터 정숙 (§12) ────────────────────────────────────────────
+
+
+def _movement(calls, last_n=30) -> float:
+    """최근 프레임들의 안테나 각 변동 폭(도) — 0 이면 서보가 그 자리에 서 있다.
+
+    pitch 로 재면 안 된다: sway 는 roll·yaw 를 함께 섞으므로 합성 회전행렬의
+    [0,2] 성분에서 pitch 만 깨끗이 안 나온다(위상에 따라 0.1도까지 떨어졌다).
+    안테나는 목표값이 그대로 기록돼 측정이 정확하다(진폭 12도 x env).
+    """
+    seq = [np.degrees(float(np.asarray(c[2])[0])) for c in calls[-last_n:]]
+    return max(seq) - min(seq)
+
+
+def test_사용자가_말하면_몸이_접힌다():
+    """XVF3800 AEC 는 스피커 반향만 지운다 — 서보 소음은 우리가 멈춰야 한다."""
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: True, rate_hz=200.0)  # 로봇 발화 중 = sway 최대
+    d.start()
+    try:
+        time.sleep(0.3)
+        moving = _movement(mini.snapshot())
+        d.set_quiet(True)
+        # 포락선은 지수 감쇠다(tau=0.15s) — 0.6초로는 1.8% 가 남아 0.5도까지
+        # 나온다(실측). 충분히 수렴시키고, 판정도 절대값이 아니라 잔여율로 한다.
+        time.sleep(1.0)
+        quiet = _movement(mini.snapshot())
+        n_before = len(mini.calls)
+        time.sleep(0.1)
+        n_after = len(mini.calls)
+    finally:
+        d.stop()
+    assert moving > 0.5, "정숙 전에는 움직여야 비교가 된다"
+    assert quiet < 0.05 * moving, f"정숙인데 안테나가 {quiet:.3f}도 움직인다(전 {moving:.3f})"
+    assert n_after > n_before, "정숙이어도 목표 송신은 계속돼야 한다(루프 생존)"
+
+
+def test_정숙_해제는_부드럽다():
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: True, rate_hz=200.0)
+    d.start()
+    try:
+        d.set_quiet(True)
+        time.sleep(0.4)
+        d.set_quiet(False)
+        time.sleep(0.6)
+        seq = [np.degrees(float(np.asarray(c[2])[0])) for c in mini.snapshot()[-150:]]
+    finally:
+        d.stop()
+    jump = max(abs(b - a) for a, b in zip(seq, seq[1:]))
+    assert jump < 3.0, f"정숙을 풀 때 한 틱에 {jump:.1f}도가 튀었다"
+    assert max(seq) - min(seq) > 0.5, "풀렸는데 움직임이 돌아오지 않았다"
+
+
+def test_정숙은_스위치로_끌_수_있다(monkeypatch):
+    import driver as driver_mod
+
+    monkeypatch.setattr(driver_mod, "MOTOR_QUIET", False)
+    d = RobotDriver(RecordingMini(), lambda: False)
+    d.set_quiet(True)
+    assert d._quiet is False, "REACHY_MOTOR_QUIET=0 이면 무시돼야 한다"
+
+
+def test_정숙은_모션에는_손대지_않는다():
+    """primary(응답 모션)는 로봇 발화 턴의 정당한 동작이다 — 접지 않는다."""
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: False, rate_hz=200.0)
+    d.start()
+    try:
+        d.play(FakeMove(duration=1.0, pitch_deg=20.0), blend_s=0.05)
+        d.set_quiet(True)
+        time.sleep(0.3)
+        pitch = _pitch_of(mini.snapshot()[-1][1])
+    finally:
+        d.stop()
+    assert abs(pitch - 20.0) < 1.0, "정숙이 응답 모션까지 접었다"
+
+
 # ── 견고성 ─────────────────────────────────────────────────────
 
 

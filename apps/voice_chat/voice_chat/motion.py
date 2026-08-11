@@ -64,6 +64,7 @@ class MotionPlayer:
         self._moves = moves  # RecordedMoves
         self._available = set(moves.list_moves())  # 기동 시 1회
         self._speaker = speaker
+        self.user_speaking = False  # Idler 가 본다 — 사용자 발화 중 대기 모션 금지
         # **우선순위 검사와 걸기를 한 덩어리로 묶는다.** 호출자가 둘이다 —
         # 응답 모션(voice_loop 스레드)과 대기 모션(Idler 스레드). 잠금 없이
         # `playing` 검사 후 `driver.play()` 를 부르면, 검사와 걸기 사이에 응답
@@ -79,6 +80,20 @@ class MotionPlayer:
     def moving(self) -> bool:
         """어떤 모션이든 돌고 있는가 — 대기 모션이 끼어들지 판단할 때 쓴다."""
         return self._driver.playing
+
+    def set_user_speaking(self, active: bool) -> None:
+        """사용자가 말하는 중인지 전달한다(voice_loop 이 vad.active 로 매 프레임).
+
+        모터 정숙(§12)의 입력이다: sway·호흡이 접히고(driver), 대기 모션은
+        돌던 것도 끊는다 — 대기 모션은 어차피 "심심할 때 혼자 노는 것"이라
+        사용자 발화보다 우선일 수 없고, 그 서보 소음이 STT 를 오염시킨다.
+        응답 모션은 끊지 않는다(로봇 발화 턴과 겹치는 정당한 동작이다).
+        """
+        was = self.user_speaking
+        self.user_speaking = active
+        self._driver.set_quiet(active)
+        if active and not was and self._driver.playing_idle:
+            self._driver.cancel()
 
     def cancel(self) -> None:
         """모션을 즉시 끊는다. 끼어들기에서 부른다 — 춤은 18초짜리라 안 끊으면

@@ -402,7 +402,10 @@ case "$cmd" in
   logs)  show_logs "$@" ;;
   # 측정·예열도 이 진입점 하나로 통한다 — 파이썬 도구는 scripts/ 에 있지만
   # 인터프리터(.venv 강제)·작업 디렉토리를 여기서 보장해 주는 것이 안전하다.
-  warmup) exec "$PY" scripts/warmup.py "$@" ;;
+  # **TTS_BACKEND 를 export 해야 한다.** 셸 변수로만 두면 warmup.py 가 못 보고
+  # say 경로만 데운다 — Qwen3-TTS 의 Metal JIT 8.5초(예열의 최대 항목)가
+  # 단독 실행에서 통째로 빠진다(실측: `(say)` 로 예열됨).
+  warmup) export TTS_BACKEND; exec "$PY" scripts/warmup.py "$@" ;;
   measure)
     sub="${1:-}"; [ $# -gt 0 ] && shift
     case "$sub" in

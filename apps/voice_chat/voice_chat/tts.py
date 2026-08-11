@@ -39,7 +39,10 @@ import aec
 # 로봇이 조용히 벙어리가 되는 것보다는 훨씬 낫다.
 BACKEND = os.environ.get("TTS_BACKEND", "qwen")
 
-QWEN_URL = os.environ.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
+# 사다리: 환경변수 → 설정파일 → 기본값 (근거는 config.py 머리말)
+import config as _config
+
+QWEN_URL = _config.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
 QWEN_SPEED = float(os.environ.get("TTS_QWEN_SPEED", "1.2"))
 
 # 스트리밍 합성 — 서버가 만드는 대로 PCM 을 흘려받아 첫 청크에 재생을 시작한다.

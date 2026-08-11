@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from session import announce_voice, build, respond
+from session import announce_endpoints, announce_voice, build, respond
 
 
 def text_loop(llm, speaker, player) -> None:
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-robot", action="store_true", help="데몬 없이 (대화·TTS만)")
     args = ap.parse_args()
     with contextlib.ExitStack() as stack:
+        announce_endpoints()
         announce_voice()
         llm, speaker, player = build(stack, no_robot=args.no_robot)
         if args.text:

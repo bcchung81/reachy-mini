@@ -8,9 +8,12 @@ import numpy as np
 import requests
 
 # 실기에서는 앱이 로봇에서 돌고 추론은 PC 가 맡으므로 **이 주소가 PC 를 가리켜야
-# 한다.** 코드를 고치지 않고 환경변수로 바꾼다.
+# 한다.** 사다리는 환경변수 → 설정파일 → 기본값이다(config.py) — Wireless 에서
+# 앱은 systemd 데몬의 자식이라 셸 export 가 닿지 않으므로 파일 단이 필요하다.
 #   REACHY_STT_URL=http://<PC>:8090/v1/audio/transcriptions
-DEFAULT_URL = os.environ.get(
+import config
+
+DEFAULT_URL = config.get(
     "REACHY_STT_URL", "http://127.0.0.1:8090/v1/audio/transcriptions"
 )
 

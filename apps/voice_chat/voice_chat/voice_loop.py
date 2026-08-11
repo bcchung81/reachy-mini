@@ -298,6 +298,11 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
                     # 로봇이 완전히 귀머거리였다.
                     busy = speaker.speaking
                     now = time.time()
+                    # 모터 정숙(§12): 발화를 모으는 동안 sway·호흡·대기 모션을
+                    # 접는다 — 서보 소음이 STT 와 소음 바닥 추정을 오염시킨다.
+                    # 30ms 마다 bool 하나 넘기는 것이라 비용은 없다.
+                    if player is not None:
+                        player.set_user_speaking(vad.active)
                     if busy and now < barge_until:
                         busy = False  # 방금 끊었다 — 사용자 발화를 받는 중이다
                     if busy:

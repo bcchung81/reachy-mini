@@ -28,16 +28,37 @@
 from __future__ import annotations
 
 import math
+import os
 import threading
 import time
 
 import numpy as np
+
+# **모듈 로드 시점에 SDK 를 당긴다 — 루프 스레드 안에서 당기면 안 된다.**
+# `reachy_mini.utils` 첫 임포트는 SDK 전체 연쇄(vision → huggingface_hub →
+# filelock)를 끌어 수백 ms 가 걸린다(실측: 스레드 스택 샘플로 확인 — 0.3초
+# 동안 프레임이 2~3개뿐이었다). 그 비용을 루프가 물면 기동 직후 로봇이 그만큼
+# 굳는다. 프로덕션에서는 main.py 가 어차피 SDK 를 먼저 올리므로 여기 비용은 0이다.
+from reachy_mini.utils import create_head_pose
 
 from animator import SwayState
 
 # 모션에 들어가고 나올 때 섞는 시간(초). SDK `play_move` 의 initial_goto_duration
 # 기본 사용값과 같게 뒀다 — 갑자기 튀지 않을 만큼만.
 BLEND_S = 0.3
+
+# ── 모터 정숙 (사용자 발화 중) ─────────────────────────────────
+# XVF3800 의 하드웨어 AEC 는 **스피커 반향**만 지운다 — 서보 9개의 모터 소음은
+# 별개 문제라, 사용자가 말하는 동안 몸이 움직이면 그 소음이 마이크로 들어가
+# STT 품질과 VAD 소음 바닥 추정을 함께 흔든다(LinguaLive 제작기가 지적한 함정).
+# 시뮬에는 모터 소음이 없어 구조적으로 드러나지 않는다 — 그래서 **기본 켬**이다:
+# 실기에서만 필요한 것을 꺼짐 기본으로 두면 실기에서 켜는 걸 잊는다
+# (`REACHY_AEC` 와 반대 방향인 이유다 — docs/real-robot-deployment.md §12).
+MOTOR_QUIET = os.environ.get("REACHY_MOTOR_QUIET", "1").lower() not in ("0", "false", "no")
+# 접는 건 빠르게(발화 초반 소음을 줄이는 게 목적), 펴는 건 천천히(끝나자마자
+# 움찔거리면 부자연스럽다).
+QUIET_ATTACK_S = 0.15
+QUIET_RELEASE_S = 0.5
 
 
 def _minjerk(a: float) -> float:
@@ -97,6 +118,11 @@ class RobotDriver:
         self._release_until = 0.0   # 모션에서 빠져나오며 sway 로 섞는 구간
         self._release_s = BLEND_S
         self._release_from: tuple[np.ndarray, np.ndarray, float] | None = None
+        # 사용자 발화 중 정숙 — set_quiet() 이 목표를 바꾸고, 루프가 포락선으로
+        # 부드럽게 따라간다(1=자유롭게 움직임, 0=정지). bool 읽기·쓰기는 GIL 로
+        # 원자적이라 잠금이 필요 없다.
+        self._quiet = False
+        self._quiet_env = 1.0
         self._errors = 0
 
     # ── 다른 스레드가 부르는 것 ────────────────────────────────
@@ -133,6 +159,14 @@ class RobotDriver:
         with self._lock:
             return self._primary is not None and self._primary.idle
 
+    def set_quiet(self, quiet: bool) -> None:
+        """사용자가 말하는 동안 몸을 접는다(§12 모터 정숙).
+
+        REACHY_MOTOR_QUIET=0 이면 무시된다. 급정지가 아니라 포락선이다 —
+        루프가 QUIET_ATTACK_S 로 접고 QUIET_RELEASE_S 로 편다.
+        """
+        self._quiet = quiet and MOTOR_QUIET
+
     # ── 루프 ───────────────────────────────────────────────────
 
     def start(self) -> None:
@@ -145,13 +179,11 @@ class RobotDriver:
             self._thread.join(timeout=1.0)
 
     def _run(self) -> None:
-        from reachy_mini.utils import create_head_pose
-
         self._last_head = create_head_pose()
         while not self._stop.is_set():
             t0 = time.monotonic()
             try:
-                head, ant, yaw = self._tick(t0, create_head_pose)
+                head, ant, yaw = self._tick(t0)
                 self._mini.set_target(head=head, antennas=ant, body_yaw=yaw)
                 self._last_head, self._last_ant, self._last_yaw = head, ant, yaw
             except Exception as exc:  # noqa: BLE001
@@ -167,7 +199,7 @@ class RobotDriver:
             if slept < self._dt:
                 time.sleep(self._dt - slept)
 
-    def _tick(self, now: float, create_head_pose):
+    def _tick(self, now: float):
         with self._lock:
             prim = self._primary
 
@@ -187,7 +219,7 @@ class RobotDriver:
                     self._release_s = prim.blend_s
                     self._release_until = now + prim.blend_s
 
-        return self._secondary(now, create_head_pose)
+        return self._secondary(now)
 
     def _eval_primary(self, prim: _Primary, now: float):
         """모션 포즈. 끝났으면 None."""
@@ -228,17 +260,27 @@ class RobotDriver:
             (1.0 - s) * yaw_a + s * yaw_b,
         )
 
-    def _secondary(self, now: float, create_head_pose):
-        """sway·호흡. 모션이 없을 때의 기본 층이다."""
+    def _secondary(self, now: float):
+        """sway·호흡. 모션이 없을 때의 기본 층이다.
+
+        정숙 포락선(`_quiet_env`)이 진폭을 통째로 배율한다 — 0 이 되면 매 틱
+        같은 중립 자세를 보내므로 서보가 그 자리에서 멈춘다(목표 송신 자체는
+        계속한다 — 루프가 살아 있음은 유지된다).
+        """
+        target_env = 0.0 if self._quiet else 1.0
+        tau = QUIET_ATTACK_S if self._quiet else QUIET_RELEASE_S
+        self._quiet_env += (target_env - self._quiet_env) * min(1.0, self._dt / tau)
+        qe = min(1.0, max(0.0, self._quiet_env))
+
         self._sway.step(self._dt, speaking=self._is_speaking())
         o = self._sway.offsets()
         target = (
             create_head_pose(
-                x=o.x_mm, y=o.y_mm, z=o.z_mm,
-                roll=o.roll_deg, pitch=o.pitch_deg, yaw=o.yaw_deg,
+                x=o.x_mm * qe, y=o.y_mm * qe, z=o.z_mm * qe,
+                roll=o.roll_deg * qe, pitch=o.pitch_deg * qe, yaw=o.yaw_deg * qe,
                 mm=True, degrees=True,
             ),
-            np.array([math.radians(o.antenna_deg), math.radians(-o.antenna_deg)]),
+            np.array([math.radians(o.antenna_deg * qe), math.radians(-o.antenna_deg * qe)]),
             0.0,
         )
         with self._lock:  # cancel() 이 다른 스레드에서 릴리스 필드를 쓴다

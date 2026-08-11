@@ -46,6 +46,17 @@ def announce_voice() -> None:
         print(f"목소리: macOS {tts_mod.DEFAULT_VOICE} (TTS_BACKEND=say)")
 
 
+def announce_endpoints() -> None:
+    """세 주소와 출처를 기동 로그에 밝힌다 — 실기에서 loopback 이면 경고.
+
+    §10 방어선의 출력 부분이다. 주소가 틀려도 앱은 조용히 돌기 때문에
+    (STT 빈 문자열·LLM 폴백 한 줄) 원인이 로그 첫 줄에 보여야 한다.
+    """
+    import config
+
+    config.announce()
+
+
 def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     """대화에 필요한 것들을 만든다.
 

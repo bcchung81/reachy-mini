@@ -54,7 +54,13 @@ class Idler:
         if self._stop.wait(self._next_gap()):
             return
         while not self._stop.is_set():
-            if not self._is_speaking() and not self._player.moving:
+            # 사용자가 말하는 중이면 혼자 놀지 않는다 — 서보 소음이 STT 를
+            # 오염시킨다(§12 모터 정숙. getattr: 테스트 더블 호환).
+            if (
+                not self._is_speaking()
+                and not self._player.moving
+                and not getattr(self._player, "user_speaking", False)
+            ):
                 name = emotions.pick_idle(self._player.available)
                 if name and self._player.play(name, idle=True) and self._on_play:
                     self._on_play(name)

@@ -32,8 +32,12 @@ class FakeDriver:
     def __init__(self):
         self.played: list[tuple[str, bool]] = []
         self.cancelled = 0
+        self.quiet = False
         self._playing = False
         self._idle = False
+
+    def set_quiet(self, quiet):
+        self.quiet = quiet
 
     def play(self, move, idle=False, blend_s=0.3):
         self.played.append((move.name, idle))
@@ -267,6 +271,53 @@ def test_우선순위_검사와_걸기가_원자적이다(monkeypatch):
     # 응답 모션(greet)이 최종 승자여야 한다 — 마지막에 걸린 것이 idle 이면 덮인 것
     assert driver.played, "아무것도 안 걸렸다"
     assert driver.played[-1][1] is False, "대기 모션이 응답 모션을 덮었다(TOCTOU)"
+
+
+# ── 모터 정숙 (§12) ────────────────────────────────────────────
+
+
+def test_사용자_발화는_대기_모션을_끊지만_응답_모션은_두다(monkeypatch):
+    """대기 모션은 '심심할 때 혼자 노는 것' — 사용자 발화보다 우선일 수 없다.
+    응답 모션은 로봇 발화 턴과 겹치는 정당한 동작이라 두다."""
+    p, driver, _, _ = _player(monkeypatch)
+    # 대기 모션 중 사용자가 말을 시작하면 → 끊는다
+    p.play("waiting", idle=True)
+    p.set_user_speaking(True)
+    assert driver.cancelled == 1
+    assert p.user_speaking is True
+    p.set_user_speaking(False)
+    # 응답 모션 중이면 → 두다
+    p.play_for("ack")
+    p.set_user_speaking(True)
+    assert driver.cancelled == 1, "응답 모션까지 끊었다"
+
+
+def test_사용자_발화가_드라이버_정숙으로_전달된다(monkeypatch):
+    p, driver, _, _ = _player(monkeypatch)
+    p.set_user_speaking(True)
+    assert driver.quiet is True
+    p.set_user_speaking(False)
+    assert driver.quiet is False
+
+
+def test_사용자_발화_중에는_대기_모션을_돌리지_않는다(monkeypatch):
+    """Idler 억제 — 서보 소음이 STT 를 오염시킨다."""
+    import time as _t
+
+    from idler import Idler
+
+    monkeypatch.setattr(sound_mod, "load", lambda *a, **k: b"\x00" * 100)
+    driver = FakeDriver()
+    p = MotionPlayer(driver, FakeMoves(), FakeSpeaker())
+    p.user_speaking = True
+    idler = Idler(p, lambda: False, min_gap=0.01, max_gap=0.02)
+    idler.start()
+    _t.sleep(0.15)
+    assert driver.played == [], "사용자 발화 중인데 대기 모션이 돌았다"
+    p.user_speaking = False
+    _t.sleep(0.15)
+    idler.stop()
+    assert driver.played, "발화가 끝났는데 대기 모션이 돌아오지 않았다"
 
 
 # ── 끼어들기 ───────────────────────────────────────────────────
