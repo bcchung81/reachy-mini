@@ -401,12 +401,18 @@ case "$cmd" in
   stop)  stop_all ;;
   logs)  show_logs "$@" ;;
   # 측정·예열도 이 진입점 하나로 통한다 — 파이썬 도구는 scripts/ 에 있지만
-  # 인터프리터(.venv 강제)·작업 디렉토리를 여기서 보장해 주는 것이 안전하다.
-  # **TTS_BACKEND 를 export 해야 한다.** 셸 변수로만 두면 warmup.py 가 못 보고
-  # say 경로만 데운다 — Qwen3-TTS 의 Metal JIT 8.5초(예열의 최대 항목)가
-  # 단독 실행에서 통째로 빠진다(실측: `(say)` 로 예열됨).
-  warmup) export TTS_BACKEND; exec "$PY" scripts/warmup.py "$@" ;;
+  # 인터프리터(.venv 강제)·작업 디렉토리·환경을 여기서 보장해 주는 것이 안전하다.
+  #
+  # **TTS_BACKEND 를 export 해야 한다.** 셸 변수로만 두면 하위 스크립트가 못 보고
+  # macOS `say` 경로로 떨어진다 — 예열에서는 Qwen3-TTS 의 Metal JIT 8.5초(예열의
+  # 최대 항목)가 통째로 빠지고(실측: `(say)` 로 예열됨), 측정에서는 프로덕션과
+  # 무관한 수치가 나온다. 기본값은 위에서 qwen 으로 잡힌다.
+  # (분기마다 따로 export 한다 — `;;&` 폴스루는 bash 4.0+ 이고 macOS 기본은 3.2 다.)
+  warmup)
+    export TTS_BACKEND
+    exec "$PY" scripts/warmup.py "$@" ;;
   measure)
+    export TTS_BACKEND
     sub="${1:-}"; [ $# -gt 0 ] && shift
     case "$sub" in
       aec)     exec "$PY" scripts/measure_aec.py "$@" ;;

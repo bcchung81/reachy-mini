@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import wave
 from pathlib import Path
@@ -30,7 +30,8 @@ LLM_URL = os.environ.get("REACHY_LLM_URL", "http://127.0.0.1:8080").rstrip("/") 
 STT_URL = os.environ.get("REACHY_STT_URL", "http://127.0.0.1:8090/v1/audio/transcriptions")
 # 언어도 앱과 같게 — 다르면 다른 디코드 경로를 데운다.
 STT_LANG = os.environ.get("REACHY_STT_LANG", "auto")
-VOICE = "Yuna"
+# TTS_BACKEND=say 폴백 경로에서만 쓰는 macOS 음성 이름.
+VOICE = os.environ.get("REACHY_VOICE", "Yuna")
 
 
 def _step(label: str, fn) -> bool:
@@ -87,56 +88,75 @@ def warm_llm() -> str:
     return f"(TTFT {done[0]:.2f}s → {done[-1]:.2f}s, 슬롯 {LLM_WARM_ROUNDS}회)"
 
 
-def _say_to_wav(text: str, path: Path) -> None:
-    subprocess.run(
-        ["say", "-v", VOICE, "-o", str(path), "--data-format=LEI16@16000", text],
-        check=True,
-    )
+def _tts_mod():
+    """앱의 tts 모듈. 요청 본문을 여기서 다시 짜면 tts.py 와 갈라진다."""
+    sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
+    import tts as tts_mod
+
+    return tts_mod
 
 
 def warm_tts() -> str:
     """첫 호출은 리소스를 올리느라 느리다. 소리 없이 한 번 태운다.
 
     Qwen3-TTS 는 **첫 실행에 Metal 커널 JIT 로 8.5초**가 걸린다(실측).
-    예열을 빠뜨리면 시연 첫 발화가 그만큼 늦는다.
+    예열을 빠뜨리면 시연 첫 발화가 그만큼 늦는다. **Metal JIT 캐시는 모델·화자별**
+    이라 조건이 어긋나면 예열이 헛돈다(0.6B 로 예열한 캐시가 1.7B 에는 안 먹혔다,
+    실측 10.0초) — 그래서 앱이 쓰는 함수를 그대로 부른다.
     """
-    if os.environ.get("TTS_BACKEND") == "qwen":
-        # 앱이 쓰는 함수를 그대로 호출한다 — 요청 본문을 여기서 다시 짜면
-        # tts.py 와 갈라지고, **Metal JIT 캐시는 모델·화자별이라** 조건이 어긋나면
-        # 예열이 헛돈다(0.6B 로 예열한 캐시가 1.7B 에는 안 먹혔다, 실측 10.0초).
-        sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
-        import tts as tts_mod
-
+    if os.environ.get("TTS_BACKEND", "qwen") != "say":
+        tts_mod = _tts_mod()
         if tts_mod._qwen_synth("준비되었습니다.") is None:
             raise RuntimeError(f"TTS 서버 응답 없음: {tts_mod.QWEN_URL}")
         return "(Qwen3-TTS)"
 
-    with tempfile.TemporaryDirectory() as d:
-        _say_to_wav("준비되었습니다.", Path(d) / "w.wav")
+    # TTS_BACKEND=say 로 명시했을 때만 온다 — 그 경로는 macOS 전용이다.
+    cmd = shutil.which("say")
+    if cmd is None:
+        raise RuntimeError("TTS_BACKEND=say 인데 `say` 가 없다(macOS 전용)")
+    subprocess.run([cmd, "-v", VOICE, "-o", "/dev/null", "준비"], check=True)
     return "(say)"
 
 
+def _probe_wav() -> bytes:
+    """STT 예열용 16 kHz mono WAV.
+
+    **플랫폼 전용 합성기에 의존하지 않는다.** 예전에는 macOS `say -o` 로 만들어
+    리눅스 PC 에서는 예열이 통째로 건너뛰어졌다. 지금은 우리 TTS 서버(앱이 쓰는
+    바로 그 경로)로 만들고, 그마저 없으면 톤으로 대신한다 — 무음은 쓰지 않는다
+    (Whisper 가 무음에서 환각을 뱉는다, `voice_loop._WHISPER_FILLER` 참조).
+    """
+    try:
+        tts_mod = _tts_mod()
+        pcm = tts_mod._qwen_synth("안녕하세요")
+        if pcm:
+            return pcm  # 서버는 wav 를 준다
+    except Exception:  # noqa: BLE001
+        pass
+    # 폴백: 440 Hz 톤 1초. 전사 내용은 의미 없고 **디코드 경로를 태우는 것**이 목적이다.
+    import numpy as np
+
+    t = np.arange(16000) / 16000
+    pcm16 = (np.sin(2 * np.pi * 440 * t) * 8000).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as o:
+        o.setnchannels(1)
+        o.setsampwidth(2)
+        o.setframerate(16000)
+        o.writeframes(pcm16.tobytes())
+    return buf.getvalue()
+
+
 def warm_stt() -> str:
-    """무음이 아니라 실제 한국어 음성으로 전사 경로를 태운다."""
-    with tempfile.TemporaryDirectory() as d:
-        wav = Path(d) / "w.wav"
-        _say_to_wav("안녕하세요", wav)
-        with wave.open(str(wav), "rb") as w:
-            frames, rate = w.readframes(w.getnframes()), w.getframerate()
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as o:
-            o.setnchannels(1)
-            o.setsampwidth(2)
-            o.setframerate(rate)
-            o.writeframes(frames)
-        r = requests.post(
-            STT_URL,
-            files={"file": ("w.wav", buf.getvalue(), "audio/wav")},
-            data={"language": STT_LANG},
-            timeout=120,
-        )
-        r.raise_for_status()
-        return f"({r.json().get('text', '')!r})"
+    """무음이 아니라 실제 음성으로 전사 경로를 태운다."""
+    r = requests.post(
+        STT_URL,
+        files={"file": ("w.wav", _probe_wav(), "audio/wav")},
+        data={"language": STT_LANG},
+        timeout=120,
+    )
+    r.raise_for_status()
+    return f"({r.json().get('text', '')!r})"
 
 
 def warm_moves() -> str:

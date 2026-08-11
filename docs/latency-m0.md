@@ -1,9 +1,17 @@
 # M0 지연 실측 결과
 
+> [!warning] 이 문서는 **2026-07-29 시점의 기록**이다 — 지금 스크립트를 돌리면 다른 값이 나온다
+> 당시 TTS 는 macOS `say` 였고 합성 시간을 `say -o` 로 쟀다. 이후 앱이
+> **Qwen3-TTS 스트리밍**으로 옮겼고(첫 청크 0.23초 고정, 입력 길이 무관),
+> `measure_latency.py` 도 앱과 같은 경로를 재도록 고쳤다(2026-08-12) — 이제
+> "합성" 열은 **첫 청크까지**의 시간이다. 아래 표의 0.79~0.90초는 `say` 시절
+> 수치이므로 현재 구성과 직접 비교하면 안 된다. 최신 파이프라인 수치는
+> `README.md` "총 지연" 표를 본다.
+
 - 측정일: 2026-07-29
 - 환경: macOS 26.5.2 / Apple M5 Pro / 48GB / Python 3.12.13
 - LLM: `unsloth/gemma-4-E4B-it-GGUF:Q4_K_M` @ llama-server :8080 (`--reasoning off`)
-- TTS: macOS `say -v Yuna`
+- TTS: macOS `say -v Yuna` (**당시 구성** — 현재는 Qwen3-TTS)
 - 스크립트: `scripts/measure_latency.py` (`./reachy.sh measure latency`)
 
 ## 측정값
