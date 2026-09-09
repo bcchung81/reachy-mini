@@ -330,3 +330,21 @@ def test_취소하면_드라이버가_모션을_끊는다(monkeypatch):
     p.cancel()
     assert driver.cancelled == 1
     assert p.moving is False
+
+
+# ── 해설 주제 제스처 (전파체험관) ────────────────────────────────
+# 사용자 **질문**을 기준으로 고른다. 로봇 답변을 기다렸다 고르면 LLM 스트림이 끝날
+# 때까지 몸이 멈춰 있어 즉시성(실측 +0.19s)이 죽는다.
+def test_해설_주제가_감정으로_이어진다():
+    from motion import classify
+    assert classify("타이타닉 이야기 해줘") == "no"
+    assert classify("마르코니가 성공한 게 언제야") == "joy"
+    assert classify("카폰이 뭐예요") == "surprise"
+
+
+def test_해설_규칙이_기존_우선순위를_깨지_않는다():
+    """해설 키워드를 앞에 두면 공연·인사가 밀린다. 회귀로 박제한다."""
+    from motion import classify
+    assert classify("노래 불러줘") == "perform"
+    assert classify("전파에 대한 노래 불러줘") == "perform"
+    assert classify("안녕") == "greet"

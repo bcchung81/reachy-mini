@@ -21,7 +21,20 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
-PROMPT = ROOT / "apps/voice_chat/voice_chat/prompt.md"
+APP = ROOT / "apps/voice_chat/voice_chat"
+sys.path.insert(0, str(APP))
+
+
+def _prompt() -> Path:
+    """앱이 실제로 쓸 프롬프트 파일. **session 과 같은 것을 골라야 한다.**
+
+    여기서 prompt.md 로 고정해 두면 해설 모드(REACHY_PROMPT)일 때 예열이
+    엉뚱한 접두사를 데워 **캐시가 헛돈다.** 실측(2026-09-09): 2.5k 토큰 프롬프트가
+    예열되면 0.089s, 안 되면 2.512s 다. 조용히 느려지는 종류라 반드시 맞춘다.
+    """
+    import session
+
+    return session.prompt_path()
 # **앱과 같은 환경변수를 읽는다**(CLAUDE.md: "주소는 전부 환경변수다").
 # 하드코딩하면 실기 분리 배치(앱은 로봇, 추론은 PC)에서 예열이 엉뚱한 호스트를
 # 조용히 데우고 — _step 이 실패를 '건너뜀'으로 삼킨다 — 첫 발화가 콜드스타트를
@@ -80,7 +93,7 @@ def _llm_ttft(system: str, user: str) -> float | None:
 
 def warm_llm() -> str:
     """앱과 동일한 시스템 블록으로 모든 슬롯의 프리픽스 캐시를 채운다."""
-    system = PROMPT.read_text()
+    system = _prompt().read_text()
     times = [_llm_ttft(system, f"안녕{i}") for i in range(LLM_WARM_ROUNDS)]
     done = [t for t in times if t is not None]
     if not done:

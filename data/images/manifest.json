@@ -1,0 +1,14 @@
+[
+  {
+    "name": "image_001.bmp",
+    "mimeType": "image/bmp",
+    "bytes": 116366,
+    "source": "BIN0001.bmp"
+  },
+  {
+    "name": "image_002.bmp",
+    "mimeType": "image/bmp",
+    "bytes": 46954,
+    "source": "BIN0002.bmp"
+  }
+]

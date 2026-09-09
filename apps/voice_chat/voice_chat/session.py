@@ -9,6 +9,7 @@
 **대화 로직을 고칠 때는 이 파일만 고친다.** 진입점에 복사하지 말 것.
 """
 
+import config
 import contextlib
 import sys
 import time
@@ -24,6 +25,26 @@ from motion import MotionPlayer, classify
 from tts import Speaker
 
 HERE = Path(__file__).parent
+
+
+def prompt_path() -> Path:
+    """시스템 프롬프트 파일. **설정 사다리로 고른다**(환경변수 → config.json → 기본값).
+
+    해설 모드(`prompt_exhibit.md`)로 바꾸려면 실기에서 `config.json` 에
+    `REACHY_PROMPT` 한 줄이면 되고 앱 재배포가 필요 없다 — §10 사다리를 그대로 쓴다.
+    (환경변수는 systemd 데몬의 자식인 앱에 닿지 않으므로 파일 단이 정답 경로다.)
+
+    파일명만 취한다. `config.json` 은 사람이 손으로 고치는 파일이라 오타 하나로
+    앱 밖을 가리키게 두지 않는다. 없는 파일이면 **경고하고** 기본값으로 되돌린다 —
+    조용히 폴백하면 해설 모드로 켰다고 믿는데 일반 미니가 도는, 가장 찾기 어려운
+    실패가 된다.
+    """
+    name = Path(config.get("REACHY_PROMPT", "prompt.md")).name
+    p = HERE / name
+    if not p.exists():
+        print(f"  [프롬프트 경고] {name} 를 찾을 수 없다 — prompt.md 로 되돌린다", flush=True)
+        return HERE / "prompt.md"
+    return p
 FALLBACK_LINE = "음, 잠깐 생각이 안 나요. 다시 한 번 말해 줄래요?"
 
 
@@ -68,7 +89,7 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     돌려주지만 `__exit__` 이 media_manager.close() 와 client.disconnect() 를 한다.
     이걸 빠뜨리면 대화가 끝나도 살아남은 스레드가 프로세스를 붙잡아 종료되지 않는다.
     """
-    llm = LLMClient(system_prompt=(HERE / "prompt.md").read_text())
+    llm = LLMClient(system_prompt=prompt_path().read_text())
     speaker = Speaker()
     player = None
     if not no_robot:
