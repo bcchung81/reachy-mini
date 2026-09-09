@@ -9,6 +9,7 @@
 **대화 로직을 고칠 때는 이 파일만 고친다.** 진입점에 복사하지 말 것.
 """
 
+import audio_setup
 import config
 import contextlib
 import sys
@@ -89,6 +90,10 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     돌려주지만 `__exit__` 이 media_manager.close() 와 client.disconnect() 를 한다.
     이걸 빠뜨리면 대화가 끝나도 살아남은 스레드가 프로세스를 붙잡아 종료되지 않는다.
     """
+    # **오디오 장치를 열기 전에** 볼륨을 맞춘다. 실기 스피커는 62%(-23dB)로
+    # 출고돼 목소리가 안 들린다(2026-09-09 실측). 시뮬(macOS)에서는 no-op 다.
+    audio_setup.maximize_volume()
+
     llm = LLMClient(system_prompt=prompt_path().read_text())
     speaker = Speaker()
     player = None
