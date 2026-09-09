@@ -1205,3 +1205,23 @@ def test_한_프레임의_예외로_귀를_잃지_않는다(monkeypatch):
 
     assert any("음성 루프 오류" in line for line in printed), "오류를 알리지 않았다"
     assert spk.calls > 5, f"오류 뒤에 계속 듣지 않았다 (프레임 {spk.calls}개에서 멈춤)"
+
+
+# ── 환각 방어가 본 경로에도 있어야 한다 (실기 2026-09-09) ─────────
+# _filler·_hallucinated 는 _check_wake(끼어들기 호출어) 에서만 불렸고, 실제 대화를
+# 모는 본 경로에는 `if not text: continue` 뿐이었다. 그래서 실기에서
+# `편집 Sno Sno Sno …`(200회)가 그대로 통과해 로봇이 엉뚱한 답을 했다.
+def test_꼬리에_잡음이_섞인_반복도_환각으로_잡는다():
+    """set 검사만으로는 못 잡는다 — 실기 로그가 정확히 그 형태였다."""
+    import voice_loop as vl
+    said = "편집 " + "Sno " * 200
+    assert vl._hallucinated(said)
+    # 토막이 3종 이상이어도 하나가 압도적이면 환각이다
+    assert vl._hallucinated("아 편집 Sno " + "Sno " * 50)
+
+
+def test_정상_발화는_환각으로_잡지_않는다():
+    import voice_loop as vl
+    assert not vl._hallucinated("전파체험관에서 제일 재미있는 부스가 어디예요")
+    assert not vl._hallucinated("타이타닉 이야기 좀 해줘")
+    assert not vl._hallucinated("삐삐가 뭔지 알려줘")

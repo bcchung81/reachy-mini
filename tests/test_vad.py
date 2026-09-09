@@ -117,3 +117,104 @@ def test_적응을_끌_수_있다(monkeypatch):
     finally:
         monkeypatch.delenv("REACHY_VAD_ADAPTIVE")
         importlib.reload(audio_in)
+
+
+# ── 부트스트랩 — 실기에서 터진 것 (2026-09-08) ───────────────────
+# 증상: 마이크는 잡히는데 STT 가 한 번도 안 불렸다. 로그는 2분 내내
+#   `[대기 중] 마이크 최대 0.503 / VAD 임계 0.010 · 발화 모으는 중`.
+# 원인: 소음 표본은 **대기 상태에서만** 쌓이는데 실기 바닥(0.09~0.50)이 초기
+#   임계(0.010)보다 높아 첫 프레임에서 발화 상태로 들어간 뒤 못 빠져나온다 →
+#   표본이 안 쌓임 → 임계가 0.010 에 묶임 → 발화가 영영 안 끝난다.
+LOUD_FLOOR = 0.20   # 실기 XMOS(AGC) 무음 바닥의 대표값
+
+
+def _floor(v=LOUD_FLOOR):
+    return np.full(FRAME, v, dtype=np.float32)
+
+
+def test_소음_바닥이_초기_임계보다_높아도_스스로_빠져나온다():
+    vad = EnergyVAD()
+    for _ in range(int(12 / 0.03)):     # 과길이 한도(기본 10초)를 넘겨 먹인다
+        vad.feed(_floor())
+    assert not vad.active, "바닥 소음에 발화 상태로 갇혔다"
+    assert vad.threshold > LOUD_FLOOR, f"바닥 위로 임계가 안 올라갔다: {vad.threshold}"
+
+
+def test_과길이_발화는_STT로_넘기지_않는다():
+    """10초를 0.7초 쉼 없이 이어 말하는 일은 드물다. 잡음 덩어리를 STT 에 넘기면
+    환각 응답으로 로봇이 혼자 떠든다 — 침묵보다 나쁘다."""
+    vad = EnergyVAD()
+    outs = [vad.feed(_floor()) for _ in range(int(12 / 0.03))]
+    assert all(o is None for o in outs), "잡음 덩어리가 STT 로 넘어갔다"
+
+
+def test_발화_버퍼가_무한정_자라지_않는다():
+    """상한이 없으면 약 63KB/s(≈226MB/시간) 로 자란다 — RAM 4GB CM4 는 못 버틴다."""
+    vad = EnergyVAD()
+    peak, amp = 0.0, LOUD_FLOOR
+    for _ in range(int(60 / 0.03)):
+        amp *= 1.002                    # 임계를 계속 따라 넘는 최악의 입력
+        vad.feed(_floor(amp))
+        peak = max(peak, vad.buffered_s)
+    assert peak <= 11.0, f"버퍼가 상한을 넘었다: {peak:.1f}s"
+
+
+def test_바닥이_높아진_뒤_그_위의_발화를_잡는다():
+    vad = EnergyVAD()
+    for _ in range(int(12 / 0.03)):     # 부트스트랩
+        vad.feed(_floor())
+    out = None
+    for _ in range(20):                 # 0.6초 발화
+        got = vad.feed(_floor(0.90))
+        out = got if got is not None else out
+    for _ in range(40):                 # 1.2초 바닥 → hangover 초과
+        got = vad.feed(_floor())
+        out = got if got is not None else out
+    assert out is not None, "높은 바닥 위의 발화를 못 잘랐다"
+
+
+def test_손잡이를_설정_사다리로_읽는다(monkeypatch):
+    """실기에서 앱은 systemd 데몬의 자식이라 **환경변수가 안 닿는다**(§10).
+    VAD 손잡이도 stt/llm/tts 와 같이 config.json 으로 바꿀 수 있어야 한다."""
+    import audio_in
+    import config
+
+    monkeypatch.setattr(
+        config, "get", lambda name, default: "9.0" if name == "REACHY_VAD_FACTOR" else default
+    )
+    assert audio_in.EnergyVAD()._factor == 9.0
+
+
+# ── 정숙·대기모션 취소 게이트 (실기 2026-09-08) ──────────────────
+# 증상: 질의응답은 되는데 몸통이 초기 자세에 굳어 있었다. 몸통은 녹화 모션에서만
+#   움직이는데(`driver._secondary` 는 yaw 를 늘 0.0 으로 낸다), 대기 모션이
+#   시작되자마자 `set_user_speaking(True)` 로 취소되고 sway 도 접혔다.
+# 원인: 게이트 입력이 `vad.active` — **임계를 한 프레임만 넘어도 참**이다.
+#   소음 바닥이 임계에 붙은 방에서는 잡음마다 몸이 굳는다.
+def test_잡음_한_프레임은_발화로_보고하지_않는다():
+    vad = EnergyVAD()
+    for _ in range(40):
+        vad.feed(_floor(0.001))      # 조용한 바닥으로 적응
+    vad.feed(_floor(0.5))            # 잡음 한 프레임(30ms)
+    assert vad.active, "발화 수집 자체는 시작돼야 한다(프리롤 보존)"
+    assert not vad.speaking, "한 프레임 잡음을 '사용자 발화'로 보고했다"
+
+
+def test_발화가_쌓이면_발화로_보고한다():
+    vad = EnergyVAD()
+    for _ in range(40):
+        vad.feed(_floor(0.001))
+    for _ in range(12):              # 0.36초 > min_speech_s(0.25)
+        vad.feed(_floor(0.5))
+    assert vad.speaking, "실제 발화가 쌓였는데 보고하지 않았다"
+
+
+def test_발화가_끝나면_보고가_내려간다():
+    vad = EnergyVAD()
+    for _ in range(40):
+        vad.feed(_floor(0.001))
+    for _ in range(12):
+        vad.feed(_floor(0.5))
+    for _ in range(40):              # 1.2초 침묵 → hangover 초과
+        vad.feed(_floor(0.001))
+    assert not vad.speaking and not vad.active

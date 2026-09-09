@@ -97,9 +97,18 @@ def _filler(text: str) -> bool:
 
 
 def _hallucinated(text: str) -> bool:
-    """같은 토막이 계속 반복되면 STT 환각이다 — 무음에 가까운 입력에서 자주 나온다."""
+    """같은 토막이 계속 반복되면 STT 환각이다 — 무음에 가까운 입력에서 자주 나온다.
+
+    **두 검사를 쓴다.** 종류 수만 세면 꼬리에 잡음 한두 토막이 섞였을 때 빠져나간다 —
+    실기 로그가 정확히 그 형태였다: `편집 Sno Sno … Sno`(200회, 2026-09-09).
+    한 토막이 전체의 60% 이상을 차지하면 종류가 셋이든 넷이든 환각으로 본다.
+    """
     toks = text.split()
-    return len(toks) >= 6 and len(set(toks)) <= 2
+    if len(toks) < 6:
+        return False
+    if len(set(toks)) <= 2:
+        return True
+    return collections.Counter(toks).most_common(1)[0][1] / len(toks) >= 0.6
 
 
 def _has_wake(text: str) -> bool:
@@ -302,7 +311,10 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
                     # 접는다 — 서보 소음이 STT 와 소음 바닥 추정을 오염시킨다.
                     # 30ms 마다 bool 하나 넘기는 것이라 비용은 없다.
                     if player is not None:
-                        player.set_user_speaking(vad.active)
+                        # **`active` 가 아니라 `speaking` 이다.** 잡음 한 프레임에
+                        # 몸이 굳고 대기 모션이 취소되면 몸통이 초기 자세에서
+                        # 못 벗어난다(실기 2026-09-08). audio_in.speaking 주석 참고.
+                        player.set_user_speaking(vad.speaking)
                     if busy and now < barge_until:
                         busy = False  # 방금 끊었다 — 사용자 발화를 받는 중이다
                     if busy:
@@ -487,7 +499,15 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
                                 print(
                                     f"  [대기 중] 마이크 최대 {idle_peak:.3f}"
                                     f" / VAD 임계 {vad.threshold:.3f}"
-                                    f" {'· 발화 모으는 중' if vad.active else ''}",
+                                    f" {'· 발화 모으는 중' if vad.active else ''}"
+                                    # 과길이 강제종료가 늘어난다면 바닥이 임계를 계속
+                                    # 넘고 있다는 뜻이다 — 실기에서 이 고리에 걸려
+                                    # STT 가 한 번도 안 불린 적이 있다(2026-09-08).
+                                    + (
+                                        f" · 과길이 강제종료 {vad.overlong_resets}회"
+                                        if vad.overlong_resets
+                                        else ""
+                                    ),
                                     flush=True,
                                 )
                                 # 계속 임계를 못 넘으면 말을 걸어도 못 알아듣는다.
@@ -508,9 +528,24 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
 
                     t0 = time.time()
                     text = transcribe(utterance)
-                    print(f"나(STT +{time.time() - t0:.2f}s)> {text}", flush=True)
+                    # 사람 발화는 이만큼 길지 않다. 환각 전사가 수백 토막이라
+                    # 로그를 통째로 덮어 정작 볼 줄이 밀려난다.
+                    shown = text if len(text) <= 200 else text[:200] + "…"
+                    print(f"나(STT +{time.time() - t0:.2f}s)> {shown}", flush=True)
                     if not text:
                         continue  # 침묵·잡음 — 다시 듣기
+
+                    # **환각 방어는 여기에도 필요하다.** 예전에는 `_check_wake`
+                    # (끼어들기 호출어 확인)에만 걸려 있어서, 실제 대화를 모는 이
+                    # 경로는 비어 있지 않기만 하면 무엇이든 받았다. 실기에서
+                    # `편집 Sno Sno …`(200회)와 `!` 가 그대로 통과해 로봇이 엉뚱한
+                    # 답을 했다(2026-09-09). 잡음에 답하는 것은 침묵보다 나쁘다.
+                    if _filler(text):
+                        print(f"  [상용구 무시 — 환각] '{text.strip()}'", flush=True)
+                        continue
+                    if _hallucinated(text):
+                        print(f"  [반복 전사 무시 — 환각] '{text.strip()[:30]}…'", flush=True)
+                        continue
 
                     # 끊은 직후의 발화만 "끼어들 때 낸 소리"로 본다. **내용까지 보고 판단한다** —
                     # 호출어를 떼고도 말이 남으면 그건 질문이므로 그대로 받는다
