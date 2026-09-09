@@ -9,6 +9,7 @@
 #   ./reachy.sh demo --text            키보드로 대화 — 마이크가 말썽일 때
 #   ./reachy.sh demo --no-robot        시뮬 없이 대화·음성만 — 최후 폴백
 #   ./reachy.sh demo --exit-clean      앱을 나갈 때 서버까지 함께 내린다
+#   ./reachy.sh serve                  추론 3종(LLM·STT·TTS)만 — 실기 배포용, LAN 에 연다
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
 #   ./reachy.sh logs [줄수]            마지막 세션 로그 (앱 + 서버 오류) — 문제 생기면 여기부터
 #   ./reachy.sh stop                   띄운 것 전부 종료 (고아까지 쓸어낸다)
@@ -24,6 +25,17 @@ cd "$(dirname "$0")"
 SELF="$PWD/$(basename "$0")"
 
 LLAMACTL="$HOME/workspace/llamactl.sh"   # `llama` 는 셸 별칭이라 스크립트에서 못 쓴다
+
+# 추론 3종(LLM·STT·TTS)이 **어느 주소로 듣는지.** 기본은 loopback 이다.
+#
+# 시뮬은 전부 이 맥 한 대에서 도니까 loopback 이 정답이고, 기본값을 0.0.0.0 으로
+# 두면 개발 PC 의 모델 서버가 사내망에 그냥 열린다. 반대로 실기(Wireless)는
+# **앱이 로봇 위에서 돌고 추론 3종은 이 PC 에 남으므로** 로봇에서 닿아야 한다 —
+# 그 구성은 `serve` 가 0.0.0.0 으로 올린다. "시뮬에서만 필요한 것을 기본값으로
+# 만들지 않는다" 의 반대 방향이지만 이유는 같다: 위험한 쪽을 기본으로 두지 않는다.
+#
+# 헬스체크는 언제나 localhost 로 한다 — 0.0.0.0 바인드는 localhost 로도 응답한다.
+BIND_HOST="${REACHY_BIND_HOST:-127.0.0.1}"
 PY=".venv/bin/python"
 LOG_DIR=".demo-logs"
 APP_LOG="$LOG_DIR/app.log"      # 앱(대화) 출력 — 세션 구분자와 함께 누적된다
@@ -36,7 +48,7 @@ say_ok()   { echo "${c_ok}OK${c_off}   $1"; }
 say_bad()  { echo "${c_bad}FAIL${c_off} $1"; }
 say_step() { echo; echo "▶ $1"; }
 
-usage() { sed -n '2,19p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ════════════════════════════════════════════════════════════════
 #  sim — 시뮬레이터 데몬 (구 run-sim.sh)
@@ -236,6 +248,118 @@ cleanup_partial() {
   STARTED_TTS=0
 }
 
+# ── 추론 3종 기동 ────────────────────────────────────────────────
+# demo(시뮬 전체 스택)와 serve(실기용 서버만)가 **같은 코드를 쓴다.** 갈라 두면
+# 한쪽만 고쳐지고 시연장에서 어긋난다 — main.py 가 생성 템플릿인 채로 방치됐던
+# 것과 같은 종류의 사고다.
+
+start_llm_stt() {
+  say_step "LLM(:8080) · STT(:8090) — bind $BIND_HOST"
+  if up http://localhost:8080/health && up http://localhost:8090/health; then
+    # 떠 있다고 원하는 주소로 듣는다는 보장이 없다. loopback 으로 떠 있던 것을
+    # 그대로 두면 로봇에서 조용히 못 붙는다.
+    if [ "$BIND_HOST" != "127.0.0.1" ] \
+       && ! ( up "http://$BIND_HOST:8080/health" && up "http://$BIND_HOST:8090/health" ); then
+      say_bad "이미 떠 있는 LLM/STT 가 $BIND_HOST 로 듣지 않는다 (loopback 전용) — ./reachy.sh stop 후 다시"
+      return 1
+    fi
+    echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+    return 0
+  fi
+  [ -x "$LLAMACTL" ] || { say_bad "$LLAMACTL 을 찾을 수 없다"; return 1; }
+  # llamactl 은 `--host 127.0.0.1` 을 박아 두고 STT 에는 --host 를 아예 안 넘겼다.
+  # LLM_HOST/STT_HOST 를 읽도록 고쳐 뒀다(기본값은 그대로 127.0.0.1).
+  #
+  # REACH_HOME 도 함께 넘긴다 — llamactl 의 기본값 ~/workspace/reach-mini 는
+  # **존재하지 않는 경로**라 STT 가 "python 없음" 으로 죽는다. 이 저장소가 그 자리다.
+  # 사용자가 환경변수로 지정했으면 그쪽이 이긴다.
+  REACH_HOME="${REACH_HOME:-$PWD}" \
+  STT_PYTHON="${STT_PYTHON:-$PWD/$PY}" \
+  STT_SERVER="${STT_SERVER:-$PWD/stt_server.py}" \
+  LLM_HOST="$BIND_HOST" STT_HOST="$BIND_HOST" \
+    "$LLAMACTL" reach-llm || { say_bad "LLM/STT 기동 실패"; return 1; }
+  wait_for http://localhost:8080/health "LLM" 120 || return 1
+  wait_for http://localhost:8090/health "STT" 180 || return 1   # 모델 예열이 오래 걸린다
+}
+
+start_tts() {
+  if [ "$TTS_BACKEND" = "qwen" ]; then
+    say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS, bind $BIND_HOST"
+    if up "http://localhost:$TTS_PORT/health"; then
+      if [ "$BIND_HOST" != "127.0.0.1" ] && ! up "http://$BIND_HOST:$TTS_PORT/health"; then
+        say_bad "이미 떠 있는 TTS 가 $BIND_HOST 로 듣지 않는다 (loopback 전용) — ./reachy.sh stop 후 다시"
+        return 1
+      fi
+      echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+    elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
+      # 자산이 없다고 시연을 막지 않는다 — say 로 물러나 계속 진행한다
+      say_bad "TTS 자산을 찾을 수 없다: $TTS_ASSETS"
+      [ -x "$CRISPASR" ]   || echo "   없음: $CRISPASR"
+      [ -f "$TTS_MODEL" ]  || echo "   없음: $TTS_MODEL"
+      [ -f "$TTS_CODEC" ]  || echo "   없음: $TTS_CODEC"
+      echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+      TTS_BACKEND=say
+    elif ! ensure_crispasr; then
+      say_bad "crispasr 바이너리가 실행되지 않는다 (dylib 문제를 자동 복구하지 못했다)"
+      "$CRISPASR" --version 2>&1 | head -3 | sed 's/^/   /'
+      echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+      TTS_BACKEND=say
+    else
+      echo "   기동 중 ($TTS_BACKEND_NAME, 화자 $TTS_VOICE)... 로그: $LOG_DIR/tts.log"
+      nohup "$CRISPASR" --server --host "$BIND_HOST" --port "$TTS_PORT" --backend "$TTS_BACKEND_NAME" \
+        -m "$TTS_MODEL" --codec-model "$TTS_CODEC" --voice "$TTS_VOICE" \
+        > "$LOG_DIR/tts.log" 2>&1 &
+      echo $! > "$TTS_PID_FILE"
+      STARTED_TTS=1   # 기동 실패 시 trap 이 이것만 보고 정리한다
+      if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
+        say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
+        echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+        TTS_BACKEND=say
+      fi
+    fi
+  fi
+}
+
+# ── serve — 실기(Wireless) 구성 ─────────────────────────────────
+# **앱은 로봇 위에서 돌고 추론 3종만 이 PC 에 남는다.** 그래서 시뮬 데몬도 앱도
+# 띄우지 않는다. 로봇이 닿아야 하므로 이 모드만 기본 바인드가 0.0.0.0 이다.
+run_serve() {
+  BIND_HOST="${REACHY_BIND_HOST:-0.0.0.0}"
+
+  trap 'cleanup_partial; exit 130' INT TERM
+  start_llm_stt || exit 1
+  start_tts
+  STARTED_TTS=0        # 여기부터는 기동이 끝났다 — 서버를 남겨 두는 것이 정상이다
+  trap - INT TERM
+
+  say_step "상태"
+  status
+
+  # 로봇에 넣을 주소를 **직접 만들어 준다.** 손으로 IP 를 옮겨 적다 틀리면
+  # 앱은 기본값(loopback)으로 붙어 조용히 벙어리가 된다(§10).
+  local lan_ip=""
+  local i
+  for i in en0 en1 en7; do
+    lan_ip="$(ipconfig getifaddr "$i" 2>/dev/null || true)"
+    [ -n "$lan_ip" ] && break
+  done
+  echo
+  if [ -z "$lan_ip" ]; then
+    say_bad "이 맥의 LAN 주소를 찾지 못했다 — Wi-Fi 가 켜져 있는지 확인한다"
+    exit 1
+  fi
+  say_step "로봇에 넣을 설정 — /home/pollen/.config/reachy-mini-voice-chat/config.json"
+  cat <<JSON
+{
+  "REACHY_LLM_URL": "http://$lan_ip:8080",
+  "REACHY_STT_URL": "http://$lan_ip:8090/v1/audio/transcriptions",
+  "TTS_QWEN_URL":   "http://$lan_ip:$TTS_PORT/v1/audio/speech"
+}
+JSON
+  echo
+  echo "${c_dim}서버는 계속 떠 있다. 내리려면 ./reachy.sh stop${c_off}"
+}
+
 run_demo() {
   trap 'cleanup_partial; exit 130' INT TERM
 
@@ -253,17 +377,7 @@ run_demo() {
   done
 
   # ── 1. LLM + STT ──────────────────────────────────────────────
-  say_step "LLM(:8080) · STT(:8090)"
-  if up http://localhost:8080/health && up http://localhost:8090/health; then
-    echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
-  else
-    if [ ! -x "$LLAMACTL" ]; then
-      say_bad "$LLAMACTL 을 찾을 수 없다"; exit 1
-    fi
-    "$LLAMACTL" reach-llm || { say_bad "LLM/STT 기동 실패"; exit 1; }
-    wait_for http://localhost:8080/health "LLM" 120 || exit 1
-    wait_for http://localhost:8090/health "STT" 180 || exit 1   # 모델 예열이 오래 걸린다
-  fi
+  start_llm_stt || exit 1
 
   # ── 2. 시뮬레이터 데몬 ────────────────────────────────────────
   say_step "시뮬레이터 데몬(:8000)"
@@ -283,37 +397,7 @@ run_demo() {
   fi
 
   # ── 3. TTS 서버 ───────────────────────────────────────────────
-  if [ "$TTS_BACKEND" = "qwen" ]; then
-    say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS"
-    if up "http://localhost:$TTS_PORT/health"; then
-      echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
-    elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
-      # 자산이 없다고 시연을 막지 않는다 — say 로 물러나 계속 진행한다
-      say_bad "TTS 자산을 찾을 수 없다: $TTS_ASSETS"
-      [ -x "$CRISPASR" ]   || echo "   없음: $CRISPASR"
-      [ -f "$TTS_MODEL" ]  || echo "   없음: $TTS_MODEL"
-      [ -f "$TTS_CODEC" ]  || echo "   없음: $TTS_CODEC"
-      echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
-      TTS_BACKEND=say
-    elif ! ensure_crispasr; then
-      say_bad "crispasr 바이너리가 실행되지 않는다 (dylib 문제를 자동 복구하지 못했다)"
-      "$CRISPASR" --version 2>&1 | head -3 | sed 's/^/   /'
-      echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
-      TTS_BACKEND=say
-    else
-      echo "   기동 중 ($TTS_BACKEND_NAME, 화자 $TTS_VOICE)... 로그: $LOG_DIR/tts.log"
-      nohup "$CRISPASR" --server --port "$TTS_PORT" --backend "$TTS_BACKEND_NAME" \
-        -m "$TTS_MODEL" --codec-model "$TTS_CODEC" --voice "$TTS_VOICE" \
-        > "$LOG_DIR/tts.log" 2>&1 &
-      echo $! > "$TTS_PID_FILE"
-      STARTED_TTS=1   # 기동 실패 시 trap 이 이것만 보고 정리한다
-      if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
-        say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
-        echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
-        TTS_BACKEND=say
-      fi
-    fi
-  fi
+  start_tts
   export TTS_BACKEND   # 앱(main.py/demo.py)이 같은 백엔드를 쓰도록 물려준다
 
   # ── 4. 예열 ───────────────────────────────────────────────────
@@ -397,6 +481,7 @@ cmd="${1:-}"
 case "$cmd" in
   sim)   run_sim "$@" ;;
   demo)  run_demo "$@" ;;
+  serve) run_serve "$@" ;;
   check) say_step "상태"; status ;;
   stop)  stop_all ;;
   logs)  show_logs "$@" ;;
