@@ -159,6 +159,22 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         # 끼어들기가 걸리면 speaker.stop() 이 남은 문장을 큐에서 버린다.
         return
 
+    # ── 카메라 ────────────────────────────────────────────────────────
+    # **모션보다 먼저 찍는다.** 응답 모션이 머리를 기울이면 천장이나 바닥을 찍게
+    # 된다(실측으로 천장만 찍힌 프레임을 얻었다). 이 시점의 머리는 중립에 가깝다 —
+    # 사용자가 말하기 시작할 때 `set_user_speaking` 이 대기 모션을 이미 끊었고,
+    # 발화 수집 + STT 사이에 sway 만 남아 중립으로 돌아와 있다.
+    #
+    # 대신 캡처 시간만큼 모션이 늦는다. 카메라가 열려 있으면 0.001s 라 무시할 수
+    # 있고, 콜드면 약 2.5s 다(자동노출 수렴 1초 포함) — 그때는 로봇이 잠깐 가만히
+    # 있다가 반응하는데, "보고 나서 답한다" 는 동작으로 읽혀 어색하지 않다.
+    #
+    # 매 턴 찍지 않는 이유는 vision.py 참고(이미지가 붙으면 첫 토큰이
+    # 0.105s → 0.4~0.6s 로 간다, 2026-09-09 실측).
+    image = camera_in.grab_jpeg() if vision.wants_camera(user) else None
+    if image is not None:
+        print(f"  [카메라 {len(image)}B +{time.time() - t0:.2f}s]", flush=True)
+
     # "슬픈 표정 지어봐" 같은 연기 요청은 그 감정을 그대로 재생한다.
     # 감정 단어만 있는 "나 슬퍼" 는 여기 걸리지 않고 LLM 이 공감으로 답한다.
     acted = emotions.find_request(user) if player else None
@@ -170,14 +186,6 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         # 공연(노래·춤)은 요청 자체가 목적이라 진행 중인 모션을 끊고서라도 보여준다
         name = player.play_for(category, force=(category == "perform")) if player else None
         print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
-
-    # ── 카메라 ────────────────────────────────────────────────────────
-    # **모션이 나간 뒤에 찍는다.** 로봇이 이미 움직이는 동안 프레임을 잡으므로
-    # 캡처 시간이 체감 지연에 얹히지 않는다. 매 턴 찍지 않는 이유는 vision.py 참고
-    # (이미지가 붙으면 첫 토큰이 0.105s → 0.4~0.6s 로 간다, 2026-09-09 실측).
-    image = camera_in.grab_jpeg() if vision.wants_camera(user) else None
-    if image is not None:
-        print(f"  [카메라 {len(image)}B +{time.time() - t0:.2f}s]", flush=True)
 
     # 첫 절만 즉시 발화하고 나머지는 묶어서 한 번에 보낸다.
     # 첫 절을 말하는 동안 스트림이 끝나므로 문장 사이에 공백이 생기지 않는다.

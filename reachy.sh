@@ -684,6 +684,20 @@ robot_up() {
   local ip
   robot_reachable || exit 1
 
+  # ── 0. 백엔드 상태를 **가장 먼저** 본다 ───────────────────────
+  # 예전에는 이 검사가 없어서, 백엔드가 죽은 로봇에 서버를 띄우고 config 를 맞추고
+  # 예열까지 다 한 다음 앱을 띄우고 나서야 실패했다(실측 2026-09-09). 헛일을
+  # 하지 않고, 고칠 수 있으면 여기서 고친다.
+  if ! rget /api/daemon/status | grep -q '"state":"running"'; then
+    say_bad "로봇 백엔드가 내려가 있다 — 예열 전에 복구부터 한다"
+    robot_fix
+    if ! rget /api/daemon/status | grep -q '"state":"running"'; then
+      say_bad "복구하지 못했다. 전원과 케이블을 확인한 뒤 다시 시도한다"
+      exit 1
+    fi
+    say_ok "백엔드 복구됨 — 기동을 이어간다"
+  fi
+
   # ── 1. 맥: 추론 3종을 LAN 에 ──────────────────────────────
   # `serve` 를 통째로 부르지 않는다 — 그쪽은 config 블록까지 찍어서 아래 3단계와
   # 중복된다. 기동 함수만 쓴다(코드는 공유하므로 갈라지지 않는다).
