@@ -118,3 +118,32 @@ def test_유휴시간이_지나면_스스로_닫는다(monkeypatch):
     while not closed and _t.time() < end:
         _t.sleep(0.05)
     assert closed == [1], "유휴 시간이 지났는데 닫히지 않았다"
+
+
+def test_열자마자_잡지_않고_수렴을_기다린다(monkeypatch):
+    """열자마자 가져오면 **어둡다.** libcamera 의 자동노출·화이트밸런스가 몇 프레임
+    돌아야 수렴한다 — 실측(2026-09-09, 사무실 조명): 연 직후 JPEG 39KB(거의 안 보임),
+    1초 뒤 64KB(정상 노출). 첫 프레임을 그냥 쓰면 시각 기능이 무용지물이 된다.
+    """
+    _linux(monkeypatch)
+    monkeypatch.setattr(config, "get", lambda n, d: {
+        "REACHY_CAMERA_SETTLE_S": "0.3", "REACHY_CAMERA_IDLE_S": "60"}.get(n, d))
+    pulls = []
+    monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
+    monkeypatch.setattr(camera_in, "_pull", lambda: pulls.append(1) or JPEG)
+    camera_in.grab_jpeg()
+    assert len(pulls) > 1, "수렴용 프레임을 버리지 않고 첫 장을 그대로 썼다"
+
+
+def test_열려_있으면_다시_기다리지_않는다(monkeypatch):
+    """수렴은 열 때 한 번이다. 매 요청마다 기다리면 연속 질문이 느려진다."""
+    _linux(monkeypatch)
+    monkeypatch.setattr(config, "get", lambda n, d: {
+        "REACHY_CAMERA_SETTLE_S": "0.3", "REACHY_CAMERA_IDLE_S": "60"}.get(n, d))
+    monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
+    monkeypatch.setattr(camera_in, "_pull", lambda: JPEG)
+    camera_in.grab_jpeg()
+    pulls = []
+    monkeypatch.setattr(camera_in, "_pull", lambda: pulls.append(1) or JPEG)
+    camera_in.grab_jpeg()
+    assert len(pulls) == 1, "이미 열려 있는데 또 수렴을 기다렸다"

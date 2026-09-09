@@ -42,6 +42,17 @@ def _idle_s() -> float:
     return float(config.get("REACHY_CAMERA_IDLE_S", "20"))
 
 
+def _settle_s() -> float:
+    """파이프라인을 연 뒤 자동노출이 수렴하도록 기다리는 시간(초).
+
+    **열자마자 잡으면 어둡다.** libcamera 의 AE/AWB 는 몇 프레임을 돌아야 맞는다.
+    실측(2026-09-09, 사무실 조명): 연 직후 JPEG 39KB — 사람이 거의 안 보이는
+    수준이었다. 1초 뒤 64KB 로 정상 노출이 됐다. 첫 장을 그대로 쓰면 시각 기능이
+    무용지물이라, 그 사이 프레임은 **버린다.**
+    """
+    return float(config.get("REACHY_CAMERA_SETTLE_S", "1.0"))
+
+
 def _open():
     """파이프라인을 세우고 **PLAYING 까지 갔는지 확인한다.**
 
@@ -87,6 +98,17 @@ def _pull() -> bytes | None:
         return bytes(info.data)
     finally:
         buf.unmap(info)
+
+
+def _settle() -> None:
+    """수렴용 프레임을 버린다. **열 때 한 번만** 한다 — 매 요청마다 하면
+    연속 질문이 그만큼 느려진다(열려 있으면 캡처가 0.001s 다)."""
+    end = time.monotonic() + _settle_s()
+    while time.monotonic() < end:
+        try:
+            _pull()
+        except Exception:  # noqa: BLE001
+            return  # 아직 프레임이 안 나온다 — 본 캡처에서 다시 시도한다
 
 
 def _shutdown() -> None:
@@ -144,6 +166,8 @@ def grab_jpeg() -> bytes | None:
     try:
         if _pipe is None:
             _pipe = _open()
+            if _settle_s() > 0:
+                _settle()
         data = _pull()
     except Exception as e:  # noqa: BLE001
         print(
