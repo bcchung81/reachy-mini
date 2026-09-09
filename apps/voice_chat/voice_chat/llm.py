@@ -4,6 +4,7 @@
 파손 빈도를 낮춘다(매 턴 1쌍씩 자르면 매번 깨진다).
 """
 
+import base64
 import json
 from collections.abc import Iterator
 
@@ -39,12 +40,34 @@ class LLMClient:
         self.history_pairs = history_pairs
         self.timeout = timeout
 
-    def chat_stream(self, user_text: str) -> Iterator[str]:
-        """사용자 발화 → 절 단위 스트림. 정상 종료 시 이력에 한 쌍 추가."""
+    def chat_stream(
+        self, user_text: str, image_jpeg: bytes | None = None
+    ) -> Iterator[str]:
+        """사용자 발화 → 절 단위 스트림. 정상 종료 시 이력에 한 쌍 추가.
+
+        `image_jpeg` 를 주면 **이번 요청에만** 이미지를 싣는다(카메라 질문).
+
+        두 가지를 지킨다:
+
+        1. **이미지가 없으면 content 는 문자열 그대로 둔다.** 항상 리스트로 만들면
+           이미지 없는 턴의 프롬프트 문자열이 달라져 **기존 프리픽스 캐시가 통째로
+           무효화된다**(실측: 미예열이면 2.5k 토큰 프롬프트가 0.089s → 2.512s).
+        2. **이력에는 텍스트만 남긴다.** base64 를 이력에 넣으면 매 턴 앞부분이
+           바뀌어 캐시가 계속 깨지고 — 이력을 2쌍씩 뭉텅이로 자르는 이유가
+           무의미해진다 — 무엇보다 **3턴 전 장면을 지금 질문의 근거로 삼게 된다.**
+        """
+        if image_jpeg is None:
+            content: object = user_text
+        else:
+            b64 = base64.b64encode(image_jpeg).decode("ascii")
+            content = [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ]
         messages = (
             [{"role": "system", "content": self.system_prompt}]
             + self.history
-            + [{"role": "user", "content": user_text}]
+            + [{"role": "user", "content": content}]
         )
         r = _session.post(
             f"{self.base_url}/v1/chat/completions",

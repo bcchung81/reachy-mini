@@ -10,6 +10,7 @@
 """
 
 import audio_setup
+import camera_in
 import config
 import contextlib
 import sys
@@ -19,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import emotions
 import selfintro
+import vision
 from driver import RobotDriver
 from idler import Idler
 from llm import LLMClient
@@ -125,6 +127,10 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
         )
         idler.start()
         stack.callback(idler.stop)
+
+    # 카메라 파이프라인은 열려 있을 수 있다(REACHY_CAMERA_IDLE_S>0). 종료 경로에서
+    # 반드시 닫는다 — 안 닫으면 앱이 끝나도 장치를 쥔 채 남아 다음 기동이 깨진다.
+    stack.callback(camera_in.close)
     return llm, speaker, player
 
 
@@ -165,12 +171,20 @@ def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
         name = player.play_for(category, force=(category == "perform")) if player else None
         print(f"  [모션 {category}/{name} +{time.time() - t0:.2f}s]")
 
+    # ── 카메라 ────────────────────────────────────────────────────────
+    # **모션이 나간 뒤에 찍는다.** 로봇이 이미 움직이는 동안 프레임을 잡으므로
+    # 캡처 시간이 체감 지연에 얹히지 않는다. 매 턴 찍지 않는 이유는 vision.py 참고
+    # (이미지가 붙으면 첫 토큰이 0.105s → 0.4~0.6s 로 간다, 2026-09-09 실측).
+    image = camera_in.grab_jpeg() if vision.wants_camera(user) else None
+    if image is not None:
+        print(f"  [카메라 {len(image)}B +{time.time() - t0:.2f}s]", flush=True)
+
     # 첫 절만 즉시 발화하고 나머지는 묶어서 한 번에 보낸다.
     # 첫 절을 말하는 동안 스트림이 끝나므로 문장 사이에 공백이 생기지 않는다.
     spoke = False
     rest: list[str] = []
     try:
-        for clause in llm.chat_stream(user):
+        for clause in llm.chat_stream(user, image):
             print(f"미니> {clause}")
             if not spoke:
                 print(f"  [첫 절 +{time.time() - t0:.2f}s]")
