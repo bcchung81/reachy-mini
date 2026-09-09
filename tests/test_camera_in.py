@@ -62,16 +62,29 @@ def test_실기에서_실패하면_경고하고_시각없이_간다(monkeypatch,
     assert "카메라" in capsys.readouterr().out
 
 
-def test_기본은_매번_닫는다(monkeypatch):
-    """CM4 콜드 스타트를 아직 안 쟀다. 재기 전까지는 유휴 비용 0 쪽으로 둔다 —
-    상시 켜두면 부하 2.4 에서 데몬 연결(5초)이 실패한 전례가 있다."""
+def test_유휴_0이면_매번_닫는다(monkeypatch):
+    """부하가 걱정되는 환경을 위한 탈출구. 대신 매 질문이 1.13s 를 문다."""
     _linux(monkeypatch)
+    monkeypatch.setattr(config, "get",
+                        lambda n, d: "0" if n == "REACHY_CAMERA_IDLE_S" else d)
     closed = []
     monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
     monkeypatch.setattr(camera_in, "_pull", lambda: JPEG)
     monkeypatch.setattr(camera_in, "_shutdown", lambda: closed.append(1))
     camera_in.grab_jpeg()
     assert closed == [1]
+
+
+def test_기본값은_열어_둔다(monkeypatch):
+    """실측(2026-09-09, CM4): 열고 닫으면 1.13s, 열어 두면 0.03s 다. 기본은
+    연속 질문이 빠른 쪽이고, 유휴 감시가 20초 뒤에 닫아 부하를 되돌린다."""
+    _linux(monkeypatch)
+    closed = []
+    monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
+    monkeypatch.setattr(camera_in, "_pull", lambda: JPEG)
+    monkeypatch.setattr(camera_in, "_shutdown", lambda: closed.append(1))
+    camera_in.grab_jpeg()
+    assert closed == [], "기본값에서 매번 닫으면 연속 질문이 매번 1.13s 를 문다"
 
 
 def test_유휴시간을_주면_열어_둔다(monkeypatch):
@@ -86,3 +99,22 @@ def test_유휴시간을_주면_열어_둔다(monkeypatch):
     camera_in.grab_jpeg()
     assert closed == [], "유휴시간 안에서는 닫지 않는다"
     assert opened == [1], "두 번째 호출은 열려 있는 것을 재사용한다"
+
+
+def test_유휴시간이_지나면_스스로_닫는다(monkeypatch):
+    """열어두면 캡처가 1.13s → 0.03s 로 빨라지지만(실측 2026-09-09) CM4 부하가
+    약 반 코어 오른다(1.69 → 2.07). 부하 2.4 에서 데몬 연결(5초)이 실패한 전례가
+    있어 **계속 열어둘 수 없다.** 유휴 시간이 지나면 스스로 닫아야 한다."""
+    import time as _t
+    _linux(monkeypatch)
+    monkeypatch.setattr(config, "get",
+                        lambda n, d: "0.2" if n == "REACHY_CAMERA_IDLE_S" else d)
+    closed = []
+    monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
+    monkeypatch.setattr(camera_in, "_pull", lambda: JPEG)
+    monkeypatch.setattr(camera_in, "_shutdown", lambda: closed.append(1))
+    camera_in.grab_jpeg()
+    end = _t.time() + 5
+    while not closed and _t.time() < end:
+        _t.sleep(0.05)
+    assert closed == [1], "유휴 시간이 지났는데 닫히지 않았다"
