@@ -10,8 +10,11 @@
 #   ./reachy.sh demo --no-robot        시뮬 없이 대화·음성만 — 최후 폴백
 #   ./reachy.sh demo --exit-clean      앱을 나갈 때 서버까지 함께 내린다
 #   ./reachy.sh serve                  추론 3종(LLM·STT·TTS)만 — 실기 배포용, LAN 에 연다
+#   ./reachy.sh robot up               실기 시연 기동: serve + config 동기화 + 예열 + 앱
+#   ./reachy.sh robot down [--keep-servers]   실기 정지 — 앱 + 맥 추론 3종·MCP 까지 정리
+#   ./reachy.sh robot deploy|logs|status|fix  실기 운영 — 재배포·실시간 로그·상태·복구
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
-#   ./reachy.sh logs [줄수]            마지막 세션 로그 (앱 + 서버 오류) — 문제 생기면 여기부터
+#   ./reachy.sh logs [줄수]            마지막 세션 로그 + **실시간 이어보기** (--no-follow 로 끔)
 #   ./reachy.sh stop                   띄운 것 전부 종료 (고아까지 쓸어낸다)
 #   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
 #   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
@@ -48,7 +51,7 @@ say_ok()   { echo "${c_ok}OK${c_off}   $1"; }
 say_bad()  { echo "${c_bad}FAIL${c_off} $1"; }
 say_step() { echo; echo "▶ $1"; }
 
-usage() { sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ════════════════════════════════════════════════════════════════
 #  sim — 시뮬레이터 데몬 (구 run-sim.sh)
@@ -206,8 +209,17 @@ sweep() {  # pattern label
   return 0
 }
 
-show_logs() {  # [줄수]
-  local n=${1:-80}
+# **기본이 실시간이다.** 로그를 보는 이유는 대개 "지금 무슨 일이 나는지"를 보려는
+# 것인데, 한 번 찍고 끝나면 다시 치게 된다. 한 번만 보려면 --no-follow 다.
+show_logs() {  # [줄수] [--no-follow]
+  local n=80 follow=1 a
+  for a in "$@"; do
+    case "$a" in
+      --no-follow|-n) follow=0 ;;
+      ""|*[!0-9]*)    ;;   # 숫자가 아닌 인자는 무시한다
+      *)              n="$a" ;;
+    esac
+  done
   if [ -f "$APP_LOG" ]; then
     say_step "마지막 세션 (앱) — $APP_LOG"
     # 마지막 '세션 시작' 이후만 보여준다. 없으면 꼬리만.
@@ -224,6 +236,11 @@ show_logs() {  # [줄수]
     say_step "$(basename "$f") 끝부분"
     grep -iE "error|traceback|경고|실패|warn" "$f" | tail -10 || tail -5 "$f"
   done
+
+  if [ "$follow" = "1" ] && [ -f "$APP_LOG" ]; then
+    say_step "실시간 — 새 줄이 나오는 대로 이어 붙는다 ${c_dim}(Ctrl-C 로 종료)${c_off}"
+    tail -f "$APP_LOG"
+  fi
 }
 
 stop_all() {
@@ -236,6 +253,10 @@ stop_all() {
   sweep "crispasr --server"            "CrispASR"
   sweep "stt_server.py"                "STT 서버"
   sweep "reachy_mini.daemon.app.main"  "시뮬 데몬"
+  # 아래 둘은 `demo`/`sim` 이 띄우는 것이 아니라 **따로 붙어 사는 것들**이라
+  # 예전 목록에서 빠져 있었다. 실측으로 `reachy-mini-mcp` 가 19시간 떠 있었다.
+  sweep "mjpython -m reachy_mini"      "mjpython 데몬"
+  sweep "reachy-mini-mcp"              "MCP 서버"
 }
 
 # 기동 도중 Ctrl-C 나 실패로 빠져나갈 때, **이 실행이 띄운 것만** 정리한다.
@@ -473,6 +494,274 @@ run_demo() {
   fi
 }
 
+
+# ════════════════════════════════════════════════════════════════
+#  robot — 실기(Reachy Mini Wireless) 운영
+# ════════════════════════════════════════════════════════════════
+# 실기는 **앱만 로봇에서 돌고 추론 3종은 이 맥에 남는다.** 그래서 기동이 두 곳에
+# 걸쳐 있고, 순서를 틀리면 조용히 실패한다:
+#   · config 를 안 맞추면 앱이 기본값 loopback 으로 붙어 벙어리가 된다(§10)
+#   · 예열을 빠뜨리면 첫 발화가 2.5초 늦는다(실측: 2.5k 토큰 프롬프트 기준)
+#   · 예열은 **앱과 같은 프롬프트**여야 한다 — 해설 모드면 REACHY_PROMPT 를 준다
+# 그 순서를 손으로 기억하지 않게 여기 묶어 둔다.
+ROBOT_HOST="${REACHY_ROBOT_HOST:-reachy-mini.local}"
+ROBOT_USER="${REACHY_ROBOT_USER:-pollen}"
+ROBOT_APP="${REACHY_ROBOT_APP:-voice_chat}"
+ROBOT_SITE="/venvs/apps_venv/lib/python3.12/site-packages/$ROBOT_APP"
+ROBOT_CFG="/home/$ROBOT_USER/.config/reachy-mini-voice-chat/config.json"
+ROBOT_API="http://$ROBOT_HOST:8000"
+
+rssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$ROBOT_USER@$ROBOT_HOST" "$@"; }
+rget() { curl -s -m "${2:-10}" "$ROBOT_API$1"; }
+rpost() { curl -s -m "${2:-30}" -X POST "$ROBOT_API$1"; }
+
+# 맥의 LAN 주소. 로봇이 이 주소로 추론 3종에 붙는다.
+lan_ip() {
+  local i
+  for i in en0 en1 en7; do
+    ipconfig getifaddr "$i" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+robot_reachable() {
+  if ! ping -c 1 -W 2000 "$ROBOT_HOST" >/dev/null 2>&1; then
+    say_bad "로봇($ROBOT_HOST)이 안 잡힌다 — 전원·Wi-Fi 를 확인한다"
+    return 1
+  fi
+  up "$ROBOT_API/api/daemon/status" || { say_bad "데몬 API 가 응답하지 않는다"; return 1; }
+  return 0
+}
+
+# **config 를 매번 맞춘다.** 망이 바뀌면 맥 IP 가 달라지는데, 로봇의 config 는
+# 그대로라 앱이 죽은 주소로 붙는다. 실제로 그 실패를 두 번 겪었다.
+# 기존 키(REACHY_VAD_FACTOR 등)는 보존하고 주소·프롬프트만 갱신한다.
+robot_sync_config() {
+  local ip="$1" cur new
+  cur="$(rssh "cat '$ROBOT_CFG' 2>/dev/null || echo '{}'")"
+  new="$(printf '%s' "$cur" | LANIP="$ip" TTSPORT="$TTS_PORT" PROMPTSEL="${REACHY_PROMPT:-}" "$PY" -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+ip, port = os.environ["LANIP"], os.environ["TTSPORT"]
+d["REACHY_LLM_URL"] = "http://%s:8080" % ip
+d["REACHY_STT_URL"] = "http://%s:8090/v1/audio/transcriptions" % ip
+d["TTS_QWEN_URL"] = "http://%s:%s/v1/audio/speech" % (ip, port)
+sel = os.environ.get("PROMPTSEL")
+if sel:
+    d["REACHY_PROMPT"] = sel
+print(json.dumps(d, indent=2, ensure_ascii=False))')" || return 1
+  printf '%s\n' "$new" | rssh "mkdir -p '$(dirname "$ROBOT_CFG")' && cat > '$ROBOT_CFG'" || return 1
+  echo "   ${c_dim}$(printf '%s' "$new" | tr -d '\n ' | cut -c1-100)…${c_off}"
+}
+
+robot_status() {
+  say_step "실기 상태 ($ROBOT_HOST)"
+  rget /api/daemon/status | "$PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("   데몬 응답 없음"); raise SystemExit
+b = d.get("backend_status") or {}
+s = b.get("control_loop_stats") or {}
+print("   데몬 %s | 백엔드 %s | 모터 %s | %s Hz | nb_error %s"
+      % (d.get("state"), b.get("ready"), b.get("motor_control_mode"),
+         round(s.get("mean_control_loop_frequency", 0), 1), s.get("nb_error")))
+print("   미디어 released=%s | wlan %s | ver %s"
+      % (d.get("media_released"), d.get("wlan_ip"), d.get("version")))'
+  rget /api/apps/current-app-status | "$PY" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = None
+print("   앱 %s" % ("(없음)" if not d else "%s -> %s%s"
+      % (d["info"]["name"], d["state"], "  err: %s" % d["error"] if d.get("error") else "")))'
+}
+
+# 일회성 — `robot up` 이 마지막에 부른다. 여기서 팔로우로 바꾸면 기동이 안 끝난다.
+robot_logs() {
+  local n=${1:-40}
+  say_step "실기 앱 로그 (마지막 $n 줄)"
+  # 데몬 로그는 HTTP 접근 로그로 시끄럽다 — 앱 출력만 추린다.
+  rssh "sudo journalctl -u reachy-mini-daemon -n 400 --no-pager 2>/dev/null" \
+    | sed -n 's/.*manager\.runner - [A-Z]* - //p' \
+    | grep -vE 'onnxruntime|pa_linux_alsa|PaAlsa' | tail -"$n"
+}
+
+# 사람이 치는 경로. **기본이 실시간이다.**
+# 필터를 파이프로 물리면 블록 버퍼링에 걸려 새 줄이 한참 뒤에야 나온다 —
+# `sed -u`·`grep --line-buffered` 로 줄 단위로 흘린다(로봇은 GNU coreutils 다).
+# `ssh -t` 는 Ctrl-C 가 원격 journalctl 까지 닿게 한다.
+robot_logs_follow() {
+  local n=40 follow=1 a
+  for a in "$@"; do
+    case "$a" in
+      --no-follow|-n) follow=0 ;;
+      ""|*[!0-9]*)    ;;
+      *)              n="$a" ;;
+    esac
+  done
+  [ "$follow" = "1" ] || { robot_logs "$n"; return; }
+  say_step "실기 앱 로그 — 실시간 ${c_dim}(Ctrl-C 로 종료)${c_off}"
+  ssh -t -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=20 \
+    "$ROBOT_USER@$ROBOT_HOST" \
+    "sudo journalctl -u reachy-mini-daemon -n $n -f --no-pager 2>/dev/null \
+       | sed -u -n 's/.*manager\.runner - [A-Z]* - //p' \
+       | grep --line-buffered -vE 'onnxruntime|pa_linux_alsa|PaAlsa'"
+}
+
+# **완전 정리가 기본이다.** 로봇 앱만 내리면 맥의 추론 3종(모델이 올라가 있어 RAM 을
+# 크게 문다)과 MCP 서버가 남는다. 시연이 끝났는데 남아 있으면 다음 사람이 원인을
+# 못 찾는다. 서버를 살려 두고 앱만 재시작할 때는 --keep-servers 다
+# (모델 재적재 + 예열이 10초 넘게 걸리므로 반복 배포 중에는 이쪽이 낫다).
+robot_down() {
+  local keep=0 a
+  for a in "$@"; do [ "$a" = "--keep-servers" ] && keep=1; done
+
+  rpost /api/apps/stop-current-app 25 >/dev/null 2>&1
+  say_ok "로봇 앱 정지"
+  robot_status
+
+  if [ "$keep" = "1" ]; then
+    echo
+    echo "   ${c_dim}--keep-servers — 맥 추론 3종은 살려 둔다${c_off}"
+    return 0
+  fi
+  stop_all
+}
+
+robot_deploy() {
+  say_step "실기 배포"
+  robot_reachable || return 1
+  rpost /api/apps/stop-current-app 25 >/dev/null 2>&1
+  # 소스와 설치본을 **둘 다** 민다. 소스는 재설치용, 설치본은 지금 도는 것.
+  # (공식 development_workflow: site-packages 에는 안쪽 패키지만 넣는다)
+  rsync -az --delete --exclude '__pycache__/' --exclude 'build/' --exclude '*.egg-info/' \
+    apps/voice_chat/ "$ROBOT_USER@$ROBOT_HOST:/home/$ROBOT_USER/voice_chat/" || return 1
+  rsync -az --exclude '__pycache__/' \
+    apps/voice_chat/voice_chat/ "$ROBOT_USER@$ROBOT_HOST:$ROBOT_SITE/" || return 1
+  # 바이트코드를 안 지우면 고친 코드가 안 먹는다(공식 문서의 함정 목록).
+  rssh "find '$ROBOT_SITE' -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null; true"
+  say_ok "소스·설치본 동기화"
+}
+
+# 오늘 실제로 밟은 장애를 순서대로 자동화한다. 각 단계는 앞 단계가 실패했을 때만 의미가 있다.
+robot_fix() {
+  say_step "실기 복구 사다리"
+  robot_reachable || return 1
+  rpost /api/apps/stop-current-app 25 >/dev/null 2>&1
+
+  echo "   1) 백엔드 기동 (죽어 있으면 살린다)"
+  rpost "/api/daemon/start?wake_up=true" 90 >/dev/null 2>&1
+  sleep 12
+  if ! rget /api/daemon/status | grep -q '"state":"running"'; then
+    echo "   2) 데몬 완전 재시작 — 미디어 스택이 꼬였을 때의 공식 처방"
+    rssh "sudo systemctl restart reachy-mini-daemon" || return 1
+    echo "      ${c_dim}45초 대기${c_off}"; sleep 45
+  fi
+  # **순서가 중요하다**: 모터가 꺼진 상태에서 wake_up 을 재생하면 헛돈다.
+  echo "   3) 모터 활성화 → wake_up"
+  rpost /api/motors/set_mode/enabled 20 >/dev/null 2>&1
+  sleep 3
+  rpost /api/move/play/wake_up 60 >/dev/null 2>&1
+  sleep 8
+  robot_status
+}
+
+robot_up() {
+  local ip
+  robot_reachable || exit 1
+
+  # ── 1. 맥: 추론 3종을 LAN 에 ──────────────────────────────
+  # `serve` 를 통째로 부르지 않는다 — 그쪽은 config 블록까지 찍어서 아래 3단계와
+  # 중복된다. 기동 함수만 쓴다(코드는 공유하므로 갈라지지 않는다).
+  BIND_HOST="${REACHY_BIND_HOST:-0.0.0.0}"
+  trap 'cleanup_partial; exit 130' INT TERM
+  start_llm_stt || exit 1
+  start_tts
+  STARTED_TTS=0
+  trap - INT TERM
+
+  ip="$(lan_ip)" || { say_bad "맥의 LAN 주소를 찾지 못했다"; exit 1; }
+
+  # ── 2. 로봇 config 동기화 ─────────────────────────────────
+  say_step "로봇 config 동기화 (맥 $ip)"
+  robot_sync_config "$ip" || { say_bad "config 를 쓰지 못했다"; exit 1; }
+
+  # ── 3. 로봇에서 맥이 실제로 보이는지 ──────────────────────
+  say_step "로봇 → 맥 도달 확인"
+  local bad=0 p
+  for p in 8080 8090 "$TTS_PORT"; do
+    if rssh "curl -s -m 5 -o /dev/null -w '%{http_code}' http://$ip:$p/health" 2>/dev/null | grep -q 200; then
+      say_ok "  :$p"
+    else
+      say_bad "  :$p — 로봇에서 안 보인다"; bad=1
+    fi
+  done
+  [ "$bad" = "0" ] || { say_bad "맥 방화벽이나 망 분리를 확인한다"; exit 1; }
+
+  # ── 4. 기상 — **앱 기동 전에** 모터를 켠다 ────────────────
+  # 앱이 로봇을 깨우지 않는다. 자고 있으면 SDK 가 "Robot is asleep; leaving it
+  # limp in the sleep pose" 만 남기고 몸은 처진 채로 대화만 한다 — 말은 하는데
+  # 안 움직이는 그 상태다(2026-09-09 반복해서 겪었다).
+  # **조건부로 건너뛰지 않는다.** 앱을 정지하면 로봇이 몇 초 뒤 절전에 드는데,
+  # 여기서 "이미 켜져 있다"를 보고 건너뛰면 **그 직후 잠들어** 말은 하는데 안
+  # 움직이는 상태로 앱이 올라온다(deploy 직후 실제로 그랬다 — 관절 변동폭 0).
+  # set_mode 와 wake_up 은 둘 다 멱등이라 매번 걸어도 부작용이 없다.
+  #
+  # **순서가 중요하다**: 모터가 꺼진 상태에서 wake_up 을 재생하면 헛돈다.
+  say_step "기상"
+  rpost /api/motors/set_mode/enabled 20 >/dev/null 2>&1
+  sleep 3
+  rpost /api/move/play/wake_up 60 >/dev/null 2>&1
+  sleep 8
+  if rget /api/motors/status | grep -q '"enabled"'; then
+    say_ok "모터 활성화"
+  else
+    say_bad "모터가 안 켜진다 — 전원을 확인하고 ./reachy.sh robot fix 를 쓴다"
+  fi
+
+  # ── 5. 예열 (앱과 같은 프롬프트로) ────────────────────────
+  say_step "예열${REACHY_PROMPT:+ — $REACHY_PROMPT}"
+  "$PY" scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다${c_off}"
+
+  # ── 6. 앱 기동 ────────────────────────────────────────────
+  say_step "앱 기동 ($ROBOT_APP)"
+  rpost "/api/apps/start-app/$ROBOT_APP" 40 >/dev/null
+  sleep 14
+
+  # **앱이 올라온 뒤에 한 번 더 본다.** 기상과 앱 기동 사이에 절전으로 빠지면
+  # 로봇은 말만 하고 몸이 굳는데, 로그만 봐서는 정상으로 보인다. 조용히 반쪽으로
+  # 도는 것이 가장 찾기 어렵다.
+  if ! rget /api/motors/status | grep -q '"enabled"'; then
+    say_bad "앱은 떴는데 모터가 꺼져 있다 — 말은 하지만 몸이 안 움직인다"
+    echo "   ${c_dim}./reachy.sh robot fix 로 되살린다${c_off}"
+  fi
+
+  robot_status
+  echo
+  robot_logs 12
+  echo
+  echo "${c_dim}정지: ./reachy.sh robot down   로그: ./reachy.sh robot logs   복구: ./reachy.sh robot fix${c_off}"
+}
+
+run_robot() {
+  local sub="${1:-}"; [ $# -gt 0 ] && shift
+  case "$sub" in
+    up)     robot_up "$@" ;;
+    down)   robot_down "$@" ;;
+    deploy) robot_deploy && robot_up ;;
+    logs)   robot_logs_follow "$@" ;;
+    status) robot_status ;;
+    fix)    robot_fix ;;
+    *)      say_bad "robot 서브커맨드는 up | down | deploy | logs | status | fix 다"; exit 2 ;;
+  esac
+}
+
 # ════════════════════════════════════════════════════════════════
 mkdir -p "$LOG_DIR"
 
@@ -482,6 +771,7 @@ case "$cmd" in
   sim)   run_sim "$@" ;;
   demo)  run_demo "$@" ;;
   serve) run_serve "$@" ;;
+  robot) run_robot "$@" ;;
   check) say_step "상태"; status ;;
   stop)  stop_all ;;
   logs)  show_logs "$@" ;;
