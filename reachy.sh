@@ -640,9 +640,17 @@ robot_deploy() {
   rpost /api/apps/stop-current-app 25 >/dev/null 2>&1
   # 소스와 설치본을 **둘 다** 민다. 소스는 재설치용, 설치본은 지금 도는 것.
   # (공식 development_workflow: site-packages 에는 안쪽 패키지만 넣는다)
-  rsync -az --delete --exclude '__pycache__/' --exclude 'build/' --exclude '*.egg-info/' \
+  #
+  # `--delete-excluded` 가 필요하다. `--delete` 만 쓰면 rsync 가 **제외한 파일을
+  # 수신 측에서 보호해서** 안 지운다 — 첫 배포 때 올라간 build/ 와 egg-info/ 가
+  # 로봇에 그대로 남아 있었다(build/lib/build/lib/… 로 중첩된 것까지, 옛 prompt.md
+  # 사본 포함). 그 상태로 재설치하면 낡은 산출물을 집을 수 있다.
+  rsync -az --delete --delete-excluded \
+    --exclude '__pycache__/' --exclude 'build/' --exclude '*.egg-info/' \
     apps/voice_chat/ "$ROBOT_USER@$ROBOT_HOST:/home/$ROBOT_USER/voice_chat/" || return 1
-  rsync -az --exclude '__pycache__/' \
+  # 설치본도 --delete 다. 안 그러면 이름을 바꾸거나 지운 모듈이 로봇에 남아
+  # 계속 임포트된다 — 고쳤는데 안 고쳐진 것처럼 보이는 종류의 사고다.
+  rsync -az --delete --exclude '__pycache__/' \
     apps/voice_chat/voice_chat/ "$ROBOT_USER@$ROBOT_HOST:$ROBOT_SITE/" || return 1
   # 바이트코드를 안 지우면 고친 코드가 안 먹는다(공식 문서의 함정 목록).
   rssh "find '$ROBOT_SITE' -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null; true"
