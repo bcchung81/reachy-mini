@@ -377,3 +377,46 @@ def test_발화가_없으면_join_은_조용하다():
     logs: list[str] = []
     main_mod.SayRunner(lambda *a: None, warn=logs.append).join(0.05)
     assert logs == []
+
+
+# ── 마이크 지시 (리뷰 I2) ────────────────────────────────────────────
+
+def test_들을_루프가_있으면_마이크_지시는_조용히_먹는다():
+    import threading
+
+    logs: list[str] = []
+    gate = threading.Event()
+    on_mic = main_mod.make_mic_sink(gate, has_listener=lambda: True, log=logs.append)
+    on_mic(True)
+    assert gate.is_set()
+    assert not any("경고" in m for m in logs)
+
+
+def test_들을_루프가_없는데_마이크를_열라면_크게_경고한다():
+    """도슨트 1인 모드에는 관람객 채널이 **실질적으로 없다.**
+
+    감독은 남은 한 대가 도슨트여도 `mic(open=True)` 를 보내지만, 도슨트는
+    `voice_loop` 를 띄우지 않는다. 조용히 반쪽으로 돌면 운영자는 콘솔로
+    진행해야 한다는 것을 모른다(리뷰 I2).
+    """
+    import threading
+
+    logs: list[str] = []
+    on_mic = main_mod.make_mic_sink(
+        threading.Event(), has_listener=lambda: False, log=logs.append
+    )
+    on_mic(True)
+    경고 = [m for m in logs if "경고" in m]
+    assert 경고 and "콘솔" in 경고[0]
+
+
+def test_마이크를_닫으라는_지시는_경고하지_않는다():
+    import threading
+
+    logs: list[str] = []
+    gate = threading.Event()
+    gate.set()
+    on_mic = main_mod.make_mic_sink(gate, has_listener=lambda: False, log=logs.append)
+    on_mic(False)
+    assert not gate.is_set()
+    assert not any("경고" in m for m in logs)

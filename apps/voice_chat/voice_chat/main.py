@@ -68,6 +68,33 @@ def make_heard_sink(client, mic_open: threading.Event, log=print):
     return on_heard
 
 
+def make_mic_sink(mic_open: threading.Event, has_listener, log=print):
+    """감독의 `mic` 지시를 받는 함수를 만든다.
+
+    **마이크를 열라는데 들을 루프가 없으면 크게 말한다.** 도슨트는 `voice_loop`
+    를 띄우지 않는다(설계 §2 — 관람객 창구는 사회자 하나). 그런데 1인 모드로
+    강등되면 감독은 남은 로봇이 도슨트여도 `mic(open=True)` 를 보낸다 —
+    관람객 창구를 겸하라는 뜻이다. 지금 도슨트에는 그것을 받을 STT 루프가
+    없으므로 **관람객 채널이 실질적으로 없다.** 조용히 반쪽으로 도는 것이
+    가장 나쁘다: 운영자는 콘솔(`n`/`p`)로 진행해야 한다는 것을 알아야 한다.
+
+    도슨트에 STT 를 상시로 띄우지 않는 이유는 비용이다 — PC 추론 부하가
+    두 배가 된다(설계 §10 의 미검증 항목).
+    """
+
+    def on_mic(open_: bool) -> None:
+        mic_open.set() if open_ else mic_open.clear()
+        log(f"  [마이크 {'열림' if open_ else '닫힘'}]")
+        if open_ and not has_listener():
+            log(
+                "  [경고] 마이크를 열라는 지시를 받았지만 이 로봇에는 청취 루프가 "
+                "없다 — 관람객 발화로는 진행되지 않는다. 무대감독 콘솔에서 "
+                "n(다음)/p(이전)으로 진행한다 (docs/two-robot-setup.md §7)"
+            )
+
+    return on_mic
+
+
 def role_of_env() -> str | None:
     """`REACHY_ROLE` 을 **설정 사다리**로 읽는다. 없으면 1대 모드.
 
@@ -244,9 +271,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
 
         say_runner = SayRunner(speak_one)
 
-        def on_mic(open_: bool) -> None:
-            mic_open.set() if open_ else mic_open.clear()
-            print(f"  [마이크 {'열림' if open_ else '닫힘'}]")
+        on_mic = make_mic_sink(mic_open, has_listener=lambda: voice_thread is not None)
 
         client = StageClient(
             url,
