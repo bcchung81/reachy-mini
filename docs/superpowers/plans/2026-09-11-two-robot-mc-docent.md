@@ -25,6 +25,10 @@
 - **`pytest-asyncio` 가 설치돼 있지 않다.** `websockets.sync.server` / `websockets.sync.client` 만 쓴다. asyncio 테스트를 쓰지 않는다.
 - **테스트 함수 이름은 한국어로 쓴다** — 이 저장소의 관행이다(`tests/test_deployment_contract.py` 참고).
 - **도슨트 마이크는 상시 닫혀 있다.** 관람객 창구는 사회자 하나뿐이다.
+- **기대 테스트 개수는 지표다.** 각 단계의 `Expected: N passed` 는 계획이 명시한
+  테스트를 그대로 썼을 때의 값이다. 케이스를 더 넣어 숫자가 커지는 것은 정상이고,
+  **0 failures 와 기존 235개 무회귀**가 진짜 기준이다. 숫자가 작아지면 빠뜨린 것이다.
+- **`@pytest.mark.parametrize` 는 케이스 수만큼 테스트로 센다** — 개수를 셀 때 주의한다.
 - **음성 배정은 고정이다**: 사회자 `serena` / 도슨트 `sohee`. 배속은 **1.2 기준 환산값**(사회자 1.27, 도슨트 1.13) — `TTS_QWEN_SPEED` 기본값이 1.0이 아니라 1.2다(`tts.py:46`).
 
 ---
@@ -911,12 +915,12 @@ class CueSheet:
 - [ ] **Step 5: 테스트가 통과하는 것을 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q`
-Expected: PASS (21 passed)
+Expected: PASS (24 passed)
 
 - [ ] **Step 6: 전체 회귀를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 277 passed
+Expected: 280 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -1121,10 +1125,26 @@ def test_시작할_때_양쪽_마이크를_닫는다():
 
 
 def test_사회자가_말하는_동안_도슨트_대사를_미리_만든다():
-    # 지연 은닉 — 이게 하이브리드의 진짜 이득이다.
-    h = Harness()
+    """지연 은닉 — 이게 하이브리드의 진짜 이득이다.
+
+    생성은 별도 스레드에서 돈다. `start()` 직후에 `gen_calls` 를 보면
+    스레드가 아직 안 돌아 **간헐적으로 실패한다** — 생성 쪽에서 신호를
+    받아 결정적으로 기다린다.
+    """
+    import threading as _t
+
+    started = _t.Event()
+    seen: list[str] = []
+
+    def gen(brief, history):
+        seen.append(brief)
+        started.set()
+        return "미리 만든 대사"
+
+    h = Harness(generate=gen)
     h.d.start()
-    assert h.gen_calls == [("첫 지시", 0)]
+    assert started.wait(2.0), "사회자 발화 시작 시점에 생성이 걸려 있지 않다"
+    assert seen == ["첫 지시"]
 
 
 def test_사회자_발화가_끝나면_도슨트가_바로_받는다():
@@ -1478,7 +1498,7 @@ Expected: PASS (19 passed)
 - [ ] **Step 9: 전체 회귀를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 299 passed
+Expected: 302 passed
 
 - [ ] **Step 10: 커밋**
 
@@ -1911,7 +1931,7 @@ Expected: PASS (7 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 306 passed
+Expected: 309 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2284,7 +2304,7 @@ Expected: PASS (9 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 315 passed
+Expected: 318 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2435,7 +2455,7 @@ Expected: PASS (6 passed)
 - [ ] **Step 5: 전체 회귀 — 1대 구성이 안 깨졌는지 본다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 321 passed
+Expected: 324 passed
 
 - [ ] **Step 6: 커밋**
 
@@ -2577,6 +2597,27 @@ def test_stage_client_는_stage_패키지를_import_하지_않는다():
     ).read_text()
     assert "import stage" not in src
     assert "from stage" not in src
+
+
+def test_로봇과_감독의_메시지_규약이_같다():
+    """`stage_client.py` 는 `stage/protocol.py` 를 import 하지 않는다 —
+    로봇에는 `stage/` 가 올라가지 않기 때문이다(위 테스트가 그걸 고정한다).
+
+    대가로 **두 곳이 조용히 어긋날 수 있다.** 한쪽에 메시지를 더하고 다른
+    쪽을 잊으면 시연장에서 "감독은 보냈는데 로봇이 무시한다" 가 된다.
+    여기서 묶어 둔다.
+    """
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).parent.parent
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "apps/voice_chat/voice_chat"))
+    import stage_client
+    from stage import protocol
+
+    assert stage_client._ROBOT_MSGS == protocol.ROBOT_MSGS
+    assert stage_client._DIRECTOR_MSGS == protocol.DIRECTOR_MSGS
 
 
 def test_websockets_가_앱_의존성에_선언돼_있다():
@@ -2782,12 +2823,12 @@ echo "음성은 main.py 가 역할에 맞춰 넣는다(TTS_QWEN_VOICE 를 여기
 - [ ] **Step 5: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_role.py tests/test_deployment_contract.py -q`
-Expected: PASS (8 + 6 passed)
+Expected: PASS (9 + 7 passed)
 
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 331 passed
+Expected: 336 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2874,7 +2915,7 @@ Expected: FAIL — `큐가 없는 섹션: ['5', '6', ... '19']`
 - [ ] **Step 4: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q`
-Expected: PASS (22 passed)
+Expected: PASS (25 passed)
 
 - [ ] **Step 5: 큐시트를 눈으로 검토한다**
 
@@ -2893,7 +2934,7 @@ for c in load_cues():
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 332 passed
+Expected: 337 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3101,7 +3142,7 @@ Expected: PASS (24 + 8 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 338 passed
+Expected: 343 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3125,7 +3166,7 @@ Claude-Session: https://claude.ai/code/session_01VAebqsSLo4nL4PoQPUKSs4"
 
 ### 코드
 
-- [ ] `.venv/bin/python -m pytest tests/ -q` → **338 passed** (착수 시점 235 + 103)
+- [ ] `.venv/bin/python -m pytest tests/ -q` → **343 passed** (착수 시점 235 + 108)
 - [ ] 시뮬 2대로 종단 시연 (설계 §8 에서 실측 검증한 구성):
   ```bash
   # 터미널 1·2 — 로봇 2대 대역 (mjpython/Cocoa 제약을 우회하는 구성, 실측 검증됨)
