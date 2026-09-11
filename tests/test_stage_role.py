@@ -257,3 +257,123 @@ def test_설정파일에_적힌_음성도_덮어쓰지_않는다(monkeypatch, tm
 
     main_mod.apply_role_voice("mc")
     assert tts._qwen_body("안녕", None, stream=False)["voice"] == "vivian"
+
+
+# ── 발화 워커 (리뷰 I1) ──────────────────────────────────────────────
+#
+# `abort`·`mic`·`say` 는 **같은 WS 수신 루프**로 들어온다. 발화를 그 루프 안에서
+# 끝까지 기다리면 비상정지가 한 문장 내내 듣지 않는다.
+
+def test_발화가_수신_루프를_막지_않는다():
+    """`on_say` 는 즉시 돌아와야 한다 — 그래야 다음 메시지를 받는다."""
+    import threading
+
+    말하는중 = threading.Event()
+    끝내라 = threading.Event()
+
+    def speak_one(cue_id, text, gaze):
+        말하는중.set()
+        끝내라.wait(5)
+
+    r = main_mod.SayRunner(speak_one, warn=lambda m: None)
+    r.on_say("c1", "긴 대사", None)          # 블록되면 여기서 멈춘다
+    assert 말하는중.wait(2), "발화 워커가 시작되지 않았다"
+    끝내라.set()
+    r.join(2)
+
+
+def test_말하는_도중에_abort_와_mic_이_처리된다():
+    """**이 저장소가 잡으려는 실제 증상이다** — 콘솔의 비상정지가 듣지 않았다.
+
+    `_on_raw` 는 WS 수신 루프 안에서 동기로 불린다. `on_say` 가 거기서
+    `wait_idle()` 까지 기다리면 뒤따라온 `abort` 는 **한 문장이 끝난 뒤에야**
+    처리된다. 그래서 실제 StageClient 에 say → abort → mic 을 순서대로
+    흘려 넣고, 발화가 아직 안 끝난 상태에서 뒤엣것이 도착하는지 본다.
+    """
+    import json
+    import threading
+
+    from stage_client import Handlers, StageClient
+
+    말하는중 = threading.Event()
+    멈춰 = threading.Event()
+    받은것: list[str] = []
+
+    def speak_one(cue_id, text, gaze):
+        말하는중.set()
+        멈춰.wait(5)   # speaker.wait_idle() 흉내 — 발화가 흐르는 동안
+        받은것.append("발화끝")
+
+    r = main_mod.SayRunner(speak_one, warn=lambda m: None)
+
+    def on_abort():
+        받은것.append("abort")
+        멈춰.set()      # speaker.stop() 이 하는 일 — 발화를 끊는다
+
+    client = StageClient(
+        "ws://x", "mc",
+        Handlers(
+            on_say=r.on_say,
+            on_mic=lambda o: 받은것.append(f"mic:{o}"),
+            on_gaze=lambda t: None,
+            on_abort=on_abort,
+        ),
+        warn=lambda m: None,
+    )
+    client._on_raw(json.dumps({"type": "say", "cue_id": "c1", "text": "긴 대사"}))
+    assert 말하는중.wait(2), "발화 워커가 시작되지 않았다"
+
+    # 발화가 아직 흐르는 중이다. 여기서 abort 가 처리돼야 한다.
+    client._on_raw(json.dumps({"type": "abort"}))
+    client._on_raw(json.dumps({"type": "mic", "open": True}))
+    r.join(2)
+
+    # **순서가 전부다.** 동기로 처리하던 시절에는 `발화끝` 이 맨 앞에 왔다 —
+    # 비상정지가 문장이 끝난 뒤에야 들었다는 뜻이다.
+    assert 받은것 == ["abort", "mic:True", "발화끝"]
+
+
+def test_발화가_겹쳐_들어오면_기다리며_경고한다():
+    """불변식 ② 가 깨진 상황. 조용히 겹쳐 말하면 원인을 못 찾는다."""
+    import threading
+
+    시작 = threading.Event()
+    끝내라 = threading.Event()
+    순서: list[str] = []
+
+    def speak_one(cue_id, text, gaze):
+        순서.append(f"start:{cue_id}")
+        시작.set()
+        끝내라.wait(5)
+        순서.append(f"end:{cue_id}")
+
+    logs: list[str] = []
+    r = main_mod.SayRunner(speak_one, warn=logs.append)
+    r.on_say("c1", "첫 대사", None)
+    assert 시작.wait(2)
+
+    t = threading.Thread(target=r.on_say, args=("c2", "둘째 대사", None))
+    t.start()
+    끝내라.set()
+    t.join(5)
+    r.join(2)
+
+    assert any("불변식 ②" in m for m in logs)
+    assert 순서 == ["start:c1", "end:c1", "start:c2", "end:c2"]
+
+
+def test_발화가_안_끝나면_종료_때_소리_내서_경고한다():
+    import threading
+
+    never = threading.Event()
+    r = main_mod.SayRunner(lambda *a: never.wait(), warn=(logs := []).append)
+    r.on_say("c1", "대사", None)
+    r.join(0.05)
+    assert any("멈추지 않았다" in m for m in logs)
+    never.set()
+
+
+def test_발화가_없으면_join_은_조용하다():
+    logs: list[str] = []
+    main_mod.SayRunner(lambda *a: None, warn=logs.append).join(0.05)
+    assert logs == []

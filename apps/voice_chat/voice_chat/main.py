@@ -124,8 +124,10 @@ def apply_role_voice(role: str) -> None:
 VOICE_THREAD_JOIN_TIMEOUT_S = 20.0
 
 
-def _join_voice_thread(thread: threading.Thread, timeout: float, warn=print) -> None:
-    """voice_loop 스레드가 실제로 멈출 때까지(최대 timeout 초) 기다린다.
+def _join_voice_thread(
+    thread: threading.Thread, timeout: float, warn=print, name: str = "voice_loop"
+) -> None:
+    """스레드가 실제로 멈출 때까지(최대 timeout 초) 기다린다.
 
     `daemon=True` 는 프로세스가 이 자리에서 곧장 죽을 때만 안전한데,
     `ReachyMiniApp.wrapped_run()` 은 `run()` 이 돌아온 뒤에도 같은 프로세스에서
@@ -140,9 +142,63 @@ def _join_voice_thread(thread: threading.Thread, timeout: float, warn=print) -> 
     thread.join(timeout)
     if thread.is_alive():
         warn(
-            f"  [경고] voice_loop 스레드가 {timeout}초 안에 멈추지 않았다 — "
+            f"  [경고] {name} 스레드가 {timeout}초 안에 멈추지 않았다 — "
             "자원 정리와 경쟁할 수 있다"
         )
+
+
+# 발화 워커가 이전 발화를 아직 끝내지 못했을 때 기다려 줄 한도.
+SAY_OVERLAP_JOIN_S = 5.0
+# 종료할 때 진행 중인 발화를 기다려 줄 한도. TTS 한 문장은 길어야 15초대다
+# (긴 해설 57자 → 10.6초 실측, tts 타임아웃은 90초지만 그건 안전장치다).
+SAY_THREAD_JOIN_TIMEOUT_S = 20.0
+
+
+class SayRunner:
+    """`say` 를 **워커 스레드에서** 실행한다 — 수신 루프를 막지 않기 위해서다.
+
+    `abort` 와 `mic` 은 `say` 와 같은 WebSocket 수신 루프로 들어온다
+    (`stage_client.py` 의 `_on_raw` 는 그 루프 안에서 동기로 불린다).
+    발화를 그 루프 안에서 `speaker.wait_idle()` 로 끝까지 기다리면 그동안
+    도착한 `abort` 가 **한 문장이 다 끝난 뒤에야** 처리된다 — 콘솔의
+    비상정지가 듣지 않는다. 감독이 `abort` 를 보내는 상황은 대부분 "지금
+    말하는 것을 멈춰라" 인데, 정확히 그때 멈출 수 없었다.
+
+    워커는 하나면 된다. 불변식 ②(직전 `speaking_ended` 를 받기 전에는 다음
+    `say` 를 보내지 않는다)가 겹치기를 이미 막는다. 그래도 겹쳐 들어오면
+    **조용히 겹쳐 말하지 않고 기다리며 경고한다** — 두 목소리가 한 스피커로
+    나오면 시연장에서 원인을 못 찾는다.
+    """
+
+    def __init__(self, speak_one, warn=print) -> None:
+        self._speak_one = speak_one
+        self._warn = warn
+        self._thread: threading.Thread | None = None
+
+    def on_say(self, cue_id: str, text: str, gaze: str | None = None) -> None:
+        prev = self._thread
+        if prev is not None and prev.is_alive():
+            self._warn(
+                f"  [경고] 이전 발화가 안 끝났는데 say({cue_id}) 가 왔다 — "
+                f"불변식 ② 위반. 최대 {SAY_OVERLAP_JOIN_S}초 기다린다"
+            )
+            prev.join(SAY_OVERLAP_JOIN_S)
+            if prev.is_alive():
+                self._warn("  [경고] 이전 발화가 멈추지 않았다 — 겹쳐 말할 수 있다")
+        t = threading.Thread(
+            target=self._speak_one,
+            args=(cue_id, text, gaze),
+            daemon=True,
+            name="stage-say",
+        )
+        self._thread = t
+        t.start()
+
+    def join(self, timeout: float) -> None:
+        """진행 중인 발화가 끝날 때까지 기다린다(ExitStack 정리 전에)."""
+        t = self._thread
+        if t is not None and t.is_alive():
+            _join_voice_thread(t, timeout, warn=self._warn, name="발화(say)")
 
 
 def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
@@ -167,13 +223,17 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         client: StageClient | None = None
         voice_thread: threading.Thread | None = None
 
-        def on_say(cue_id: str, text: str, gaze: str | None) -> None:
+        def speak_one(cue_id: str, text: str, gaze: str | None) -> None:
+            """발화 하나. **워커 스레드에서 돈다**(SayRunner 참고)."""
             try:
                 speak(text, speaker, player)
             except Exception as exc:
+                # 워커 스레드라 raise 해도 아무도 못 받는다 — 대신 감독에게
+                # 올리고 로그를 남긴다. 그리고 아래 finally 가 발성 경계를
+                # 반드시 보고한다: 여기서 빠뜨리면 감독이 타임아웃까지 멈춘다.
+                print(f"  [발화 실패] {type(exc).__name__}: {exc}", flush=True)
                 if client:
                     client.error("speak", f"{type(exc).__name__}: {exc}")
-                raise
             finally:
                 # **발성 경계는 여기서만 보고한다.** 감독의 게이팅이 이 값을
                 # 믿는다 — 빠뜨리면 감독이 타임아웃까지 멈춰 있는다.
@@ -181,6 +241,8 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
                     client.speaking_started(cue_id)
                     speaker.wait_idle()
                     client.speaking_ended(cue_id)
+
+        say_runner = SayRunner(speak_one)
 
         def on_mic(open_: bool) -> None:
             mic_open.set() if open_ else mic_open.clear()
@@ -190,7 +252,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
             url,
             role,
             Handlers(
-                on_say=on_say,
+                on_say=say_runner.on_say,
                 on_mic=on_mic,
                 on_gaze=lambda target: print(f"  [시선 {target}]"),
                 on_abort=lambda: speaker.stop(),
@@ -217,6 +279,8 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         # 된다 — 정리 전에 스레드가 실제로 멈췄는지 확인한다.
         if voice_thread is not None:
             _join_voice_thread(voice_thread, VOICE_THREAD_JOIN_TIMEOUT_S)
+        # 발화 워커도 같은 이유로 기다린다 — 이쪽은 speaker 를 직접 쓴다.
+        say_runner.join(SAY_THREAD_JOIN_TIMEOUT_S)
 
 
 def _unit_id(mini) -> str | None:
