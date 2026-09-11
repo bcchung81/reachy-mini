@@ -16,12 +16,16 @@ class FakeSpeaker:
         self.spoken: list[str] = []
         self.many: list[list[str]] = []
         self.speaking = False
+        self.waited = False
 
     def speak(self, text, seed=None):
         self.spoken.append(text)
 
     def speak_many(self, texts):
         self.many.append(list(texts))
+
+    def wait_idle(self, timeout=None):
+        self.waited = True
 
 
 class FakePlayer:
@@ -38,15 +42,17 @@ class FakePlayer:
 
 
 def test_텍스트를_말한다():
-    sp = FakeSpeaker()
-    session.speak("안녕하세요", sp, None)
+    sp, pl = FakeSpeaker(), FakePlayer()
+    session.speak("안녕하세요", sp, pl)
     assert sp.spoken == ["안녕하세요"]
 
 
 def test_로봇이_없으면_말만_한다():
+    # player=None 이면 모션 없이 말만 한다.
     sp = FakeSpeaker()
-    session.speak("안녕하세요", sp, None)      # player=None
+    session.speak("안녕하세요", sp, None)
     assert sp.spoken == ["안녕하세요"]
+    # 암묵적: player가 없으면 pl.played 를 쓸 수 없으므로 검증은 위 한 줄만
 
 
 def test_모션을_함께_낸다():
@@ -64,11 +70,12 @@ def test_빈_텍스트는_말하지도_움직이지도_않는다():
 
 def test_재생_완료를_기다리지_않는다():
     # 기다리면 마이크 루프가 멈춰 끼어들기 판정이 한 번도 돌지 않는다.
+    # speak() 가 speaker.wait_idle() 을 부르면 이 테스트가 붉어진다.
     sp, pl = FakeSpeaker(), FakePlayer()
     session.speak("안녕하세요", sp, pl)
-    assert not hasattr(sp, "waited")
+    assert sp.waited is False
 
 
 def test_respond_는_여전히_동작한다():
-    # 1대 구성 회귀 방지 — speak() 를 뽄아내도 기존 경로가 살아 있어야 한다.
+    # 1대 구성 회귀 방지 — speak() 를 뽑아내도 기존 경로가 살아 있어야 한다.
     assert callable(session.respond)
