@@ -89,6 +89,9 @@ def test_진행_신호를_알아본다(text):
         "다음은 뭔가요?",                  # 질문 표지가 있으면 넘기지 않는다
         "마르코니가 누구예요",
         "전파가 뭐예요",
+        "다음 얘기 궁금해요",       # 의문사도 물음표도 없지만 질문이다
+        "다음 거 설명해줘",
+        "계속 알려주세요",
     ],
 )
 def test_진행_신호가_아닌_것을_넘기지_않는다(text):
@@ -136,3 +139,21 @@ def test_reset_은_처음으로_되돌린다():
 def test_빈_큐시트로는_만들_수_없다():
     with pytest.raises(CueError, match="비어"):
         CueSheet([])
+
+
+def test_큐시트가_해설_원장의_모든_섹션을_덮는다():
+    """`docs/exhibit-guide.md` 의 `## N.` 섹션마다 큐가 하나씩 있어야 한다.
+
+    원장에 섹션을 더하고 큐를 안 만들면 그 구간을 로봇이 통째로 건너뛴다.
+    """
+    import re
+
+    guide = (
+        pathlib.Path(__file__).parent.parent / "docs/exhibit-guide.md"
+    ).read_text(encoding="utf-8")
+    sections = re.findall(r"^## (\d+)\.", guide, flags=re.MULTILINE)
+    assert sections, "원장에서 섹션을 못 찾았다 — 형식이 바뀌었는지 확인한다"
+
+    numbers = {c.id.split("-")[0] for c in load_cues()}
+    missing = [n for n in sections if f"{int(n):02d}" not in numbers]
+    assert not missing, f"큐가 없는 섹션: {missing}"
