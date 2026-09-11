@@ -75,3 +75,49 @@ def test_PyGObject_범위가_SDK_핀과_어긋나지_않는다():
     assert str(ours) == str(sdk[0].specifier), (
         f"SDK 핀 {sdk[0].specifier} 과 우리 선언 {ours} 이 어긋난다"
     )
+
+
+def test_stage_client_는_stage_패키지를_import_하지_않는다():
+    """`stage/` 는 노트북에만 있다. 로봇에는 앱만 올라간다.
+
+    여기서 import 하면 실기에서 ModuleNotFoundError 로 죽는다 — 시뮬에서는
+    저장소 루트가 경로에 있어 절대 드러나지 않는다.
+    """
+    import pathlib
+
+    src = (
+        pathlib.Path(__file__).parent.parent
+        / "apps/voice_chat/voice_chat/stage_client.py"
+    ).read_text()
+    assert "import stage" not in src
+    assert "from stage" not in src
+
+
+def test_로봇과_감독의_메시지_규약이_같다():
+    """`stage_client.py` 는 `stage/protocol.py` 를 import 하지 않는다 —
+    로봇에는 `stage/` 가 올라가지 않기 때문이다(위 테스트가 그걸 고정한다).
+
+    대가로 **두 곳이 조용히 어긋날 수 있다.** 한쪽에 메시지를 더하고 다른
+    쪽을 잊으면 시연장에서 "감독은 보냈는데 로봇이 무시한다" 가 된다.
+    여기서 묶어 둔다.
+    """
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).parent.parent
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "apps/voice_chat/voice_chat"))
+    import stage_client
+    from stage import protocol
+
+    assert stage_client._ROBOT_MSGS == protocol.ROBOT_MSGS
+    assert stage_client._DIRECTOR_MSGS == protocol.DIRECTOR_MSGS
+
+
+def test_websockets_가_앱_의존성에_선언돼_있다():
+    import pathlib
+    import tomllib
+
+    p = pathlib.Path(__file__).parent.parent / "apps/voice_chat/pyproject.toml"
+    deps = tomllib.loads(p.read_text())["project"]["dependencies"]
+    assert any(d.startswith("websockets") for d in deps)

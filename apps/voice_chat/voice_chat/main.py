@@ -27,6 +27,154 @@ sys.path.insert(0, str(Path(__file__).parent))
 from session import announce_endpoints, announce_voice, build, respond  # noqa: E402
 from voice_loop import voice_loop  # noqa: E402
 
+import os
+
+from stage_client import Handlers, StageClient  # noqa: E402
+
+ROLES = ("mc", "docent")
+
+# 설계 §11. 배속은 **1.2 기준 환산값**이다 — TTS_QWEN_SPEED 기본이 1.2 라
+# (tts.py:46) 1.06/0.94 를 그대로 넣으면 시연 전체가 지금보다 느려진다.
+ROLE_VOICE = {
+    "mc": {
+        "voice": "serena",
+        "speed": "1.27",
+        "instruct": "밝고 또렷하게, 진행자처럼 활기차게",
+    },
+    "docent": {
+        "voice": "sohee",
+        "speed": "1.13",
+        "instruct": "차분하고 낮게, 설명하듯 또박또박",
+    },
+}
+
+
+def make_heard_sink(client, mic_open: threading.Event, log=print):
+    """STT 결과를 감독에게 올리는 함수를 만든다. **마이크가 닫혀 있으면 버린다.**
+
+    감독은 발화 중 `mic(open=False)` 를 보내지만 `voice_loop` 는 그걸 모르고
+    계속 듣는다. 여기서 막지 않으면 로봇이 **상대 로봇의 목소리를 받아적어**
+    감독에 올리고, 그것이 이 저장소가 이미 밟은 자기목소리 루프다.
+    설계 §4.2 불변식 ① 이 로봇 쪽에서 실제로 성립하는 지점이 여기다.
+    """
+
+    def on_heard(text: str, *args, **kwargs) -> None:
+        if not mic_open.is_set():
+            log(f"  [마이크 닫힘 — 버림: {text!r}]")
+            return
+        client.heard(text)
+
+    return on_heard
+
+
+def role_of_env() -> str | None:
+    """`REACHY_ROLE` 을 읽는다. 없으면 1대 모드.
+
+    오타를 조용히 1대 모드로 흘려보내지 않는다 — 시연장에서 "왜 한 대만
+    말하지" 를 추적하는 데 드는 시간이 가장 비싸다.
+    """
+    raw = os.environ.get("REACHY_ROLE")
+    if raw is None or not raw.strip():
+        return None
+    role = raw.strip().lower()
+    if role not in ROLES:
+        raise ValueError(
+            f"REACHY_ROLE 이 {raw!r} 다 — 쓸 수 있는 값: {', '.join(ROLES)}"
+        )
+    return role
+
+
+def apply_role_voice(role: str) -> None:
+    """역할별 음성을 환경변수로 넣는다. **이미 있으면 덮어쓰지 않는다** —
+    현장에서 손으로 바꾼 값이 코드에 밀려나면 안 된다."""
+    cfg = ROLE_VOICE[role]
+    for env, key in (
+        ("TTS_QWEN_VOICE", "voice"),
+        ("TTS_QWEN_SPEED", "speed"),
+        ("TTS_QWEN_INSTRUCT", "instruct"),
+    ):
+        os.environ.setdefault(env, cfg[key])
+
+
+def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
+    """2대 모드 — 무대감독의 지시로 말하고 움직인다.
+
+    마이크는 감독이 연다. 사회자만 열리고 도슨트는 상시 닫혀 있다(설계 §2).
+    """
+    from session import announce_endpoints, announce_voice, build, speak
+
+    apply_role_voice(role)
+    announce_endpoints()
+    announce_voice()
+
+    url = os.environ.get("REACHY_DIRECTOR_URL", "ws://127.0.0.1:8777")
+    print(f"무대감독: {url}  역할: {role}")
+
+    with contextlib.ExitStack() as stack:
+        llm, speaker, player = build(stack, mini=reachy_mini)
+        mic_open = threading.Event()
+        client: StageClient | None = None
+
+        def on_say(cue_id: str, text: str, gaze: str | None) -> None:
+            try:
+                speak(text, speaker, player)
+            except Exception as exc:
+                if client:
+                    client.error("speak", f"{type(exc).__name__}: {exc}")
+                raise
+            finally:
+                # **발성 경계는 여기서만 보고한다.** 감독의 게이팅이 이 값을
+                # 믿는다 — 빠뜨리면 감독이 타임아웃까지 멈춰 있는다.
+                if client:
+                    client.speaking_started(cue_id)
+                    speaker.wait_idle()
+                    client.speaking_ended(cue_id)
+
+        def on_mic(open_: bool) -> None:
+            mic_open.set() if open_ else mic_open.clear()
+            print(f"  [마이크 {'열림' if open_ else '닫힘'}]")
+
+        client = StageClient(
+            url,
+            role,
+            Handlers(
+                on_say=on_say,
+                on_mic=on_mic,
+                on_gaze=lambda target: print(f"  [시선 {target}]"),
+                on_abort=lambda: speaker.stop(),
+            ),
+            unit_id=_unit_id(reachy_mini),
+            version=_sdk_version(),
+        )
+
+        # 사회자만 듣는다. 도슨트는 감독의 지시만 받는다.
+        if role == "mc":
+            threading.Thread(
+                target=voice_loop,
+                args=(llm, speaker, player, make_heard_sink(client, mic_open)),
+                kwargs={"should_stop": stop_event.is_set},
+                daemon=True,
+            ).start()
+
+        client.run(should_stop=stop_event.is_set)
+
+
+def _unit_id(mini) -> str | None:
+    """로봇의 hardware id. 시뮬(macOS)에서는 언제나 None 이다."""
+    try:
+        return mini.client.get_status().hardware_id
+    except Exception:
+        return None
+
+
+def _sdk_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("reachy_mini")
+    except Exception:
+        return "unknown"
+
 
 class VoiceChat(ReachyMiniApp):
     # 설정 페이지를 쓰지 않는다. 쓰려면 여기에 URL 을 주고 settings_app 라우트를 단다.
@@ -50,6 +198,13 @@ class VoiceChat(ReachyMiniApp):
     request_media_backend: str | None = "no_media"
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event):
+        role = role_of_env()
+        if role is not None:
+            stage_run(reachy_mini, stop_event, role)
+            print("종료했습니다.")
+            return
+
+        # 1대 모드 — 기존 경로를 그대로 둔다.
         with contextlib.ExitStack() as stack:
             announce_endpoints()  # 주소·출처 + 실기 loopback 경고 (§10)
             announce_voice()
