@@ -149,3 +149,35 @@ def test_TurnError_가_여전히_불변식을_지킨다():
     h.d.start()
     with pytest.raises(TurnError):
         h.d.start()
+
+
+def _한_큐를_끝낸다(h, cue_id="c1"):
+    """사회자 → 도슨트 → 듣기. `n` 은 LISTENING 에서만 먹는다."""
+    h.d.on_speaking_ended("mc", cue_id)
+    h.d.on_speaking_ended("docent", f"{cue_id}:docent")
+
+
+def test_p_는_이전_큐로_되돌린다():
+    """오인식으로 섹션이 넘어가 버렸을 때 되돌리는 유일한 길이다(설계 §7).
+    앞으로만 갈 수 있으면 수동 오버라이드가 반쪽이다(리뷰 I4)."""
+    h = Harness()
+    h.d.start()
+    _한_큐를_끝낸다(h, "c1")
+    h.run(["n", "p", "q"])
+    말한것 = [t for _, t in h.says()]
+    assert 말한것[0] == "사회자 첫 대사"
+    assert 말한것[-2:] == ["사회자 둘째 대사", "사회자 첫 대사"]
+
+
+def test_첫_큐에서_p_는_경고만_남기고_되돌리지_않는다():
+    h = Harness()
+    h.run(["s", "p", "q"])
+    assert any("더 되돌릴 곳이 없다" in m for m in h.warnings)
+    assert [t for _, t in h.says()] == ["사회자 첫 대사"]
+
+
+def test_도움말에_p_가_있다():
+    """운영자가 존재를 모르는 손잡이는 없는 것과 같다."""
+    h = Harness()
+    h.run(["?", "q"])
+    assert any("이전 큐로" in m for m in h.out)

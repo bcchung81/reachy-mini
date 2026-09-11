@@ -9,7 +9,7 @@ import threading
 from stage.director import Director
 
 HELP = """
-  n  다음 큐로   |  r  현재 큐 다시  |  s  시작
+  n  다음 큐로   |  p  이전 큐로     |  r  현재 큐 다시  |  s  시작
   a  즉시 중단   |  ?  도움말        |  q  종료
 """
 
@@ -59,6 +59,12 @@ def _dispatch(director: Director, cmd: str, out) -> None:
         director.start()
     elif cmd == "n":
         director.on_heard("다음")
+    elif cmd == "p":
+        # 오인식으로 섹션이 넘어가 버렸을 때 되돌리는 유일한 길이다(설계 §7).
+        # `r` 와 같은 모양으로 중단부터 한다 — 대개 잘못 넘어간 대사가
+        # 흐르는 중에 누르기 때문이다.
+        director.abort()
+        director.previous()
     elif cmd == "r":
         director.abort()
         director.start()

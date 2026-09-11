@@ -185,3 +185,21 @@ def test_큐시트가_해설_원장의_모든_섹션을_덮는다():
     numbers = {c.id.split("-")[0] for c in load_cues()}
     missing = [n for n in sections if f"{int(n):02d}" not in numbers]
     assert not missing, f"큐가 없는 섹션: {missing}"
+
+
+def test_이전_큐로_되돌릴_수_있다():
+    """수동 오버라이드(설계 §7)가 성립하려면 커서가 뒤로도 가야 한다.
+
+    앞으로만 갈 수 있으면 오인식으로 넘어가 버린 섹션을 되찾을 길이
+    아예 없다(리뷰 I4)."""
+    s = sheet()
+    s.advance()
+    assert s.current().id == "b"
+    assert s.back().id == "a"
+    assert s.current().id == "a"
+
+
+def test_첫_큐에서_되돌리면_None_이고_커서는_머문다():
+    s = sheet()
+    assert s.back() is None
+    assert s.index == 0

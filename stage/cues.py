@@ -145,5 +145,17 @@ class CueSheet:
         self._i += 1
         return self._cues[self._i]
 
+    def back(self) -> Cue | None:
+        """이전 큐로 되돌린다. 첫 큐면 None 을 주고 커서는 머문다.
+
+        `is_advance` 의 오판(설계 §7 "STT 오인식으로 진행 폭주")을 사람이
+        되돌리는 유일한 길이다. 커서를 앞으로만 옮길 수 있으면 수동
+        오버라이드가 반쪽이다 — 넘어가 버린 섹션을 되찾을 방법이 없었다.
+        """
+        if self._i <= 0:
+            return None
+        self._i -= 1
+        return self._cues[self._i]
+
     def reset(self) -> None:
         self._i = 0

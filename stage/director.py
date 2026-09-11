@@ -189,6 +189,21 @@ class Director:
         with self._lock:
             self._begin_cue(self._sheet.current())
 
+    def previous(self) -> None:
+        """이전 큐로 되돌려 다시 진행한다 — 수동 오버라이드(설계 §7).
+
+        오인식으로 섹션이 넘어가 버렸을 때 되돌리는 유일한 길이다. 콘솔이
+        `abort()` 로 먼저 멈춘 뒤 부르므로(대개 잘못 시작된 대사가 흐르는
+        중이다) 여기서 상태를 따로 건드리지 않는다 — 발화 중이면 `speak()`
+        가 불변식 ② 로 거절하고, 콘솔이 그 거절을 사람에게 보여준다.
+        """
+        with self._lock:
+            prev = self._sheet.back()
+            if prev is None:
+                self._warn("첫 큐다 — 더 되돌릴 곳이 없다")
+                return
+            self._begin_cue(prev)
+
     def tick(self) -> None:
         """타임아웃 감시. 서버 루프가 주기적으로 부른다.
 
