@@ -4,6 +4,8 @@
 진행이 멈췄을 때 사람이 되돌리기 위한 폴백**이다 — 기본 경로가 아니다.
 """
 
+import threading
+
 from stage.director import Director
 
 HELP = """
@@ -12,25 +14,57 @@ HELP = """
 """
 
 
-def run_console(director: Director) -> None:
-    print(HELP)
+def block_forever() -> None:
+    """돌아오지 않는다. Ctrl-C(또는 SIGTERM)로만 끝난다."""
+    threading.Event().wait()
+
+
+def run_console(director: Director, read=input, out=print, block=block_forever) -> None:
+    """콘솔 루프. `read`/`out`/`block` 은 테스트가 주입한다 — 실제 동작을
+    시험하려면 `input()` 을 우회할 수 있어야 한다."""
+    out(HELP)
     while True:
         try:
-            cmd = input("무대감독> ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
+            cmd = read("무대감독> ").strip().lower()
+        except KeyboardInterrupt:
+            return
+        except EOFError:
+            # **표준입력이 없다고 무대감독을 내리면 안 된다.**
+            # `nohup python -m stage &` 처럼 띄우면 첫 input() 이 곧장
+            # EOFError 를 내고, 예전에는 그대로 돌아가 `main()` 의 finally 가
+            # 서버를 닫았다 — 프로세스가 **아무 말 없이** 끝나고, 로봇들은
+            # 영원히 재접속만 시도한다. 콘솔만 없을 뿐 감독은 멀쩡하다.
+            out(
+                "표준입력이 없다 — 콘솔 없이 계속 돈다(진행은 관람객 발화로). "
+                "종료는 Ctrl-C 또는 kill."
+            )
+            block()
             return
         if cmd in ("q", "quit"):
             return
-        if cmd == "s":
-            director.start()
-        elif cmd == "n":
-            director.on_heard("다음")
-        elif cmd == "r":
-            director.abort()
-            director.start()
-        elif cmd == "a":
-            director.abort()
-        elif cmd == "?":
-            print(HELP)
-        elif cmd:
-            print(f"모르는 명령: {cmd!r}  — ? 로 도움말")
+        try:
+            _dispatch(director, cmd, out)
+        except Exception as exc:  # noqa: BLE001
+            # **여기서 예외가 새면 무대감독이 통째로 죽는다.**
+            # `__main__.main()` 의 finally 가 서버를 내리기 때문이다. 가장
+            # 흔한 경로는 `s` 를 두 번 누르는 것 — "시작됐나? 한 번 더" 는
+            # 운영자가 하는 가장 평범한 행동인데, 두 번째 `start()` 가
+            # 발화 중이라 `TurnError` 를 던지고 시연이 끝난다.
+            # 거절은 알려주되 콘솔은 계속 돈다.
+            out(f"  거절됨: {exc}")
+
+
+def _dispatch(director: Director, cmd: str, out) -> None:
+    if cmd == "s":
+        director.start()
+    elif cmd == "n":
+        director.on_heard("다음")
+    elif cmd == "r":
+        director.abort()
+        director.start()
+    elif cmd == "a":
+        director.abort()
+    elif cmd == "?":
+        out(HELP)
+    elif cmd:
+        out(f"모르는 명령: {cmd!r}  — ? 로 도움말")
