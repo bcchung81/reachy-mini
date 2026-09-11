@@ -472,3 +472,58 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     # 삼켜서 다음 큐 진행이 막히지는 않았는지 상태로 확인한다.
     d.on_speaking_ended("docent", "c1")
     assert d.state in (State.LISTENING, State.DOCENT_SPEAKING)
+
+
+def test_둘_다_붙어_있으면_1인_모드가_아니다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    assert h.d.solo_role is None
+
+
+def test_도슨트가_끊기면_사회자가_양쪽을_읽는다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    h.d.on_disconnect("docent")
+    h.clear()
+    h.d.on_speaking_ended("mc", "c1")
+    said = h.says()
+    assert len(said) == 1
+    assert said[0][0] == "mc"                      # 도슨트 대사를 사회자가 읽는다
+    assert said[0][1] == "[첫 지시 로 만든 대사]"
+    assert any("1인 모드" in w for w in h.warnings)
+
+
+def test_사회자가_끊기면_도슨트가_양쪽을_읽는다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.on_disconnect("mc")
+    h.clear()
+    h.d.start()
+    assert [r for r, _ in h.says()] == ["docent"]
+    assert any("1인 모드" in w for w in h.warnings)
+
+
+def test_다시_붙으면_2인_모드로_돌아온다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.on_disconnect("docent")
+    assert h.d.solo_role == "mc"
+    h.d.on_connect("docent")
+    assert h.d.solo_role is None
+
+
+def test_1인_모드에서도_불변식은_지켜진다():
+    # 한 대가 연달아 두 대사를 읽으므로 발화 종료를 기다려야 한다.
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_disconnect("docent")
+    h.d.start()
+    h.clear()
+    h.d.on_speaking_ended("mc", "c1")
+    assert h.d.state is State.MC_SPEAKING       # 두 번째 대사를 말하는 중
+    assert all(open_ is False for _, open_ in h.mics())

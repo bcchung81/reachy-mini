@@ -74,6 +74,7 @@ class StageServer:
                     with self._lock:
                         self._conns[role] = ws
                     self._warn(f"[{role}] 붙었다 (version={msg.get('version')})")
+                    self.director.on_connect(role)
                     continue
 
                 self._dispatch(role, msg)
@@ -82,6 +83,7 @@ class StageServer:
                 with self._lock:
                     if self._conns.get(role) is ws:
                         del self._conns[role]
+                self.director.on_disconnect(role)
                 self._warn(f"[{role}] 연결이 끊어졌다")
 
     def _dispatch(self, role: str, msg: dict) -> None:

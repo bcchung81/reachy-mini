@@ -145,3 +145,16 @@ def test_붙지_않은_로봇에게_보내면_경고한다(server):
         server.director.start()           # 도슨트가 없다
         drain(mc, 3)
         assert any("docent" in w and "붙지" in w for w in server.warnings)
+
+
+def test_연결이_끊기면_감독이_1인_모드로_내려간다(server):
+    url = f"ws://127.0.0.1:{server.port}"
+    with connect(url) as mc:
+        hello(mc, "mc")
+        time.sleep(0.2)
+        with connect(url) as docent:
+            hello(docent, "docent")
+            time.sleep(0.2)
+            assert server.director.solo_role is None
+        time.sleep(0.4)                          # 도슨트가 나갔다
+        assert server.director.solo_role == "mc"

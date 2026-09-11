@@ -88,10 +88,41 @@ class Director:
         # 막히지 않는다(교착 없음).
         self._lock = threading.Lock()
 
+        self._connected: set[str] = set()
+
     # ── 상태 ──────────────────────────────────────────────────────
     @property
     def state(self) -> State:
         return self._machine.state
+
+    @property
+    def solo_role(self) -> str | None:
+        """한 대만 붙어 있으면 그 역할. 둘 다거나 둘 다 없으면 None."""
+        if len(self._connected) == 1:
+            return next(iter(self._connected))
+        return None
+
+    def on_connect(self, role: str) -> None:
+        # `server.py::handler` 가 커넥션 스레드에서 부르는 새 공개 진입점이다.
+        # 다른 공개 메서드 안에서(`_who()` 를 통해서든) 이걸 부르지 않으므로
+        # `self._lock` 을 또 쥐어도 재진입 걱정이 없다 — `_connected` 를
+        # 커넥션 스레드 여럿이 동시에 건드리는 경합만 막으면 된다.
+        with self._lock:
+            self._connected.add(role)
+
+    def on_disconnect(self, role: str) -> None:
+        with self._lock:
+            self._connected.discard(role)
+            if self.solo_role is not None:
+                self._warn(
+                    f"[{role}] 이 끊겼다 — 1인 모드로 내려간다. "
+                    f"{self.solo_role} 가 양쪽 대사를 읽는다"
+                )
+
+    def _who(self, preferred: str) -> str:
+        """대사를 읽을 로봇. 1인 모드면 남은 한 대가 전부 읽는다."""
+        solo = self.solo_role
+        return solo if solo is not None else preferred
 
     # ── 로봇에게서 오는 것 ────────────────────────────────────────
     def on_hello(self, role: str, unit_id: str | None, version: str) -> None:
@@ -133,7 +164,7 @@ class Director:
             self._deadline = None
 
             cue = self._sheet.current()
-            if role == "mc" and cue_id == cue.id:
+            if cue_id == cue.id and role == self._who("mc"):
                 cmds = cmds + self._speak_docent(cue)
             self._emit(cmds)
 
@@ -180,7 +211,9 @@ class Director:
             target=self._generate_docent, args=(cue, token), daemon=True
         )
         self._gen_thread.start()
-        self._emit(self._machine.speak("mc", cue.id, cue.mc, gaze=cue.gaze))
+        self._emit(
+            self._machine.speak(self._who("mc"), cue.id, cue.mc, gaze=cue.gaze)
+        )
 
     def _generate_docent(self, cue: Cue, token: int) -> None:
         try:
@@ -214,7 +247,9 @@ class Director:
             self._warn(f"[{cue.id}] 도슨트 대사가 비어 있다 — 지시문으로 폴백")
             text = cue.docent_brief
         self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
-        return self._machine.speak("docent", cue.id, text, gaze="audience")
+        return self._machine.speak(
+            self._who("docent"), cue.id, text, gaze="audience"
+        )
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
@@ -232,7 +267,11 @@ class Director:
             self._warn(f"LLM 응답 실패({type(exc).__name__}: {exc}) — 폴백")
             text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
         self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
-        self._emit(self._machine.speak("docent", f"{cue.id}:qa", text, gaze="audience"))
+        self._emit(
+            self._machine.speak(
+                self._who("docent"), f"{cue.id}:qa", text, gaze="audience"
+            )
+        )
 
     def _emit(self, cmds: list[Command]) -> None:
         for cmd in coalesce(cmds):
