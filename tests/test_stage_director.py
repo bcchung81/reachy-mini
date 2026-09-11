@@ -348,3 +348,127 @@ def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
     assert len(said) == 1 and said[0][0] == "docent"
     assert said[0][1]  # 빈 대사가 아니다
     assert any("빈" in w for w in h.warnings)
+
+
+def test_도슨트_타임아웃도_올바른_로봇을_지목한다():
+    """사회자 타임아웃 테스트(`test_발화_종료가_안_오면_타임아웃으로_복구하고_경고한다`)의
+    짝. 로직 경로는 같지만 로봇 이름이 하드코딩되지 않았음을 값으로 못박는다 —
+    나중에 `role` 대신 실수로 고정 문자열을 넣는 회귀를 여기서 잡는다."""
+    h = Harness()
+    h.d.start()
+    h.d.on_speaking_ended("mc", "c1")  # 이제 도슨트가 말하는 중
+    h.clear()
+    h.warnings.clear()
+    h.clock.t = len("[첫 지시 로 만든 대사]") / CHARS_PER_SEC + TIMEOUT_MARGIN_S + 0.1
+    h.d.tick()
+    assert h.d.state is State.LISTENING
+    assert h.mics() == [("mc", True)]
+    assert any("[docent]" in w and "응답이 없다" in w for w in h.warnings)
+
+
+def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다():
+    """concurrency review finding — `tick()` 은 타이머 스레드에서, 나머지 공개
+    메서드는 커넥션마다 다른 스레드에서 불린다(`stage/server.py`). 락이 없으면:
+    tick() 이 옛 데드라인으로 "응답이 없다" 고 판정해 강제 복구를 준비하는
+    바로 그 순간, 다른 스레드가 사회자→도슨트 핸드오프를 통째로 끝내
+    상태를 옮길 수 있다. 그 뒤 tick() 이 이어서 `force_listening()` 을 부르면
+    `TurnMachine._to_listening()` 은 현재 상태를 재확인하지 않는 무조건
+    전이라 **도슨트가 말하는 도중** 사회자 마이크를 강제로 연다 — 불변식
+    ① 위반이다. 그 강제 전이가 `speaking_role`/`cue_id` 도 리셋해 버려서,
+    도슨트의 진짜 `speaking_ended` 가 뒤이어 와도 유령 메시지로 조용히
+    버려진다 — 도슨트 발화가 타임아웃 보호를 통째로 잃는다.
+
+    `warn` 콜러블을 후킹해 경합을 결정적으로 재현한다 — sleep 경합이
+    아니다: tick() 이 "응답이 없다" 경고를 내보내는 바로 그 지점(`role`
+    을 이미 읽은 뒤, `force_listening()` 을 부르기 전)에서 멈춰 세우고,
+    그 사이 다른 스레드가 핸드오프를 시도하게 한다. 락이 있으면 그
+    핸드오프는 tick() 이 끝날 때까지 통째로 막힌다 — `handoff_done` 을
+    짧은 타임아웃으로만 기다리는 이유다(락이 없을 때는 핸드오프가 거의
+    즉시 끝나고, 락이 있을 때는 tick() 이 풀어줄 때까지 절대 안 끝난다 —
+    둘 다 결정적이라 타임아웃 값 자체는 결과를 좌우하지 않는다).
+    """
+    reached = threading.Event()
+    release = threading.Event()
+    warnings: list[str] = []
+    sent: list[tuple[str, str, dict]] = []
+
+    def warn(msg):
+        warnings.append(msg)
+        if "응답이 없다" in msg:  # tick() 이 강제 복구를 결정한 시점
+            reached.set()
+            release.wait(timeout=5.0)
+
+    gen_started = threading.Event()
+    gen_release = threading.Event()
+
+    def gen(brief, history):
+        gen_started.set()
+        gen_release.wait(timeout=5.0)
+        return "도슨트 대사"
+
+    class SimpleClock:
+        def __init__(self):
+            self.t = 0.0
+
+        def __call__(self):
+            return self.t
+
+    clock = SimpleClock()
+    d = Director(
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        generate=gen,
+        send=lambda role, cmd: sent.append((role, cmd.type, cmd.fields)),
+        now=clock,
+        warn=warn,
+    )
+
+    d.start()  # 사회자 데드라인 설정
+    assert gen_started.wait(2.0), "생성 스레드가 시작되지 않았다"
+    gen_release.set()
+    assert d._docent_ready.wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
+
+    clock.t = 10_000.0  # 사회자 데드라인을 확실히 지난 시각으로 만든다
+
+    timer = threading.Thread(target=d.tick, daemon=True)
+    timer.start()
+    assert reached.wait(2.0), "tick() 이 강제 복구 판정에 도달하지 못했다"
+
+    handoff_done = threading.Event()
+
+    def do_handoff():
+        d.on_speaking_ended("mc", "c1")
+        handoff_done.set()
+
+    handoff = threading.Thread(target=do_handoff, daemon=True)
+    handoff.start()
+    handoff_done.wait(timeout=0.3)  # 락이 없으면 여기서 이미 핸드오프가 끝나 있다
+    release.set()  # tick() 을 마저 진행시킨다(강제 복구 실행)
+
+    timer.join(timeout=2.0)
+    handoff.join(timeout=2.0)
+    assert not timer.is_alive() and not handoff.is_alive(), "스레드가 안 끝났다(교착 의심)"
+
+    # 불변식 ① — 도슨트가 말하기 시작한 뒤에 사회자 마이크가 강제로 열리면 안 된다.
+    docent_say_idx = next(
+        (i for i, (r, t, _) in enumerate(sent) if r == "docent" and t == "say"), None
+    )
+    if docent_say_idx is not None:
+        violating = [
+            (r, t, f)
+            for r, t, f in sent[docent_say_idx + 1 :]
+            if r == "mc" and t == "mic" and f.get("open") is True
+        ]
+        assert not violating, (
+            f"도슨트가 말하는 도중 사회자 마이크가 열렸다(불변식 ① 위반): {sent}"
+        )
+
+    # 강제 복구 경고는 실제로 데드라인이 걸렸던 로봇(mc)을 지목해야 한다.
+    timeout_warnings = [w for w in warnings if "응답이 없다" in w]
+    assert timeout_warnings, "타임아웃 경고가 없다"
+    assert all("[mc]" in w for w in timeout_warnings), timeout_warnings
+
+    # 강제 복구 이후 도슨트의 진짜 speaking_ended 가 뒤늦게 와도 시스템이
+    # 죽거나 예외를 내지 않는다 — 유령으로 처리되든 정상 처리되든, 조용히
+    # 삼켜서 다음 큐 진행이 막히지는 않았는지 상태로 확인한다.
+    d.on_speaking_ended("docent", "c1")
+    assert d.state in (State.LISTENING, State.DOCENT_SPEAKING)

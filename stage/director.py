@@ -59,6 +59,35 @@ class Director:
         self._gen_lock = threading.Lock()
         self._gen_token = 0
 
+        # 진입점 직렬화. `stage/server.py` 가 붙은 뒤로는 `tick()` 이 타이머
+        # 스레드에서, 나머지는 커넥션마다 다른 스레드에서 불린다. 이 락이
+        # 없으면: tick() 이 데드라인 만료를 판정한 직후(`_deadline`/
+        # `speaking_role` 을 아직 안 건드린 시점), 커넥션 스레드가
+        # 사회자→도슨트 핸드오프를 통째로 끝내 상태를 옮긴 뒤, tick() 이
+        # 이어서 `force_listening()` 을 불러 **도슨트가 말하는 도중** 사회자
+        # 마이크를 강제로 연다 — 불변식 ① 위반이다. `force_listening()` 이
+        # 부르는 `TurnMachine._to_listening()` 은 현재 상태를 재확인하지
+        # 않는 무조건 전이라 이 경합을 스스로 막지 못한다. 게다가 그 강제
+        # 전이가 `speaking_role`/`cue_id` 를 리셋해 버려서, 도슨트의 진짜
+        # `speaking_ended` 가 나중에 도착하면 유령 메시지로 조용히 버려진다
+        # — 도슨트 발화가 타임아웃 보호를 통째로 잃는다.
+        #
+        # 공개 진입점(`start`/`on_hello`/`on_heard`/`on_speaking_ended`/
+        # `on_error`/`tick`/`abort`) 을 전부 이 락으로 직렬화하면 "만료 판정
+        # → 강제 전이"가 원자적이 된다 — 세 문제(마이크 오픈, 엉뚱한 로봇을
+        # 지목하는 경고, 유령 처리된 진짜 종료)가 한 번에 없어진다. 어느
+        # 공개 메서드도 다른 공개 메서드를 부르지 않으므로(전부 `_begin_cue`
+        # 등 내부 헬퍼만 거친다) 재진입이 필요 없어 일반 Lock 으로 충분하다.
+        #
+        # `_speak_docent()` 의 유예시간(`GENERATE_GRACE_S`, 최대 8초) 대기는
+        # 이 락을 쥔 채로 일어난다 — 그동안 tick() 은 막힌다. 의도한
+        # 동작이다: 사회자→도슨트 핸드오프가 진행 중일 때는 애초에 아무것도
+        # 타임아웃돼서는 안 된다. 생성 스레드(`_generate_docent`)는 이 락을
+        # 절대 요구하지 않는다 — `_gen_lock` 만 짧게 쥐었다 놓으므로, 진입
+        # 락을 쥔 스레드가 생성 완료를 기다리는 동안에도 생성 스레드는
+        # 막히지 않는다(교착 없음).
+        self._lock = threading.Lock()
+
     # ── 상태 ──────────────────────────────────────────────────────
     @property
     def state(self) -> State:
@@ -67,63 +96,76 @@ class Director:
     # ── 로봇에게서 오는 것 ────────────────────────────────────────
     def on_hello(self, role: str, unit_id: str | None, version: str) -> None:
         """역할 자기신고. 두 대가 뒤바뀐 채 시연을 시작하는 것을 여기서 막는다."""
-        expected = self._expect_units.get(role)
-        if expected is None:
-            return
-        if unit_id is None:
-            # 시뮬(macOS)에서는 언제나 None 이다 — get_hardware_id() 가 리눅스
-            # sysfs 를 읽는다. 여기서 막으면 실기 없이 개발할 수 없다.
-            self._warn(f"[{role}] unit_id 가 없다 — 실기라면 확인할 것 (시뮬은 정상)")
-            return
-        if unit_id != expected:
-            raise UnitMismatch(
-                f"{role} 자리에 다른 로봇이 있다: 기대 {expected!r}, 신고 {unit_id!r}. "
-                "사회자와 도슨트가 뒤바뀌었는지 확인한다."
-            )
+        with self._lock:
+            expected = self._expect_units.get(role)
+            if expected is None:
+                return
+            if unit_id is None:
+                # 시뮬(macOS)에서는 언제나 None 이다 — get_hardware_id() 가 리눅스
+                # sysfs 를 읽는다. 여기서 막으면 실기 없이 개발할 수 없다.
+                self._warn(f"[{role}] unit_id 가 없다 — 실기라면 확인할 것 (시뮬은 정상)")
+                return
+            if unit_id != expected:
+                raise UnitMismatch(
+                    f"{role} 자리에 다른 로봇이 있다: 기대 {expected!r}, 신고 {unit_id!r}. "
+                    "사회자와 도슨트가 뒤바뀌었는지 확인한다."
+                )
 
     def on_heard(self, text: str) -> None:
-        if self._machine.state is not State.LISTENING:
-            self._warn(f"발화 중({self._machine.state.value})에 들린 말을 버린다: {text!r}")
-            return
-        if is_advance(text):
-            nxt = self._sheet.advance()
-            if nxt is None:
-                self._warn("마지막 큐다 — 더 진행할 곳이 없다")
+        with self._lock:
+            if self._machine.state is not State.LISTENING:
+                self._warn(f"발화 중({self._machine.state.value})에 들린 말을 버린다: {text!r}")
                 return
-            self._begin_cue(nxt)
-            return
-        self._answer(text)
+            if is_advance(text):
+                nxt = self._sheet.advance()
+                if nxt is None:
+                    self._warn("마지막 큐다 — 더 진행할 곳이 없다")
+                    return
+                self._begin_cue(nxt)
+                return
+            self._answer(text)
 
     def on_speaking_ended(self, role: str, cue_id: str) -> None:
-        cmds = self._machine.on_speaking_ended(role, cue_id)
-        if not cmds:
-            return  # 유령 메시지 — 상태를 건드리지 않는다
-        self._deadline = None
+        with self._lock:
+            cmds = self._machine.on_speaking_ended(role, cue_id)
+            if not cmds:
+                return  # 유령 메시지 — 상태를 건드리지 않는다
+            self._deadline = None
 
-        cue = self._sheet.current()
-        if role == "mc" and cue_id == cue.id:
-            cmds = cmds + self._speak_docent(cue)
-        self._emit(cmds)
+            cue = self._sheet.current()
+            if role == "mc" and cue_id == cue.id:
+                cmds = cmds + self._speak_docent(cue)
+            self._emit(cmds)
 
     def on_error(self, role: str, where: str, detail: str) -> None:
-        self._warn(f"[{role}] {where} 에서 오류: {detail}")
+        with self._lock:
+            self._warn(f"[{role}] {where} 에서 오류: {detail}")
 
     # ── 바깥에서 부르는 것 ────────────────────────────────────────
     def start(self) -> None:
-        self._begin_cue(self._sheet.current())
+        with self._lock:
+            self._begin_cue(self._sheet.current())
 
     def tick(self) -> None:
-        """타임아웃 감시. 서버 루프가 주기적으로 부른다."""
-        if self._deadline is None or self._now() < self._deadline:
-            return
-        role = self._machine.speaking_role
-        self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
-        self._deadline = None
-        self._emit(self._machine.force_listening())
+        """타임아웃 감시. 서버 루프가 주기적으로 부른다.
+
+        진입 락 아래에서 판정과 강제 전이를 한 번에 묶는다 — 그렇지 않으면
+        판정 직후 다른 스레드가 핸드오프를 끝내고, 그 뒤에야 이 메서드가
+        옛 데드라인을 근거로 방금 말을 시작한 로봇의 마이크를 강제로 연다
+        (불변식 ① 위반. `__init__` 의 `self._lock` 주석 참고).
+        """
+        with self._lock:
+            if self._deadline is None or self._now() < self._deadline:
+                return
+            role = self._machine.speaking_role
+            self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
+            self._deadline = None
+            self._emit(self._machine.force_listening())
 
     def abort(self) -> None:
-        self._deadline = None
-        self._emit(self._machine.abort())
+        with self._lock:
+            self._deadline = None
+            self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
     def _begin_cue(self, cue: Cue) -> None:
