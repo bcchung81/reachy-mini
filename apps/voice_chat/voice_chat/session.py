@@ -134,6 +134,27 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     return llm, speaker, player
 
 
+def speak(text: str, speaker, player, category: str = "neutral") -> None:
+    """받은 텍스트를 말하고 그에 맞는 모션을 낸다. **LLM 을 부르지 않는다.**
+
+    1대 구성에서는 `respond()` 가 LLM 스트림을 받은 뒤 이 경로로 말하고,
+    2대 구성에서는 무대감독이 만든 텍스트로 이것만 쓴다.
+
+    **재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
+    끼어들기 판정이 한 번도 돌지 않는다 — 재생 중 마이크를 어떻게 다룰지는
+    호출부가 정한다(`voice_loop` 의 게이팅, `stage_client` 의 mic 지시).
+    """
+    text = (text or "").strip()
+    if not text:
+        # 빈 대사를 말하는 로봇이 되지 않는다. 감독 쪽 사고를 여기서 흡수한다.
+        return
+    if player is not None:
+        name = player.play_for(category)
+        print(f"  [모션 {category}/{name}]")
+    print(f"미니> {text}")
+    speaker.speak(text)
+
+
 def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:
     """한 턴: 모션 즉시 + LLM 스트림 → 절 단위 TTS. 구간 지연을 로그로 남긴다."""
     t0 = time.time()
