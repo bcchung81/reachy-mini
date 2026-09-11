@@ -612,3 +612,53 @@ def test_유령_발화_종료는_버리되_소리_내서_버린다():
     assert h.sent == []
     assert any("유령 speaking_ended" in w for w in h.warnings)
     assert h.d.state is State.MC_SPEAKING
+
+
+# ── 공유 이력 (리뷰 I6 / 상한) ───────────────────────────────────────
+
+def test_사회자_대사도_하나의_이력에_쌓인다():
+    """설계 §5.2 — 이력은 하나이고 `사회자:`/`도슨트:`/`관람객:` 로 가른다.
+
+    사회자 몫이 빠지면 도슨트의 LLM 은 방금 뭐라고 넘겨받았는지 못 본다.
+    "도슨트, 맥스웰부터 부탁해요" 를 못 보고 해설을 시작하니 말이 안 이어진다.
+    """
+    h = Harness()
+    h.d.start()
+    assert h.d.history[0]["content"] == "사회자: 사회자 첫 대사"
+
+
+def test_사회자_대사가_도슨트_생성에_실제로_넘어간다():
+    """순서가 중요하다 — 생성 스레드는 `list(self.history)` 를 찍어간다.
+    스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다."""
+    본것: list[list[dict]] = []
+
+    def gen(brief, history):
+        본것.append(list(history))
+        return "도슨트 대사"
+
+    h = Harness(generate=gen)
+    h.d.start()
+    assert h.d._docent_ready.wait(2.0)
+    assert 본것 and 본것[0][-1]["content"] == "사회자: 사회자 첫 대사"
+
+
+def test_이력이_무한히_자라지_않는다():
+    """19섹션 + Q&A 를 다 쌓으면 컨텍스트 창이 **말없이** 앞을 자른다 —
+    자르는 쪽을 우리가 정해야 무엇이 남는지 알 수 있다."""
+    from stage.director import HISTORY_MAX
+
+    h = Harness()
+    for i in range(HISTORY_MAX * 2):
+        h.d._remember(f"도슨트: 줄 {i}")
+    assert len(h.d.history) == HISTORY_MAX
+    assert h.d.history[-1]["content"] == f"도슨트: 줄 {HISTORY_MAX * 2 - 1}"
+    # 최근 것이 남는다 — 오래된 것부터 나간다
+    assert h.d.history[0]["content"] == f"도슨트: 줄 {HISTORY_MAX}"
+
+
+def test_관람객_줄만_user_로_들어간다():
+    h = Harness()
+    h.d._remember("관람객: 마르코니가 누구예요")
+    h.d._remember("도슨트: 무선 전신을 실용화한 사람입니다")
+    h.d._remember("사회자: 다음으로 가 볼까요")
+    assert [m["role"] for m in h.d.history] == ["user", "assistant", "assistant"]

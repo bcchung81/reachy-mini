@@ -23,6 +23,13 @@ TIMEOUT_MARGIN_S = 5.0
 # 도슨트 대사 생성이 사회자 발화보다 늦어질 때 더 기다려 줄 한도.
 GENERATE_GRACE_S = 8.0
 
+# 대화 이력 상한(줄 수). 큐시트가 19섹션이고 그 위에 관람객 질문이 얹히므로
+# 상한이 없으면 시연이 진행될수록 프롬프트가 계속 커진다 — TTFT 가 늘고,
+# 컨텍스트 창을 넘기면 **앞이 조용히 잘려 나간다**(무엇이 잘렸는지 아무도
+# 모른다). 최근 것만 남기는 편이 예측 가능하다. 6턴 남짓이면 "방금 무슨
+# 얘기를 했는가" 에는 충분하다 — 그보다 먼 맥락은 `docent_brief` 가 준다.
+HISTORY_MAX = 12
+
 
 class UnitMismatch(RuntimeError):
     """로봇이 신고한 hardware id 가 기대값과 다르다 — 두 대가 뒤바뀌었다."""
@@ -265,6 +272,15 @@ class Director:
 
     # ── 내부 ──────────────────────────────────────────────────────
     def _begin_cue(self, cue: Cue) -> None:
+        # **사회자 대사도 이력에 넣는다 — 생성 스레드를 띄우기 전에.**
+        # 설계 §5.2 는 이력이 하나이고 `사회자:`/`도슨트:`/`관람객:` 접두로
+        # 구분한다고 못박는다. 사회자 몫을 빠뜨리면 도슨트의 LLM 은 방금
+        # 사회자가 뭐라고 넘겼는지 못 본다 — "도슨트, 맥스웰부터 부탁해요"
+        # 라는 넘김을 못 보고 해설을 시작하니 말이 이어지지 않는다.
+        # 순서가 중요하다: `_generate_docent` 가 `list(self.history)` 를
+        # 찍어가므로 스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다.
+        self._remember(f"사회자: {cue.mc}")
+
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
         with self._gen_lock:
@@ -311,7 +327,7 @@ class Director:
         if not text:
             self._warn(f"[{cue.id}] 도슨트 대사가 비어 있다 — 지시문으로 폴백")
             text = cue.docent_brief
-        self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
+        self._remember(f"도슨트: {text}")
         # 사회자 몫과 구분되는 id 를 쓴다 — `_answer` 의 `:qa` 와 같은 이유다.
         # 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 `on_speaking_ended` 가
         # 그대로 쓰므로, 도슨트 몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인
@@ -323,7 +339,7 @@ class Director:
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
-        self.history.append({"role": "user", "content": f"관람객: {question}"})
+        self._remember(f"관람객: {question}")
         brief = (
             f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. "
             "도슨트로서 3문장 이내로 답한다."
@@ -336,12 +352,23 @@ class Director:
         except Exception as exc:
             self._warn(f"LLM 응답 실패({type(exc).__name__}: {exc}) — 폴백")
             text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
-        self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
+        self._remember(f"도슨트: {text}")
         self._emit(
             self._machine.speak(
                 self._who("docent"), f"{cue.id}:qa", text, gaze="audience"
             )
         )
+
+    def _remember(self, line: str) -> None:
+        """이력에 한 줄 남긴다. **이력은 하나**이고 접두로 화자를 가른다(설계 §5.2).
+
+        상한을 넘으면 앞에서 잘라낸다 — 자르는 쪽을 우리가 정해야 모델의
+        컨텍스트 창이 말없이 자르는 것을 막는다.
+        """
+        role = "user" if line.startswith("관람객:") else "assistant"
+        self.history.append({"role": role, "content": line})
+        if len(self.history) > HISTORY_MAX:
+            del self.history[: len(self.history) - HISTORY_MAX]
 
     def _emit(self, cmds: list[Command]) -> None:
         for cmd in coalesce(cmds):
