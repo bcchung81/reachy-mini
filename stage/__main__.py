@@ -26,11 +26,22 @@ from llm import LLMClient  # noqa: E402
 
 
 def build_generate() -> "callable":
+    """LLM 호출 하나. **직렬화한다.**
+
+    `client` 하나를 공유하면서 호출마다 `client.history` 를 통째로 갈아끼운다.
+    감독은 이 함수를 두 갈래에서 부른다: 큐를 시작할 때 띄우는 생성 스레드
+    (`_generate_docent`)와 관람객 질문 응답(`_answer`). 늦게 끝난 생성 스레드와
+    질문이 겹치면 **한쪽이 다른 쪽의 이력으로 답한다** — 지난 섹션의 맥락으로
+    질문에 답하거나 그 반대다. 락 하나로 막는다. LLM 왕복은 원래 한 번에 하나만
+    도는 것이 맞다(PC 추론 서버도 하나다).
+    """
     client = LLMClient(system_prompt=_system_prompt())
+    lock = threading.Lock()
 
     def generate(brief: str, history: list[dict]) -> str:
-        client.history = list(history)
-        return "".join(client.chat_stream(brief, None))
+        with lock:
+            client.history = list(history)
+            return "".join(client.chat_stream(brief, None))
 
     return generate
 

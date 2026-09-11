@@ -114,13 +114,30 @@ def test_로봇과_감독의_메시지_규약이_같다():
     assert stage_client._DIRECTOR_MSGS == protocol.DIRECTOR_MSGS
 
 
-def test_websockets_가_앱_의존성에_선언돼_있다():
-    import pathlib
-    import tomllib
+def test_websockets_하한이_recv_타임아웃을_보장한다():
+    """`stage_client.run()` 은 `ws.recv(timeout=...)` 에 기대고 있다.
 
-    p = pathlib.Path(__file__).parent.parent / "apps/voice_chat/pyproject.toml"
-    deps = tomllib.loads(p.read_text())["project"]["dependencies"]
-    assert any(d.startswith("websockets") for d in deps)
+    sync API 의 recv 타임아웃은 **13.0** 에서 들어왔다. 하한이 12 면 로봇에
+    12.x 가 깔려도 설치가 통과하고, 그 로봇은 조용한 구간에서 영원히 블록돼
+    `should_stop()` 을 다시 보지 못한다 — 앱이 안 끝나고 데몬의 앱 슬롯이
+    반환되지 않는다. 시뮬에는 15.x 가 깔려 있어 절대 드러나지 않는다.
+    """
+    from packaging.specifiers import SpecifierSet
+
+    spec = _deps()["websockets"].specifier
+    assert not spec.contains("12.0"), f"12.x 를 허용한다: {spec}"
+    assert spec.contains("13.0"), f"13.0 을 배제한다: {spec}"
+    # reachy-mini 가 `websockets<16,>=12` 로 끌어온다 — 상한을 넘기면 충돌한다.
+    assert not SpecifierSet(str(spec)).contains("16.0"), f"상한이 없다: {spec}"
+
+
+def test_recv_타임아웃이_설치된_websockets_에_실제로_있다():
+    """하한을 적어 두는 것과 그 API 가 실재하는 것은 다른 문제다."""
+    import inspect
+
+    from websockets.sync.connection import Connection
+
+    assert "timeout" in inspect.signature(Connection.recv).parameters
 
 
 def _cross_modules():

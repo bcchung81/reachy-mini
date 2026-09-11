@@ -254,3 +254,73 @@ def test_발화_시작_보고가_감독까지_닿는다(server):
                 break
             time.sleep(0.05)
         assert server.director._deadline != before, "데드라인이 다시 걸리지 않았다"
+
+
+# ── 방어선 (리뷰 MINOR) ──────────────────────────────────────────────
+
+def test_도슨트가_올린_heard_는_버리고_경고한다(server):
+    """**관람객 창구는 하나다**(설계 §2).
+
+    도슨트에 청취 루프가 생기거나 로봇 쪽 게이트(`make_heard_sink`)가 새면
+    상대 로봇의 목소리가 관람객 발화로 올라온다 — 이 저장소가 이미 밟은
+    자기목소리 루프다. 감독 쪽에서 한 줄 더 막는다.
+    """
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        ended(mc)
+        drain(docent, 3)
+        drain(mc, 1)
+        ended(docent, "c1:docent")
+        drain(mc, 1)                       # 사회자 마이크가 열렸다
+
+        before = server.director.state
+        docent.send(json.dumps({"type": "heard", "text": "다음"}))
+        for _ in range(60):
+            if any("관람객 창구가 아니다" in w for w in server.warnings):
+                break
+            time.sleep(0.05)
+        assert any("관람객 창구가 아니다" in w for w in server.warnings)
+        assert server.director.state is before   # 진행하지 않았다
+
+
+def test_사회자가_없으면_도슨트의_heard_를_받아준다(server):
+    """1인 모드에서는 남은 한 대가 관람객 창구를 겸한다 — 막으면 안 된다."""
+    with connect(url_of(server)) as docent:
+        hello(docent, "docent")
+        time.sleep(0.2)
+        assert server.director.solo_role == "docent"
+        server.director.start()
+        drain(docent, 3)
+        ended(docent, "c1")
+        drain(docent, 3)                   # 도슨트 몫
+        ended(docent, "c1:docent")
+        drain(docent, 1)                   # 마이크가 열린다
+
+        docent.send(json.dumps({"type": "heard", "text": "마르코니가 누구예요"}))
+        msgs = drain(docent, 3)
+        assert any(m["type"] == "say" for m in msgs)
+
+
+def test_같은_역할로_다시_붙으면_옛_연결을_닫고_경고한다(server):
+    """옛 소켓을 열어둔 채 버리면 감독이 보내는 것을 아무도 안 받는 유령
+    연결이 남는다. 두 로봇에 같은 역할을 준 사고일 수도 있다."""
+    first = connect(url_of(server))
+    hello(first, "mc")
+    time.sleep(0.2)
+
+    with connect(url_of(server)) as second:
+        hello(second, "mc")
+        for _ in range(60):
+            if any("이미 다른 연결이 있었다" in w for w in server.warnings):
+                break
+            time.sleep(0.05)
+        assert any("이미 다른 연결이 있었다" in w for w in server.warnings)
+
+        # 옛 연결은 실제로 닫혔다 — 읽으려 하면 끊긴다.
+        with pytest.raises(Exception):
+            first.recv(timeout=2.0)
+
+        # 새 연결은 멀쩡히 지시를 받는다.
+        server.director.start()
+        assert any(m["type"] == "say" for m in drain(second, 3))
+    first.close()

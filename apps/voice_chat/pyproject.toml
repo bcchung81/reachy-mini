@@ -21,7 +21,11 @@ dependencies = [
     # `websockets<16,>=12` 로 끌어오지만, **우리가 직접 import 하는 것은
     # 우리가 선언한다** — 선언 누락은 이 저장소가 이미 밟은 지뢰다
     # (docs/real-robot-deployment.md §3).
-    "websockets>=12,<16",
+    # **하한은 13 이다.** `stage_client.run()` 이 `ws.recv(timeout=...)` 을 쓰는데
+    # sync API 의 recv 타임아웃은 13.0 에서 들어왔다. 12 를 허용하면 로봇에서
+    # TypeError 로 죽거나(인자를 모른다) 타임아웃 없이 영원히 블록된다 —
+    # 감독이 조용한 구간에서 should_stop 을 다시 못 본다(stage_client.py POLL_S 주석).
+    "websockets>=13,<16",
     # audio_in.py·tts.py 가 `gi`(GStreamer)를 쓴다. **공급자가 플랫폼마다 다르다** —
     # reachy-mini 자신이 이렇게 갈라 둔다:
     #     PyGObject<=3.46.0,>=3.42.2 ; sys_platform == "linux"

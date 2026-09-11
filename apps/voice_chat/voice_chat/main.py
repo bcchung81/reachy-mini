@@ -308,11 +308,22 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         say_runner.join(SAY_THREAD_JOIN_TIMEOUT_S)
 
 
-def _unit_id(mini) -> str | None:
-    """로봇의 hardware id. 시뮬(macOS)에서는 언제나 None 이다."""
+def _unit_id(mini, warn=print) -> str | None:
+    """로봇의 hardware id. 시뮬(macOS)에서는 언제나 None 이다.
+
+    감독은 이 값으로 두 로봇이 뒤바뀌었는지 본다(설계 §6.3). None 이면
+    검증을 건너뛰므로 **왜 None 인지가 중요하다** — 시뮬이라 그런 것과
+    SDK 호출이 실패한 것은 전혀 다른 상황인데, 예전에는 둘 다 조용한 None
+    이었다. 실기에서 이 자리가 조용하면 역할 검증이 통째로 꺼진 채 시연에
+    들어간다.
+    """
     try:
         return mini.client.get_status().hardware_id
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        warn(
+            f"  [경고] unit_id 를 못 읽었다({type(exc).__name__}: {exc}) — "
+            "감독의 역할 검증이 꺼진다. 시뮬(macOS)에서는 정상이다"
+        )
         return None
 
 

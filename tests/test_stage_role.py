@@ -420,3 +420,20 @@ def test_마이크를_닫으라는_지시는_경고하지_않는다():
     on_mic(False)
     assert not gate.is_set()
     assert not any("경고" in m for m in logs)
+
+
+def test_unit_id_를_못_읽으면_소리_내서_경고한다():
+    """감독은 이 값으로 두 로봇이 뒤바뀌었는지 본다(설계 §6.3). None 이면
+    검증을 건너뛰므로 **왜 None 인지**가 중요하다 — 시뮬이라 그런 것과 SDK
+    호출이 실패한 것은 전혀 다른 상황인데 예전엔 둘 다 조용한 None 이었다."""
+
+    class 터지는미니:
+        class client:
+            @staticmethod
+            def get_status():
+                raise RuntimeError("데몬이 응답하지 않는다")
+
+    logs: list[str] = []
+    assert main_mod._unit_id(터지는미니, warn=logs.append) is None
+    assert any("unit_id 를 못 읽었다" in m for m in logs)
+    assert any("역할 검증이 꺼진다" in m for m in logs)

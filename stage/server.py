@@ -72,7 +72,22 @@ class StageServer:
                         role, msg.get("unit_id"), msg.get("version", "")
                     )
                     with self._lock:
+                        old = self._conns.get(role)
                         self._conns[role] = ws
+                    if old is not None and old is not ws:
+                        # 같은 역할로 두 번 붙었다. 예전에는 옛 소켓이 **열린
+                        # 채로 버려져** 감독이 보내는 것을 아무도 안 받는
+                        # 유령 연결로 남았다(그쪽 핸들러 스레드도 계속 돈다).
+                        # 로봇 두 대에 같은 역할을 준 사고일 수도 있으므로
+                        # 조용히 넘기지 않는다.
+                        self._warn(
+                            f"[{role}] 자리에 이미 다른 연결이 있었다 — 옛 연결을 "
+                            "닫는다. 두 로봇에 같은 역할을 주지 않았는지 확인한다"
+                        )
+                        try:
+                            old.close()
+                        except Exception as exc:  # noqa: BLE001
+                            self._warn(f"[{role}] 옛 연결을 닫지 못했다: {exc}")
                     self._warn(f"[{role}] 붙었다 (version={msg.get('version')})")
                     self.director.on_connect(role)
                     continue
@@ -97,6 +112,17 @@ class StageServer:
     def _dispatch(self, role: str, msg: dict) -> None:
         t = msg["type"]
         if t == "heard":
+            # **관람객 창구는 하나다**(설계 §2). 사회자만, 1인 모드에서는
+            # 남은 한 대만 올릴 수 있다. 도슨트에 청취 루프가 생기거나
+            # 로봇 쪽 게이트(`make_heard_sink`)가 새면 상대 로봇의 목소리가
+            # 관람객 발화로 올라온다 — 여기서 한 줄로 더 막는다.
+            listener = self.director.solo_role or "mc"
+            if role != listener:
+                self._warn(
+                    f"[{role}] 는 관람객 창구가 아니다(지금은 {listener}) — "
+                    f"heard 를 버린다: {msg.get('text', '')!r}"
+                )
+                return
             self.director.on_heard(msg.get("text", ""))
         elif t == "speaking_ended":
             self.director.on_speaking_ended(role, msg.get("cue_id", ""))

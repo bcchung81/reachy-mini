@@ -181,3 +181,4 @@ def test_도움말에_p_가_있다():
     h = Harness()
     h.run(["?", "q"])
     assert any("이전 큐로" in m for m in h.out)
+
