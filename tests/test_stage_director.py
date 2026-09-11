@@ -123,7 +123,7 @@ def test_도슨트_발화가_끝나면_사회자_마이크가_열린다():
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
     h.clear()
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")  # 도슨트 몫에 붙는 구분 id
     assert h.d.state is State.LISTENING
     assert h.mics() == [("mc", True)]
 
@@ -132,7 +132,7 @@ def test_진행_신호를_들으면_다음_큐로_간다():
     h = Harness()
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.clear()
     h.d.on_heard("다음")
     assert h.says() == [("mc", "사회자 둘째 대사")]
@@ -142,7 +142,7 @@ def test_질문을_들으면_도슨트가_답한다():
     h = Harness()
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.clear()
     h.d.on_heard("마르코니가 누구예요")
     answered = h.says()
@@ -156,7 +156,7 @@ def test_질문과_답이_대화_이력에_쌓인다():
     h = Harness()
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.d.on_heard("마르코니가 누구예요")
     roles = [m["role"] for m in h.d.history]
     assert roles[-2:] == ["user", "assistant"]
@@ -175,10 +175,10 @@ def test_마지막_큐에서_진행_신호를_받으면_끝내고_경고한다()
     h = Harness()
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.d.on_heard("다음")                      # c2 로
     h.d.on_speaking_ended("mc", "c2")
-    h.d.on_speaking_ended("docent", "c2")
+    h.d.on_speaking_ended("docent", "c2:docent")
     h.clear()
     h.d.on_heard("다음")
     assert h.says() == []
@@ -283,7 +283,7 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
 
     h.d.on_speaking_ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
     assert h.says()[-1] == ("docent", "첫 지시")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.d.on_heard("다음")  # c2 시작 — 새 생성 스레드가 돈다
     h.clear()
     h.warnings.clear()
@@ -340,7 +340,7 @@ def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
     h = Harness(generate=gen)
     h.d.start()
     h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_speaking_ended("docent", "c1:docent")
     h.clear()
     h.warnings.clear()
     h.d.on_heard("마르코니가 누구예요")
@@ -527,3 +527,35 @@ def test_1인_모드에서도_불변식은_지켜진다():
     h.d.on_speaking_ended("mc", "c1")
     assert h.d.state is State.MC_SPEAKING       # 두 번째 대사를 말하는 중
     assert all(open_ is False for _, open_ in h.mics())
+
+
+def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달한다_사회자만_남았을_때():
+    """review finding 1 — 도슨트 몫에 사회자 몫과 같은 맨 cue_id 를 쓰면, 1인
+    모드에서는 같은 로봇의 speaking_ended 가 두 번 다 "사회자 몫이 끝났다"로
+    오판된다. 두 번째 호출도 다시 도슨트 몫을 트리거해 같은 대사를 무한히
+    반복하고, 마이크가 다시 열리지 않아 시연이 완전히 멈춘다."""
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_disconnect("docent")
+    h.d.start()
+    h.d.on_speaking_ended("mc", "c1")           # 사회자 몫 종료 → 도슨트 몫 시작
+    h.clear()
+    h.d.on_speaking_ended("mc", "c1:docent")    # 도슨트 몫 종료(로봇이 받은 cue_id 그대로 에코)
+    assert h.d.state is State.LISTENING
+    assert h.says() == []
+    assert h.mics() == [("mc", True)]
+
+
+def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달한다_도슨트만_남았을_때():
+    """위 테스트의 반대 방향 — 아무 테스트도 덮지 않던 자리(사회자가 끊겨
+    도슨트가 양쪽을 읽는 경우)라 finding 1 이 여기서 새어 나갔었다."""
+    h = Harness()
+    h.d.on_connect("docent")
+    h.d.on_disconnect("mc")
+    h.d.start()                                  # 도슨트가 사회자 몫을 대신 읽는다
+    h.d.on_speaking_ended("docent", "c1")         # 사회자 몫 종료 → 도슨트 몫 시작
+    h.clear()
+    h.d.on_speaking_ended("docent", "c1:docent")  # 도슨트 몫 종료
+    assert h.d.state is State.LISTENING
+    assert h.says() == []
+    assert h.mics() == [("mc", True)]

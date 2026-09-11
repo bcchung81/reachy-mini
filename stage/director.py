@@ -163,8 +163,15 @@ class Director:
                 return  # 유령 메시지 — 상태를 건드리지 않는다
             self._deadline = None
 
+            # 큐 id 만으로 "사회자 몫이 방금 끝났다" 를 판정한다 — role 은
+            # 안 본다. `_speak_docent` 가 도슨트 몫에는 `f"{cue.id}:docent"`
+            # 처럼 구분되는 id 를 쓰므로(§ 리뷰 finding 1), 맨 cue.id 는
+            # 두 모드 어디서든 사회자 몫에만 붙는다. 1인 모드에서는 같은
+            # 로봇이 두 몫을 연달아 말하므로 role 로는 구분이 안 된다 —
+            # role 로 갈랐다가 도슨트 몫이 끝난 뒤에도 다시 도슨트 몫을
+            # 트리거해 자기 대사를 무한 반복하는 버그가 났었다.
             cue = self._sheet.current()
-            if cue_id == cue.id and role == self._who("mc"):
+            if cue_id == cue.id:
                 cmds = cmds + self._speak_docent(cue)
             self._emit(cmds)
 
@@ -247,8 +254,13 @@ class Director:
             self._warn(f"[{cue.id}] 도슨트 대사가 비어 있다 — 지시문으로 폴백")
             text = cue.docent_brief
         self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
+        # 사회자 몫과 구분되는 id 를 쓴다 — `_answer` 의 `:qa` 와 같은 이유다.
+        # 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 `on_speaking_ended` 가
+        # 그대로 쓰므로, 도슨트 몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인
+        # 모드에서 같은 로봇이 도슨트 몫을 끝낸 speaking_ended 가 다시
+        # "사회자 몫이 끝났다" 로 오판돼 도슨트 몫을 무한히 반복한다.
         return self._machine.speak(
-            self._who("docent"), cue.id, text, gaze="audience"
+            self._who("docent"), f"{cue.id}:docent", text, gaze="audience"
         )
 
     def _answer(self, question: str) -> None:

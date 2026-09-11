@@ -104,7 +104,7 @@ def test_들은_말이_감독에_닿는다(server):
         ended(mc)
         drain(docent, 3)
         drain(mc, 1)
-        ended(docent)
+        ended(docent, "c1:docent")       # 도슨트 몫은 구분되는 cue_id 로 끝난다
         opened = drain(mc, 1)            # 이제서야 사회자 마이크가 열린다
         assert opened[0]["type"] == "mic" and opened[0]["open"] is True
 
@@ -158,3 +158,68 @@ def test_연결이_끊기면_감독이_1인_모드로_내려간다(server):
             assert server.director.solo_role is None
         time.sleep(0.4)                          # 도슨트가 나갔다
         assert server.director.solo_role == "mc"
+
+
+class _StubWS:
+    """`handler()` 가 요구하는 최소 인터페이스만 흉내낸다 — 진짜 소켓 없이
+    stale 핸들러의 `finally` 가 언제 실행되는지를 손으로(결정적으로) 통제한다.
+    """
+
+    def __init__(self, hello_msg: str, release: threading.Event):
+        self._hello = hello_msg
+        self._release = release
+        self._sent_hello = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self._sent_hello:
+            self._sent_hello = True
+            return self._hello
+        self._release.wait(2.0)   # 풀리기 전까지는 "아직 연결돼 있다"
+        raise StopIteration       # 풀리면 그제서야 연결이 끊어진 것으로 본다
+
+    def send(self, data):
+        pass  # 이 테스트는 감독이 보내는 지시를 보지 않는다
+
+
+def test_빠른_재연결에서_새_연결을_끊긴_것으로_보고하지_않는다():
+    """review finding 2 — `_conns` 삭제는 `is ws` 로 지키면서 `on_disconnect`
+    는 무조건 불렀다. 같은 role 로 빠르게 재연결하면(새 연결이 이미 그
+    자리를 차지한 뒤에야 stale 한 옛 핸들러의 finally 가 실행) 실제로는
+    계속 붙어 있는 role 을 감독이 "끊겼다"고 오판해 조용히 1인 모드로
+    내려간다 — 실기 WiFi 순단에서 재현 가능한 시나리오다."""
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    warnings: list[str] = []
+    s = StageServer(
+        sheet,
+        generate=lambda brief, history: "도슨트 대사",
+        warn=warnings.append,
+    )
+    s.director.on_connect("docent")  # 도슨트는 시종일관 붙어 있다고 가정한다
+
+    hello_msg = json.dumps(
+        {"type": "hello", "role": "mc", "unit_id": None, "version": "1.9.0"}
+    )
+
+    release_old = threading.Event()
+    old_ws = _StubWS(hello_msg, release_old)
+    t_old = threading.Thread(target=s.handler, args=(old_ws,), daemon=True)
+    t_old.start()
+    time.sleep(0.2)  # old 가 hello 를 처리하고 등록될 시간을 준다
+
+    release_new = threading.Event()  # 절대 풀지 않는다 — new 는 살아 있는 채로 둔다
+    new_ws = _StubWS(hello_msg, release_new)
+    t_new = threading.Thread(target=s.handler, args=(new_ws,), daemon=True)
+    t_new.start()
+    time.sleep(0.2)  # new 가 등록돼 old 의 자리를 이미 차지한다
+
+    release_old.set()  # stale 한 old 핸들러가 이제야 finally 로 빠진다
+    t_old.join(timeout=2.0)
+    assert not t_old.is_alive(), "old 핸들러가 안 끝났다"
+
+    assert s.director.solo_role is None, (
+        "mc 는 새 연결로 계속 붙어 있다 — 1인 모드로 내려가면 안 된다"
+    )
+    assert not any("[mc]" in w and "끊겼다" in w for w in warnings), warnings

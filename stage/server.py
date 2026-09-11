@@ -80,10 +80,18 @@ class StageServer:
                 self._dispatch(role, msg)
         finally:
             if role is not None:
+                # 한 번만 계산해서 삭제와 on_disconnect 둘 다 이 값으로 문을
+                # 잠근다. 빠른 재연결에서 새 연결이 이미 이 role 을 차지한
+                # 뒤에야 stale 한 옛 핸들러의 finally 가 뒤늦게 실행되면,
+                # `self._conns.get(role)` 는 이미 새 ws 를 가리킨다 — 그때도
+                # `on_disconnect` 를 부르면 실제로는 붙어 있는 role 을 감독이
+                # "끊겼다"고 오판해 조용히 1인 모드로 내려간다(review finding 2).
                 with self._lock:
-                    if self._conns.get(role) is ws:
+                    is_current = self._conns.get(role) is ws
+                    if is_current:
                         del self._conns[role]
-                self.director.on_disconnect(role)
+                if is_current:
+                    self.director.on_disconnect(role)
                 self._warn(f"[{role}] 연결이 끊어졌다")
 
     def _dispatch(self, role: str, msg: dict) -> None:
