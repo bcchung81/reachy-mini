@@ -2521,6 +2521,16 @@ import main as main_mod
 _VOICE_ENV = ("TTS_QWEN_VOICE", "TTS_QWEN_SPEED", "TTS_QWEN_INSTRUCT")
 
 
+class _FakeClient:
+    """StageClient 대역 — heard() 로 올라온 것만 모은다."""
+
+    def __init__(self, sink: list):
+        self._sink = sink
+
+    def heard(self, text: str) -> None:
+        self._sink.append(text)
+
+
 @pytest.fixture(autouse=True)
 def 음성_환경변수_원복():
     """`apply_role_voice` 는 `os.environ.setdefault` 를 쓴다 — monkeypatch 가
@@ -2561,6 +2571,44 @@ def test_대문자와_공백을_받아준다(monkeypatch):
 
 def test_stage_run_이_있다():
     assert callable(main_mod.stage_run)
+
+
+def test_마이크가_닫혀_있으면_감독에_올리지_않는다():
+    """불변식 ① 이 로봇 쪽에서 실제로 성립하는지 — 장부가 아니라 동작으로."""
+    import threading
+
+    sent: list[str] = []
+    gate = threading.Event()          # 닫힌 상태
+    sink = main_mod.make_heard_sink(
+        _FakeClient(sent), gate, log=lambda m: None
+    )
+    sink("상대 로봇이 말한 내용")
+    assert sent == []
+
+
+def test_마이크가_열려_있으면_감독에_올린다():
+    import threading
+
+    sent: list[str] = []
+    gate = threading.Event()
+    gate.set()
+    sink = main_mod.make_heard_sink(
+        _FakeClient(sent), gate, log=lambda m: None
+    )
+    sink("다음")
+    assert sent == ["다음"]
+
+
+def test_버릴_때_소리_내서_남긴다():
+    """조용히 버리면 시연장에서 '왜 안 듣지' 를 추적할 수 없다."""
+    import threading
+
+    logs: list[str] = []
+    sink = main_mod.make_heard_sink(
+        _FakeClient([]), threading.Event(), log=logs.append
+    )
+    sink("버려질 말")
+    assert any("버림" in m for m in logs)
 
 
 def test_역할별_음성이_문서와_일치한다():
@@ -2675,6 +2723,24 @@ ROLE_VOICE = {
 }
 
 
+def make_heard_sink(client, mic_open: threading.Event, log=print):
+    """STT 결과를 감독에게 올리는 함수를 만든다. **마이크가 닫혀 있으면 버린다.**
+
+    감독은 발화 중 `mic(open=False)` 를 보내지만 `voice_loop` 는 그걸 모르고
+    계속 듣는다. 여기서 막지 않으면 로봇이 **상대 로봇의 목소리를 받아적어**
+    감독에 올리고, 그것이 이 저장소가 이미 밟은 자기목소리 루프다.
+    설계 §4.2 불변식 ① 이 로봇 쪽에서 실제로 성립하는 지점이 여기다.
+    """
+
+    def on_heard(text: str, *args, **kwargs) -> None:
+        if not mic_open.is_set():
+            log(f"  [마이크 닫힘 — 버림: {text!r}]")
+            return
+        client.heard(text)
+
+    return on_heard
+
+
 def role_of_env() -> str | None:
     """`REACHY_ROLE` 을 읽는다. 없으면 1대 모드.
 
@@ -2759,7 +2825,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         if role == "mc":
             threading.Thread(
                 target=voice_loop,
-                args=(llm, speaker, player, lambda text, *a, **k: client.heard(text)),
+                args=(llm, speaker, player, make_heard_sink(client, mic_open)),
                 kwargs={"should_stop": stop_event.is_set},
                 daemon=True,
             ).start()
@@ -2837,12 +2903,12 @@ echo "음성은 main.py 가 역할에 맞춰 넣는다(TTS_QWEN_VOICE 를 여기
 - [ ] **Step 5: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_role.py tests/test_deployment_contract.py -q`
-Expected: PASS (9 + 7 passed)
+Expected: PASS (12 + 7 passed)
 
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 342 passed
+Expected: 350 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2948,7 +3014,7 @@ for c in load_cues():
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 343 passed
+Expected: 351 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3156,7 +3222,7 @@ Expected: PASS (24 + 8 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 349 passed
+Expected: 357 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3180,7 +3246,7 @@ Claude-Session: https://claude.ai/code/session_01VAebqsSLo4nL4PoQPUKSs4"
 
 ### 코드
 
-- [ ] `.venv/bin/python -m pytest tests/ -q` → **349 passed** (착수 시점 235 + 114)
+- [ ] `.venv/bin/python -m pytest tests/ -q` → **357 passed** (착수 시점 235 + 122)
 - [ ] 시뮬 2대로 종단 시연 (설계 §8 에서 실측 검증한 구성):
   ```bash
   # 터미널 1·2 — 로봇 2대 대역 (mjpython/Cocoa 제약을 우회하는 구성, 실측 검증됨)
