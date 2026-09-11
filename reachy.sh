@@ -129,7 +129,7 @@ TTS_BACKEND_NAME="${TTS_QWEN_BACKEND:-$TTS_BACKEND_NAME}"
 # 서버 기동 시 화자를 못 박는다. 이걸 빼면 서버 기본값이 'aiden' 이 되고,
 # voice 필드 없이 들어온 요청은 전부 그 목소리로 나간다(실측). 정본은 tts.py 다.
 TTS_VOICE="${TTS_QWEN_VOICE:-$("$PY" -c \
-  "import sys;sys.path.insert(0,'apps/voice_chat/voice_chat');import tts;print(tts.QWEN_VOICE)" \
+  "import sys;sys.path.insert(0,'apps/voice_chat/voice_chat');import tts;print(tts.qwen_voice())" \
   2>/dev/null || echo serena)}"
 
 # crispasr 바이너리의 @rpath 는 **빌드 디렉토리를 가리킨다.** 자산 폴더로 복사만

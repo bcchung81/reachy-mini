@@ -62,8 +62,11 @@ def announce_voice() -> None:
     if tts_mod.BACKEND == "qwen":
         ok = tts_mod._qwen_synth("준비") is not None
         if ok:
-            print(f"목소리: Qwen3-TTS '{tts_mod.QWEN_VOICE}' "
-                  f"({tts_mod.QWEN_URL}, x{tts_mod.QWEN_SPEED})")
+            # 상수가 아니라 함수로 읽는다 — 역할별 음성(설계 §11)은 import
+            # 뒤에 정해지므로 상수를 찍으면 **실제로 나가는 목소리와 다른 것**을
+            # 기동 로그에 적는다. 그 로그를 믿고 시연에 들어가면 못 잡는다.
+            print(f"목소리: Qwen3-TTS '{tts_mod.qwen_voice()}' "
+                  f"({tts_mod.QWEN_URL}, x{tts_mod.qwen_speed()})")
         else:
             print(f"목소리: ⚠ Qwen3-TTS 응답 없음 → 유나(say)로 폴백 중 — {tts_mod.QWEN_URL}")
     else:

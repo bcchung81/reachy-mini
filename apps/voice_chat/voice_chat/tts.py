@@ -43,7 +43,26 @@ BACKEND = os.environ.get("TTS_BACKEND", "qwen")
 import config as _config
 
 QWEN_URL = _config.get("TTS_QWEN_URL", "http://127.0.0.1:8099/v1/audio/speech")
-QWEN_SPEED = float(os.environ.get("TTS_QWEN_SPEED", "1.2"))
+
+# **배속·화자·어조는 상수로 얼리지 않는다 — 요청마다 사다리에서 다시 읽는다.**
+#
+# 얼렸다가 실제로 깨졌다: `main.py` 의 `apply_role_voice()` 가 역할별 음성을
+# `os.environ` 에 넣는데, 그 시점에는 `main` → `session` → `tts` 가 이미 import 된
+# 뒤라 상수가 바뀌지 않는다. 두 로봇이 **같은 목소리로** 말했고(설계 §11 전체가
+# 무효), 환경변수만 들여다보는 테스트는 그것을 잡지 못했다.
+# 값을 쓰는 자리에서 읽으면 "언제 설정됐는가" 를 신경 쓸 필요가 없어진다.
+QWEN_SPEED_DEFAULT = "1.2"
+
+
+def qwen_speed() -> float:
+    """발화 배속. 기본 1.2 — **1.0 이 아니다**(설계 §11.4 의 환산 근거)."""
+    raw = _config.get("TTS_QWEN_SPEED", QWEN_SPEED_DEFAULT)
+    try:
+        return float(raw)
+    except ValueError:
+        # 조용히 기본값으로 돌아가면 "왜 배속이 안 먹지" 를 추적할 수 없다.
+        _warn_once("speed", f"TTS_QWEN_SPEED={raw!r} 를 숫자로 못 읽는다 — {QWEN_SPEED_DEFAULT} 를 쓴다")
+        return float(QWEN_SPEED_DEFAULT)
 
 # 스트리밍 합성 — 서버가 만드는 대로 PCM 을 흘려받아 첫 청크에 재생을 시작한다.
 # 이게 없으면 첫 소리까지 걸리는 시간이 입력 길이에 선형으로 늘어난다
@@ -92,10 +111,20 @@ QWEN_TIMEOUT = float(os.environ.get("TTS_QWEN_TIMEOUT", "90"))
 # 듣지 않고(같은 문장 2회가 서로 다름), CrispASR 은 참조 WAV 복제도 지원하지
 # 않는다("CustomVoice expects a speaker NAME for --voice").
 # 내장 화자는 학습된 임베딩이라 매번 완전히 동일하다.
-QWEN_VOICE = os.environ.get("TTS_QWEN_VOICE", "serena")
+QWEN_VOICE_DEFAULT = "serena"
+
+
+def qwen_voice() -> str:
+    """이 요청에 쓸 화자. 사다리(환경변수 → 설정파일 → 기본값)에서 매번 읽는다."""
+    return _config.get("TTS_QWEN_VOICE", QWEN_VOICE_DEFAULT)
+
 
 # 어조를 더 얹고 싶을 때만 채운다(예: "밝고 씩씩하게"). 비우면 보내지 않는다.
-QWEN_INSTRUCT = os.environ.get("TTS_QWEN_INSTRUCT", "")
+QWEN_INSTRUCT_DEFAULT = ""
+
+
+def qwen_instruct() -> str:
+    return _config.get("TTS_QWEN_INSTRUCT", QWEN_INSTRUCT_DEFAULT)
 
 # 한국어 음성은 REACHY_VOICE 로 바꾼다. macOS 에는 ko_KR 음성이 9종 있다:
 #   Yuna / Eddy / Flo / Grandma / Grandpa / Reed / Rocko / Sandy / Shelley
@@ -172,9 +201,12 @@ def _qwen_open(body: dict):
 
 
 def _qwen_body(text: str, seed: int | None, stream: bool) -> dict:
-    body = {"input": text, "model": "tts", "voice": QWEN_VOICE, "speed": QWEN_SPEED}
-    if QWEN_INSTRUCT:
-        body["instructions"] = QWEN_INSTRUCT
+    # 화자·배속·어조를 **여기서** 읽는다. 역할별 음성(설계 §11)은 앱이 뜬 뒤에
+    # 정해지므로 import 시점의 값은 언제나 낡았다.
+    body = {"input": text, "model": "tts", "voice": qwen_voice(), "speed": qwen_speed()}
+    instruct = qwen_instruct()
+    if instruct:
+        body["instructions"] = instruct
     if seed is not None:
         body["seed"] = seed
     if stream:

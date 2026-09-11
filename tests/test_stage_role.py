@@ -37,6 +37,18 @@ def 음성_환경변수_원복():
             os.environ[k] = v
 
 
+@pytest.fixture
+def 빈_설정파일(monkeypatch, tmp_path):
+    """설정 사다리의 파일 단을 비운다 — 개발 맥에 남은 설정이 테스트를
+    좌우하면 같은 테스트가 사람마다 다른 결과를 낸다."""
+    import config
+
+    monkeypatch.setattr(config, "path", lambda: tmp_path / "없는파일.json")
+    monkeypatch.setattr(config, "_cache", None)
+    yield
+    config._cache = None
+
+
 def test_ROLE_이_없으면_1대_모드다(monkeypatch):
     monkeypatch.delenv("REACHY_ROLE", raising=False)
     assert main_mod.role_of_env() is None
@@ -140,22 +152,68 @@ def test_역할별_음성이_문서와_일치한다():
     }
 
 
-def test_역할_음성이_환경변수로_들어간다(monkeypatch):
+def test_역할_음성이_실제_합성_요청에_실린다(monkeypatch, 빈_설정파일):
+    """**환경변수 장부가 아니라 요청 본문을 본다.**
+
+    예전 판은 `os.environ` 만 확인했다. 그래서 `tts.py` 가 화자·배속을
+    import 시점 상수로 얼려 두고 있어 `apply_role_voice` 가 **아무 효과도
+    없던 것**을 잡지 못했다 — 두 로봇이 같은 목소리로 말했고 설계 §11 이
+    통째로 죽어 있었다(리뷰 C1). 절대 실패할 수 없는 테스트였다.
+    """
     monkeypatch.delenv("TTS_QWEN_VOICE", raising=False)
     monkeypatch.delenv("TTS_QWEN_SPEED", raising=False)
     monkeypatch.delenv("TTS_QWEN_INSTRUCT", raising=False)
-    import os
+    import tts
 
     main_mod.apply_role_voice("docent")
-    assert os.environ["TTS_QWEN_VOICE"] == "sohee"
-    assert os.environ["TTS_QWEN_SPEED"] == "1.13"
-    assert "차분하고" in os.environ["TTS_QWEN_INSTRUCT"]
+    body = tts._qwen_body("안녕하세요.", None, stream=False)
+    assert body["voice"] == "sohee"
+    assert body["speed"] == 1.13
+    assert "차분하고" in body["instructions"]
 
 
-def test_운영자가_지정한_음성을_덮어쓰지_않는다(monkeypatch):
+def test_사회자와_도슨트의_요청이_서로_다르다(monkeypatch, 빈_설정파일):
+    """두 역할이 정말 갈리는지 — 한쪽만 보면 둘 다 기본값이어도 통과한다."""
+    import tts
+
+    for k in _VOICE_ENV:
+        monkeypatch.delenv(k, raising=False)
+    main_mod.apply_role_voice("mc")
+    mc = tts._qwen_body("안녕", None, stream=False)
+    for k in _VOICE_ENV:
+        monkeypatch.delenv(k, raising=False)
+    main_mod.apply_role_voice("docent")
+    docent = tts._qwen_body("안녕", None, stream=False)
+
+    assert (mc["voice"], mc["speed"]) == ("serena", 1.27)
+    assert (docent["voice"], docent["speed"]) == ("sohee", 1.13)
+    assert mc["instructions"] != docent["instructions"]
+
+
+def test_운영자가_지정한_음성을_덮어쓰지_않는다(monkeypatch, 빈_설정파일):
     # 현장에서 손으로 바꾼 값이 코드에 밀려나면 안 된다.
     monkeypatch.setenv("TTS_QWEN_VOICE", "ono_anna")
     main_mod.apply_role_voice("mc")
-    import os
+    import tts
 
-    assert os.environ["TTS_QWEN_VOICE"] == "ono_anna"
+    assert tts._qwen_body("안녕", None, stream=False)["voice"] == "ono_anna"
+
+
+def test_설정파일에_적힌_음성도_덮어쓰지_않는다(monkeypatch, tmp_path):
+    """실기에서 운영자가 손으로 적을 수 있는 자리는 **설정파일**이다 —
+    앱은 systemd 데몬의 자식이라 셸 export 가 닿지 않는다(config.py 머리말).
+    `os.environ.setdefault` 만 보면 그 값이 코드 기본값에 조용히 밀려난다."""
+    import json
+
+    import config
+    import tts
+
+    for k in _VOICE_ENV:
+        monkeypatch.delenv(k, raising=False)
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"TTS_QWEN_VOICE": "vivian"}))
+    monkeypatch.setattr(config, "path", lambda: cfg)
+    monkeypatch.setattr(config, "_cache", None)
+
+    main_mod.apply_role_voice("mc")
+    assert tts._qwen_body("안녕", None, stream=False)["voice"] == "vivian"

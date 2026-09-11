@@ -29,6 +29,7 @@ from voice_loop import voice_loop  # noqa: E402
 
 import os
 
+import config as _config  # noqa: E402
 from stage_client import Handlers, StageClient  # noqa: E402
 
 ROLES = ("mc", "docent")
@@ -85,15 +86,27 @@ def role_of_env() -> str | None:
 
 
 def apply_role_voice(role: str) -> None:
-    """역할별 음성을 환경변수로 넣는다. **이미 있으면 덮어쓰지 않는다** —
-    현장에서 손으로 바꾼 값이 코드에 밀려나면 안 된다."""
+    """역할별 음성을 환경변수로 넣는다. **운영자가 정한 값은 덮어쓰지 않는다** —
+    현장에서 손으로 바꾼 값이 코드에 밀려나면 안 된다.
+
+    "이미 있으면" 의 기준은 환경변수 하나가 아니라 **설정 사다리 전체**다
+    (`config.source()`). 실기에서 운영자가 손으로 적을 수 있는 자리는
+    설정파일이지 셸이 아니다 — 앱은 systemd 데몬의 자식이라 export 가 닿지
+    않는다(`config.py` 머리말). `os.environ.setdefault` 만 보면 설정파일에 적힌
+    화자를 코드 기본값이 조용히 밀어낸다.
+
+    `tts.py` 는 이 값을 **요청마다** 사다리에서 다시 읽는다 — 상수로 얼어
+    있던 시절에는 이 함수가 아무 효과도 없었다(리뷰 C1).
+    """
     cfg = ROLE_VOICE[role]
     for env, key in (
         ("TTS_QWEN_VOICE", "voice"),
         ("TTS_QWEN_SPEED", "speed"),
         ("TTS_QWEN_INSTRUCT", "instruct"),
     ):
-        os.environ.setdefault(env, cfg[key])
+        if _config.source(env) != "기본값":
+            continue  # 환경변수든 설정파일이든 사람이 정한 값이 이긴다
+        os.environ[env] = cfg[key]
 
 
 # STT 왕복 하나가 최대 15초까지 걸릴 수 있다(stt.py:43 의 requests timeout=15).
