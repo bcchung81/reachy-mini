@@ -96,6 +96,35 @@ def apply_role_voice(role: str) -> None:
         os.environ.setdefault(env, cfg[key])
 
 
+# STT 왕복 하나가 최대 15초까지 걸릴 수 있다(stt.py:43 의 requests timeout=15).
+# voice_loop 는 프레임마다(30ms) should_stop 을 보지만, transcribe() 호출 도중에는
+# 응답이 돌아올 때까지 다음 프레임을 보지 못한다 — 그 안에서는 stop_event 가 서도
+# 스레드가 즉시 멈추지 않는다. STT 타임아웃보다 여유 있게 잡아야 "정상적으로
+# 끝나기를 기다리는 것"과 "멈추지 않는 스레드"를 헷갈리지 않는다.
+VOICE_THREAD_JOIN_TIMEOUT_S = 20.0
+
+
+def _join_voice_thread(thread: threading.Thread, timeout: float, warn=print) -> None:
+    """voice_loop 스레드가 실제로 멈출 때까지(최대 timeout 초) 기다린다.
+
+    `daemon=True` 는 프로세스가 이 자리에서 곧장 죽을 때만 안전한데,
+    `ReachyMiniApp.wrapped_run()` 은 `run()` 이 돌아온 뒤에도 같은 프로세스에서
+    계속 돈다(다음 앱을 받을 수 있다) — 그래서 여기서 join 없이 지나가면
+    `stage_run` 을 감싼 `ExitStack` 이 speaker/player 를 정리하는 동안 아직 살아
+    있는 이 스레드가 방금 닫힌 자원을 건드리는 레이스가 생긴다.
+
+    timeout 안에 안 멈추면 **조용히 넘어가지 않는다** — 계속 도는 스레드가
+    있다는 신호를 운영자가 봐야 실기에서 "왜 다음 앱이 마이크를 못 잡지" 를
+    추적할 수 있다.
+    """
+    thread.join(timeout)
+    if thread.is_alive():
+        warn(
+            f"  [경고] voice_loop 스레드가 {timeout}초 안에 멈추지 않았다 — "
+            "자원 정리와 경쟁할 수 있다"
+        )
+
+
 def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
     """2대 모드 — 무대감독의 지시로 말하고 움직인다.
 
@@ -114,6 +143,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         llm, speaker, player = build(stack, mini=reachy_mini)
         mic_open = threading.Event()
         client: StageClient | None = None
+        voice_thread: threading.Thread | None = None
 
         def on_say(cue_id: str, text: str, gaze: str | None) -> None:
             try:
@@ -149,14 +179,22 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
 
         # 사회자만 듣는다. 도슨트는 감독의 지시만 받는다.
         if role == "mc":
-            threading.Thread(
+            voice_thread = threading.Thread(
                 target=voice_loop,
                 args=(llm, speaker, player, make_heard_sink(client, mic_open)),
                 kwargs={"should_stop": stop_event.is_set},
                 daemon=True,
-            ).start()
+            )
+            voice_thread.start()
 
         client.run(should_stop=stop_event.is_set)
+
+        # client.run() 이 돌아왔다 — stop_event 가 섰거나 감독 연결이 끊어졌다.
+        # 이 `with` 블록이 끝나면 ExitStack 이 speaker/player/driver 를 정리한다.
+        # voice_loop 스레드가 그 자원을 여전히 쓰는 채로 정리가 진행되면 레이스가
+        # 된다 — 정리 전에 스레드가 실제로 멈췄는지 확인한다.
+        if voice_thread is not None:
+            _join_voice_thread(voice_thread, VOICE_THREAD_JOIN_TIMEOUT_S)
 
 
 def _unit_id(mini) -> str | None:

@@ -102,6 +102,34 @@ def test_버릴_때_소리_내서_남긴다():
     assert any("버림" in m for m in logs)
 
 
+def test_음성_스레드가_금방_끝나면_조용히_join된다():
+    """정상 종료 — timeout 안에 끝나면 경고가 없어야 한다."""
+    import threading
+    import time
+
+    t = threading.Thread(target=lambda: time.sleep(0.01))
+    t.start()
+    logs: list[str] = []
+    main_mod._join_voice_thread(t, timeout=1.0, warn=logs.append)
+    assert not t.is_alive()
+    assert logs == []
+
+
+def test_음성_스레드가_안_멈추면_소리_내서_경고한다():
+    """ExitStack 이 speaker/player 를 정리하기 전에 이 신호가 있어야 레이스를
+    운영자가 알아챌 수 있다 — 조용히 넘어가면 실기에서 원인 불명 오류가 된다."""
+    import threading
+
+    never = threading.Event()  # 절대 set 되지 않는다 — 멈추지 않는 스레드 흉내
+    t = threading.Thread(target=never.wait, daemon=True)
+    t.start()
+    logs: list[str] = []
+    main_mod._join_voice_thread(t, timeout=0.05, warn=logs.append)
+    assert any("멈추지 않았다" in m for m in logs)
+    never.set()
+    t.join()
+
+
 def test_역할별_음성이_문서와_일치한다():
     # 설계 §11. 배속은 1.0 이 아니라 **1.2 기준 환산값**이다(tts.py:46).
     assert main_mod.ROLE_VOICE == {

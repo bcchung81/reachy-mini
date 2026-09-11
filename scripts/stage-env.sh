@@ -8,7 +8,12 @@
 # reachy-mini.local 이 어느 쪽을 가리키는지 보장되지 않는다(설계 §6.1).
 set -eu
 
-ROLE="${1:?사용법: source scripts/stage-env.sh {mc|docent}}"
+#
+# 주의: 이 기본 메시지 텍스트에 `{`/`}` 를 넣지 않는다. bash 의 `${1:?...}` 는
+# 인용되지 않은 중괄호를 중첩으로 세므로, 메시지 안에 `{mc|docent}` 처럼 쓰면
+# 첫 `}` 에서 확장이 조기 종료되고 남은 `}` 가 대입값 뒤에 그대로 붙는다
+# (실측: 인자를 "mc" 로 줘도 REACHY_ROLE 이 "mc}" 가 됐다 — tests/test_stage_env_script.py).
+ROLE="${1:?사용법: source scripts/stage-env.sh mc 또는 docent}"
 PC_IP="${PC_IP:-192.168.0.10}"
 
 export REACHY_ROLE="$ROLE"
