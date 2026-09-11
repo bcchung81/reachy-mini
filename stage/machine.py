@@ -104,3 +104,23 @@ class TurnMachine:
         self.cue_id = None
         # **사회자 마이크만 연다.** 관람객 창구는 하나뿐이다(설계 §2).
         return [Command(to="mc", type="mic", fields={"open": True})]
+
+
+def coalesce(cmds: list[Command]) -> list[Command]:
+    """한 번에 내보낼 지시 묶음을 정리한다.
+
+    두 가지를 한다:
+    1. 같은 로봇의 마이크 지시는 **마지막 것만** 남긴다. MC 발화 종료(열기)
+       직후 도슨트 발화 시작(닫기)이 이어지면 마이크가 깜빡 열렸다 닫히는데,
+       그 사이에 들어온 소리가 STT 로 새면 유령 발화가 된다.
+    2. 마이크 지시를 앞으로 보낸다. 닫기 전에 말하기 시작하면 발화 첫머리가
+       자기 마이크로 들어간다.
+    """
+    last_mic: dict[str, Command] = {}
+    rest: list[Command] = []
+    for c in cmds:
+        if c.type == "mic":
+            last_mic[c.to] = c
+        else:
+            rest.append(c)
+    return list(last_mic.values()) + rest

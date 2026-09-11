@@ -154,3 +154,41 @@ def test_Command_는_불변이다():
     c = Command(to="mc", type="mic", fields={"open": True})
     with pytest.raises(Exception):
         c.to = "docent"
+
+
+from stage.machine import coalesce
+
+
+def test_coalesce_는_같은_로봇의_낡은_마이크_지시를_버린다():
+    # MC 발화 종료(열기) 직후 도슨트 발화 시작(닫기)이 이어지면
+    # 마이크가 깜빡 열렸다 닫힌다. 마지막 것만 남긴다.
+    cmds = [
+        Command(to="mc", type="mic", fields={"open": True}),
+        Command(to="mc", type="mic", fields={"open": False}),
+        Command(to="docent", type="mic", fields={"open": False}),
+        Command(to="docent", type="say", fields={"cue_id": "c1", "text": "…"}),
+    ]
+    out = coalesce(cmds)
+    mics = [c for c in out if c.type == "mic"]
+    assert len(mics) == 2
+    assert {(c.to, c.fields["open"]) for c in mics} == {("mc", False), ("docent", False)}
+
+
+def test_coalesce_는_마이크가_아닌_지시의_순서를_지킨다():
+    cmds = [
+        Command(to="mc", type="gaze", fields={"target": "partner"}),
+        Command(to="mc", type="say", fields={"cue_id": "c1", "text": "가"}),
+        Command(to="docent", type="say", fields={"cue_id": "c1", "text": "나"}),
+    ]
+    assert coalesce(cmds) == cmds
+
+
+def test_coalesce_는_마이크_지시를_say_앞에_둔다():
+    # 마이크를 닫기 전에 말하기 시작하면 발화 첫머리가 마이크로 샌다.
+    cmds = [
+        Command(to="mc", type="say", fields={"cue_id": "c1", "text": "가"}),
+        Command(to="mc", type="mic", fields={"open": False}),
+    ]
+    out = coalesce(cmds)
+    assert out[0].type == "mic"
+    assert out[1].type == "say"
