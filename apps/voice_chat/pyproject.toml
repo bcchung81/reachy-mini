@@ -17,6 +17,11 @@ dependencies = [
     "numpy",           # audio_in.py, stt.py, tts.py
     "requests",        # llm.py, stt.py — 추론 서버 호출
     "sounddevice",     # tts.py — 상주 오디오 출력 스트림
+    # stage_client.py 가 무대감독에 붙는 데 쓴다. reachy-mini 가 이미
+    # `websockets<16,>=12` 로 끌어오지만, **우리가 직접 import 하는 것은
+    # 우리가 선언한다** — 선언 누락은 이 저장소가 이미 밟은 지뢰다
+    # (docs/real-robot-deployment.md §3).
+    "websockets>=12,<16",
     # audio_in.py·tts.py 가 `gi`(GStreamer)를 쓴다. **공급자가 플랫폼마다 다르다** —
     # reachy-mini 자신이 이렇게 갈라 둔다:
     #     PyGObject<=3.46.0,>=3.42.2 ; sys_platform == "linux"
