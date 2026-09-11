@@ -129,7 +129,7 @@ TTS_BACKEND_NAME="${TTS_QWEN_BACKEND:-$TTS_BACKEND_NAME}"
 # 서버 기동 시 화자를 못 박는다. 이걸 빼면 서버 기본값이 'aiden' 이 되고,
 # voice 필드 없이 들어온 요청은 전부 그 목소리로 나간다(실측). 정본은 tts.py 다.
 TTS_VOICE="${TTS_QWEN_VOICE:-$("$PY" -c \
-  "import sys;sys.path.insert(0,'apps/voice_chat/voice_chat');import tts;print(tts.QWEN_VOICE)" \
+  "import sys;sys.path.insert(0,'apps/voice_chat/voice_chat');import tts;print(tts.qwen_voice())" \
   2>/dev/null || echo serena)}"
 
 # crispasr 바이너리의 @rpath 는 **빌드 디렉토리를 가리킨다.** 자산 폴더로 복사만
@@ -535,24 +535,23 @@ robot_reachable() {
 
 # **config 를 매번 맞춘다.** 망이 바뀌면 맥 IP 가 달라지는데, 로봇의 config 는
 # 그대로라 앱이 죽은 주소로 붙는다. 실제로 그 실패를 두 번 겪었다.
-# 기존 키(REACHY_VAD_FACTOR 등)는 보존하고 주소·프롬프트만 갱신한다.
+# 기존 키(REACHY_VAD_FACTOR 등)는 보존하고 주소·프롬프트·역할만 갱신한다.
+#
+# **2대 구성의 REACHY_ROLE 도 여기로 간다.** 로봇의 앱은 데몬이 낳는 자식이라
+# 운영자 셸의 export 가 닿지 않는다 — `source scripts/stage-env.sh mc` 를 해도
+# 로봇 위의 앱은 그 값을 못 본다. 파일 단이 실기에서 유일하게 닿는 길이다.
+#
+#   REACHY_ROLE=mc ./reachy.sh robot up        # 사회자 로봇
+#   REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
+#
+# 병합 로직은 scripts/robot_config_merge.py 에 있다 — 테스트로 박제하기 위해서다.
 robot_sync_config() {
   local ip="$1" cur new
   cur="$(rssh "cat '$ROBOT_CFG' 2>/dev/null || echo '{}'")"
-  new="$(printf '%s' "$cur" | LANIP="$ip" TTSPORT="$TTS_PORT" PROMPTSEL="${REACHY_PROMPT:-}" "$PY" -c '
-import json, os, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    d = {}
-ip, port = os.environ["LANIP"], os.environ["TTSPORT"]
-d["REACHY_LLM_URL"] = "http://%s:8080" % ip
-d["REACHY_STT_URL"] = "http://%s:8090/v1/audio/transcriptions" % ip
-d["TTS_QWEN_URL"] = "http://%s:%s/v1/audio/speech" % (ip, port)
-sel = os.environ.get("PROMPTSEL")
-if sel:
-    d["REACHY_PROMPT"] = sel
-print(json.dumps(d, indent=2, ensure_ascii=False))')" || return 1
+  new="$(printf '%s' "$cur" | LANIP="$ip" TTSPORT="$TTS_PORT" \
+    PROMPTSEL="${REACHY_PROMPT:-}" ROLESEL="${REACHY_ROLE:-}" \
+    DIRURL="${REACHY_DIRECTOR_URL:-}" DIRPORT="${REACHY_DIRECTOR_PORT:-8777}" \
+    "$PY" scripts/robot_config_merge.py)" || return 1
   printf '%s\n' "$new" | rssh "mkdir -p '$(dirname "$ROBOT_CFG")' && cat > '$ROBOT_CFG'" || return 1
   echo "   ${c_dim}$(printf '%s' "$new" | tr -d '\n ' | cut -c1-100)…${c_off}"
 }

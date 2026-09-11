@@ -62,8 +62,11 @@ def announce_voice() -> None:
     if tts_mod.BACKEND == "qwen":
         ok = tts_mod._qwen_synth("준비") is not None
         if ok:
-            print(f"목소리: Qwen3-TTS '{tts_mod.QWEN_VOICE}' "
-                  f"({tts_mod.QWEN_URL}, x{tts_mod.QWEN_SPEED})")
+            # 상수가 아니라 함수로 읽는다 — 역할별 음성(설계 §11)은 import
+            # 뒤에 정해지므로 상수를 찍으면 **실제로 나가는 목소리와 다른 것**을
+            # 기동 로그에 적는다. 그 로그를 믿고 시연에 들어가면 못 잡는다.
+            print(f"목소리: Qwen3-TTS '{tts_mod.qwen_voice()}' "
+                  f"({tts_mod.QWEN_URL}, x{tts_mod.qwen_speed()})")
         else:
             print(f"목소리: ⚠ Qwen3-TTS 응답 없음 → 유나(say)로 폴백 중 — {tts_mod.QWEN_URL}")
     else:
@@ -132,6 +135,27 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     # 반드시 닫는다 — 안 닫으면 앱이 끝나도 장치를 쥔 채 남아 다음 기동이 깨진다.
     stack.callback(camera_in.close)
     return llm, speaker, player
+
+
+def speak(text: str, speaker, player, category: str = "neutral") -> None:
+    """받은 텍스트를 말하고 그에 맞는 모션을 낸다. **LLM 을 부르지 않는다.**
+
+    1대 구성에서는 `respond()` 가 LLM 스트림을 받은 뒤 이 경로로 말하고,
+    2대 구성에서는 무대감독이 만든 텍스트로 이것만 쓴다.
+
+    **재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
+    끼어들기 판정이 한 번도 돌지 않는다 — 재생 중 마이크를 어떻게 다룰지는
+    호출부가 정한다(`voice_loop` 의 게이팅, `stage_client` 의 mic 지시).
+    """
+    text = (text or "").strip()
+    if not text:
+        # 빈 대사를 말하는 로봇이 되지 않는다. 감독 쪽 사고를 여기서 흡수한다.
+        return
+    if player is not None:
+        name = player.play_for(category)
+        print(f"  [모션 {category}/{name}]")
+    print(f"미니> {text}")
+    speaker.speak(text)
 
 
 def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:

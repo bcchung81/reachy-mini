@@ -25,6 +25,10 @@
 - **`pytest-asyncio` 가 설치돼 있지 않다.** `websockets.sync.server` / `websockets.sync.client` 만 쓴다. asyncio 테스트를 쓰지 않는다.
 - **테스트 함수 이름은 한국어로 쓴다** — 이 저장소의 관행이다(`tests/test_deployment_contract.py` 참고).
 - **도슨트 마이크는 상시 닫혀 있다.** 관람객 창구는 사회자 하나뿐이다.
+- **기대 테스트 개수는 지표다.** 각 단계의 `Expected: N passed` 는 계획이 명시한
+  테스트를 그대로 썼을 때의 값이다. 케이스를 더 넣어 숫자가 커지는 것은 정상이고,
+  **0 failures 와 기존 235개 무회귀**가 진짜 기준이다. 숫자가 작아지면 빠뜨린 것이다.
+- **`@pytest.mark.parametrize` 는 케이스 수만큼 테스트로 센다** — 개수를 셀 때 주의한다.
 - **음성 배정은 고정이다**: 사회자 `serena` / 도슨트 `sohee`. 배속은 **1.2 기준 환산값**(사회자 1.27, 도슨트 1.13) — `TTS_QWEN_SPEED` 기본값이 1.0이 아니라 1.2다(`tts.py:46`).
 
 ---
@@ -911,12 +915,12 @@ class CueSheet:
 - [ ] **Step 5: 테스트가 통과하는 것을 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q`
-Expected: PASS (21 passed)
+Expected: PASS (24 passed)
 
 - [ ] **Step 6: 전체 회귀를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 277 passed
+Expected: 280 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -1121,10 +1125,26 @@ def test_시작할_때_양쪽_마이크를_닫는다():
 
 
 def test_사회자가_말하는_동안_도슨트_대사를_미리_만든다():
-    # 지연 은닉 — 이게 하이브리드의 진짜 이득이다.
-    h = Harness()
+    """지연 은닉 — 이게 하이브리드의 진짜 이득이다.
+
+    생성은 별도 스레드에서 돈다. `start()` 직후에 `gen_calls` 를 보면
+    스레드가 아직 안 돌아 **간헐적으로 실패한다** — 생성 쪽에서 신호를
+    받아 결정적으로 기다린다.
+    """
+    import threading as _t
+
+    started = _t.Event()
+    seen: list[str] = []
+
+    def gen(brief, history):
+        seen.append(brief)
+        started.set()
+        return "미리 만든 대사"
+
+    h = Harness(generate=gen)
     h.d.start()
-    assert h.gen_calls == [("첫 지시", 0)]
+    assert started.wait(2.0), "사회자 발화 시작 시점에 생성이 걸려 있지 않다"
+    assert seen == ["첫 지시"]
 
 
 def test_사회자_발화가_끝나면_도슨트가_바로_받는다():
@@ -1478,7 +1498,7 @@ Expected: PASS (19 passed)
 - [ ] **Step 9: 전체 회귀를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 299 passed
+Expected: 302 passed
 
 - [ ] **Step 10: 커밋**
 
@@ -1523,6 +1543,11 @@ Task 1–4 의 로직에 전송을 붙인다. 여기까지 끝내면 **로봇 �
 """무대감독 WS 서버 — 실제 소켓으로 도는 종단 테스트.
 
 pytest-asyncio 가 없으므로 websockets 의 **sync API** 만 쓴다.
+
+**메시지 개수 주의.** 감독은 큐의 gaze 를 대사와 함께 보낸다. 그래서 말할 차례가
+된 로봇은 `mic`·`gaze`·`say` **3통**을 받고 상대는 `mic` 1통만 받는다. 덜 읽으면
+남은 것이 다음 단언으로 새어 들어가 **엉뚱한 이유로 통과하는 테스트**가 된다 —
+그래서 매 단계 정확한 통수를 걷어낸다.
 """
 
 import json
@@ -1561,6 +1586,10 @@ def server():
     t.join(timeout=2)
 
 
+def url_of(server_):
+    return f"ws://127.0.0.1:{server_.port}"
+
+
 def hello(ws, role, unit_id=None):
     ws.send(json.dumps({"type": "hello", "role": role, "unit_id": unit_id,
                         "version": "1.9.0"}))
@@ -1570,72 +1599,78 @@ def recv(ws, timeout=3.0):
     return json.loads(ws.recv(timeout=timeout))
 
 
+def drain(ws, n, timeout=3.0):
+    """정확히 n 통을 읽는다. 남기면 다음 단언으로 샌다."""
+    return [recv(ws, timeout) for _ in range(n)]
+
+
+def ended(ws, cue_id="c1"):
+    ws.send(json.dumps({"type": "speaking_ended", "cue_id": cue_id}))
+
+
+def start_and_drain(server_, mc, docent):
+    """두 로봇을 붙이고 첫 큐를 시작한 뒤 그 메시지를 남김없이 걷어낸다."""
+    hello(mc, "mc")
+    hello(docent, "docent")
+    time.sleep(0.2)                      # 등록이 끝나기를 기다린다
+    server_.director.start()
+    return drain(mc, 3), drain(docent, 1)   # mic·gaze·say / mic
+
+
 def test_두_로봇이_붙고_시작하면_사회자가_대사를_받는다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as mc, connect(url) as docent:
-        hello(mc, "mc")
-        hello(docent, "docent")
-        time.sleep(0.2)                      # 등록이 끝나기를 기다린다
-        server.director.start()
-
-        msgs = [recv(mc) for _ in range(2)]  # mic(close) + say
-        assert {m["type"] for m in msgs} == {"mic", "say"}
-        said = next(m for m in msgs if m["type"] == "say")
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        mc_msgs, doc_msgs = start_and_drain(server, mc, docent)
+        assert {m["type"] for m in mc_msgs} == {"mic", "gaze", "say"}
+        said = next(m for m in mc_msgs if m["type"] == "say")
         assert said["text"] == "사회자 대사"
-        assert recv(docent)["type"] == "mic"  # 도슨트는 마이크만 닫힌다
+        # 도슨트는 마이크만 닫힌다 — 불변식 ①
+        assert [m["type"] for m in doc_msgs] == ["mic"]
+        assert doc_msgs[0]["open"] is False
 
 
-def test_로봇이_보고한_발화_종료가_감독에_닿는다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as mc, connect(url) as docent:
-        hello(mc, "mc"); hello(docent, "docent")
-        time.sleep(0.2)
-        server.director.start()
-        for _ in range(2): recv(mc)
-        recv(docent)
-
-        mc.send(json.dumps({"type": "speaking_ended", "cue_id": "c1"}))
-        got = [recv(docent) for _ in range(2)]
-        assert any(m["type"] == "say" and m["text"] == "도슨트 대사" for m in got)
+def test_사회자_발화가_끝나면_도슨트가_대사를_받는다(server):
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        ended(mc)
+        doc_msgs = drain(docent, 3)      # mic·gaze·say
+        assert any(m["type"] == "say" and m["text"] == "도슨트 대사"
+                   for m in doc_msgs)
+        # 전환 중 사회자 마이크는 열리지 않는다 — coalesce 가 하는 일
+        mc_msgs = drain(mc, 1)
+        assert mc_msgs[0]["type"] == "mic" and mc_msgs[0]["open"] is False
 
 
 def test_들은_말이_감독에_닿는다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as mc, connect(url) as docent:
-        hello(mc, "mc"); hello(docent, "docent")
-        time.sleep(0.2)
-        server.director.start()
-        for _ in range(2): recv(mc)
-        recv(docent)
-        mc.send(json.dumps({"type": "speaking_ended", "cue_id": "c1"}))
-        for _ in range(2): recv(docent)
-        docent.send(json.dumps({"type": "speaking_ended", "cue_id": "c1"}))
-        recv(mc)                              # mic open
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        ended(mc)
+        drain(docent, 3)
+        drain(mc, 1)
+        ended(docent)
+        opened = drain(mc, 1)            # 이제서야 사회자 마이크가 열린다
+        assert opened[0]["type"] == "mic" and opened[0]["open"] is True
 
         mc.send(json.dumps({"type": "heard", "text": "마르코니가 누구예요"}))
-        got = [recv(docent) for _ in range(2)]
-        assert any(m["type"] == "say" for m in got)
+        doc_msgs = drain(docent, 3)
+        assert any(m["type"] == "say" for m in doc_msgs)
 
 
 def test_hello_없이_보낸_메시지는_거절하고_끊는다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as ws:
+    with connect(url_of(server)) as ws:
         ws.send(json.dumps({"type": "heard", "text": "안녕"}))
         time.sleep(0.3)
         assert any("hello" in w for w in server.warnings)
 
 
 def test_모르는_역할은_거절한다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as ws:
+    with connect(url_of(server)) as ws:
         hello(ws, "감독")
         time.sleep(0.3)
         assert any("역할" in w for w in server.warnings)
 
 
 def test_망가진_메시지는_경고하고_연결을_유지한다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as mc:
+    with connect(url_of(server)) as mc:
         hello(mc, "mc")
         time.sleep(0.2)
         mc.send("이건 JSON 이 아니다")
@@ -1646,12 +1681,11 @@ def test_망가진_메시지는_경고하고_연결을_유지한다(server):
 
 
 def test_붙지_않은_로봇에게_보내면_경고한다(server):
-    url = f"ws://127.0.0.1:{server.port}"
-    with connect(url) as mc:
+    with connect(url_of(server)) as mc:
         hello(mc, "mc")
         time.sleep(0.2)
-        server.director.start()               # 도슨트가 없다
-        for _ in range(2): recv(mc)
+        server.director.start()           # 도슨트가 없다
+        drain(mc, 3)
         assert any("docent" in w and "붙지" in w for w in server.warnings)
 ```
 
@@ -1911,7 +1945,7 @@ Expected: PASS (7 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 306 passed
+Expected: 313 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2284,7 +2318,7 @@ Expected: PASS (9 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 315 passed
+Expected: 324 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2435,7 +2469,7 @@ Expected: PASS (6 passed)
 - [ ] **Step 5: 전체 회귀 — 1대 구성이 안 깨졌는지 본다**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 321 passed
+Expected: 330 passed
 
 - [ ] **Step 6: 커밋**
 
@@ -2487,6 +2521,16 @@ import main as main_mod
 _VOICE_ENV = ("TTS_QWEN_VOICE", "TTS_QWEN_SPEED", "TTS_QWEN_INSTRUCT")
 
 
+class _FakeClient:
+    """StageClient 대역 — heard() 로 올라온 것만 모은다."""
+
+    def __init__(self, sink: list):
+        self._sink = sink
+
+    def heard(self, text: str) -> None:
+        self._sink.append(text)
+
+
 @pytest.fixture(autouse=True)
 def 음성_환경변수_원복():
     """`apply_role_voice` 는 `os.environ.setdefault` 를 쓴다 — monkeypatch 가
@@ -2527,6 +2571,44 @@ def test_대문자와_공백을_받아준다(monkeypatch):
 
 def test_stage_run_이_있다():
     assert callable(main_mod.stage_run)
+
+
+def test_마이크가_닫혀_있으면_감독에_올리지_않는다():
+    """불변식 ① 이 로봇 쪽에서 실제로 성립하는지 — 장부가 아니라 동작으로."""
+    import threading
+
+    sent: list[str] = []
+    gate = threading.Event()          # 닫힌 상태
+    sink = main_mod.make_heard_sink(
+        _FakeClient(sent), gate, log=lambda m: None
+    )
+    sink("상대 로봇이 말한 내용")
+    assert sent == []
+
+
+def test_마이크가_열려_있으면_감독에_올린다():
+    import threading
+
+    sent: list[str] = []
+    gate = threading.Event()
+    gate.set()
+    sink = main_mod.make_heard_sink(
+        _FakeClient(sent), gate, log=lambda m: None
+    )
+    sink("다음")
+    assert sent == ["다음"]
+
+
+def test_버릴_때_소리_내서_남긴다():
+    """조용히 버리면 시연장에서 '왜 안 듣지' 를 추적할 수 없다."""
+    import threading
+
+    logs: list[str] = []
+    sink = main_mod.make_heard_sink(
+        _FakeClient([]), threading.Event(), log=logs.append
+    )
+    sink("버려질 말")
+    assert any("버림" in m for m in logs)
 
 
 def test_역할별_음성이_문서와_일치한다():
@@ -2579,6 +2661,27 @@ def test_stage_client_는_stage_패키지를_import_하지_않는다():
     assert "from stage" not in src
 
 
+def test_로봇과_감독의_메시지_규약이_같다():
+    """`stage_client.py` 는 `stage/protocol.py` 를 import 하지 않는다 —
+    로봇에는 `stage/` 가 올라가지 않기 때문이다(위 테스트가 그걸 고정한다).
+
+    대가로 **두 곳이 조용히 어긋날 수 있다.** 한쪽에 메시지를 더하고 다른
+    쪽을 잊으면 시연장에서 "감독은 보냈는데 로봇이 무시한다" 가 된다.
+    여기서 묶어 둔다.
+    """
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).parent.parent
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "apps/voice_chat/voice_chat"))
+    import stage_client
+    from stage import protocol
+
+    assert stage_client._ROBOT_MSGS == protocol.ROBOT_MSGS
+    assert stage_client._DIRECTOR_MSGS == protocol.DIRECTOR_MSGS
+
+
 def test_websockets_가_앱_의존성에_선언돼_있다():
     import pathlib
     import tomllib
@@ -2618,6 +2721,24 @@ ROLE_VOICE = {
         "instruct": "차분하고 낮게, 설명하듯 또박또박",
     },
 }
+
+
+def make_heard_sink(client, mic_open: threading.Event, log=print):
+    """STT 결과를 감독에게 올리는 함수를 만든다. **마이크가 닫혀 있으면 버린다.**
+
+    감독은 발화 중 `mic(open=False)` 를 보내지만 `voice_loop` 는 그걸 모르고
+    계속 듣는다. 여기서 막지 않으면 로봇이 **상대 로봇의 목소리를 받아적어**
+    감독에 올리고, 그것이 이 저장소가 이미 밟은 자기목소리 루프다.
+    설계 §4.2 불변식 ① 이 로봇 쪽에서 실제로 성립하는 지점이 여기다.
+    """
+
+    def on_heard(text: str, *args, **kwargs) -> None:
+        if not mic_open.is_set():
+            log(f"  [마이크 닫힘 — 버림: {text!r}]")
+            return
+        client.heard(text)
+
+    return on_heard
 
 
 def role_of_env() -> str | None:
@@ -2704,7 +2825,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         if role == "mc":
             threading.Thread(
                 target=voice_loop,
-                args=(llm, speaker, player, lambda text, *a, **k: client.heard(text)),
+                args=(llm, speaker, player, make_heard_sink(client, mic_open)),
                 kwargs={"should_stop": stop_event.is_set},
                 daemon=True,
             ).start()
@@ -2782,12 +2903,12 @@ echo "음성은 main.py 가 역할에 맞춰 넣는다(TTS_QWEN_VOICE 를 여기
 - [ ] **Step 5: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_role.py tests/test_deployment_contract.py -q`
-Expected: PASS (8 + 6 passed)
+Expected: PASS (12 + 7 passed)
 
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 331 passed
+Expected: 346 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2871,10 +2992,42 @@ Expected: FAIL — `큐가 없는 섹션: ['5', '6', ... '19']`
 
 **원장 §1 "걷어낸 것"의 규칙을 지킨다** — 상대연도(`몇 년 전`)를 쓰지 않고 절대연도로만 적는다. 이 규칙을 `docent_brief` 안에도 반복해 적는다(LLM 이 프롬프트 안에서만 본다).
 
+- [ ] **Step 3.5: `is_advance` 의 사각지대를 막는다**
+
+Task 3 리뷰에서 나온 것이다. **`"다음 얘기 궁금해요"` 가 진행 신호로 오인된다** —
+14자라 길이 가드를 통과하고, `?` 도 없고, `_QUESTION_MARKS` 의 의문사도 없다.
+설계가 "비싸다" 고 지목한 방향의 실패다: 관람객 질문이 사라지면서 섹션까지 넘어간다.
+
+`stage/cues.py` 의 `_QUESTION_MARKS` 에 의문 표지를 더한다:
+
+```python
+# 질문 표지. 하나라도 있으면 진행 신호로 보지 않고 LLM 에 넘긴다 —
+# "다음은 뭔가요?" 를 전환으로 먹으면 관람객의 질문이 통째로 사라진다.
+#
+# 의문사만으로는 부족하다(2026-09-11 리뷰). "다음 얘기 궁금해요" 는 의문사도
+# 물음표도 없지만 명백한 질문이다. 묻는 **의도**를 드러내는 낱말을 함께 본다.
+_QUESTION_MARKS = (
+    "?", "뭐", "무엇", "어떻게", "왜", "누구", "언제", "어디", "얼마",
+    "궁금", "알려", "설명", "알고",
+)
+```
+
+`tests/test_stage_cues.py` 의 `test_진행_신호가_아닌_것을_넘기지_않는다` 파라미터에
+다음을 추가한다:
+
+```python
+        "다음 얘기 궁금해요",       # 의문사도 물음표도 없지만 질문이다
+        "다음 거 설명해줘",
+        "계속 알려주세요",
+```
+
+이 세 개는 수정 전에는 **모두 진행 신호로 오인된다.** 먼저 추가해 RED 를 확인하고
+그 다음 `_QUESTION_MARKS` 를 고친다.
+
 - [ ] **Step 4: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q`
-Expected: PASS (22 passed)
+Expected: PASS (28 passed)
 
 - [ ] **Step 5: 큐시트를 눈으로 검토한다**
 
@@ -2893,7 +3046,7 @@ for c in load_cues():
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 332 passed
+Expected: 356 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3101,7 +3254,7 @@ Expected: PASS (24 + 8 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 338 passed
+Expected: 369 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3125,7 +3278,7 @@ Claude-Session: https://claude.ai/code/session_01VAebqsSLo4nL4PoQPUKSs4"
 
 ### 코드
 
-- [ ] `.venv/bin/python -m pytest tests/ -q` → **338 passed** (착수 시점 235 + 103)
+- [ ] `.venv/bin/python -m pytest tests/ -q` → **375 passed** (착수 시점 235 + 140)
 - [ ] 시뮬 2대로 종단 시연 (설계 §8 에서 실측 검증한 구성):
   ```bash
   # 터미널 1·2 — 로봇 2대 대역 (mjpython/Cocoa 제약을 우회하는 구성, 실측 검증됨)
