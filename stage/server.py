@@ -1,0 +1,108 @@
+"""무대감독의 전송 계층. 로직은 `director.py` 에 있다.
+
+`websockets` 의 **sync API** 를 쓴다 — SDK 자신이 `io/ws_client.py` 에서 쓰는
+것과 같은 방식이고, 이 저장소에는 `pytest-asyncio` 가 없어 asyncio 테스트를
+쓸 수 없다.
+"""
+
+import threading
+import time
+from typing import Callable
+
+from websockets.sync.server import serve as _ws_serve
+
+from stage.cues import CueSheet
+from stage.director import Director
+from stage.machine import Command
+from stage.protocol import ROLES, ProtocolError, decode, encode
+
+
+class StageServer:
+    def __init__(
+        self,
+        sheet: CueSheet,
+        generate: Callable[[str, list[dict]], str],
+        expect_units: dict[str, str] | None = None,
+        warn: Callable[[str], None] = print,
+    ) -> None:
+        self._warn = warn
+        self._conns: dict[str, object] = {}
+        self._lock = threading.Lock()
+        self.director = Director(
+            sheet, generate=generate, send=self._send,
+            expect_units=expect_units, warn=warn,
+        )
+
+    # ── 전송 ──────────────────────────────────────────────────────
+    def _send(self, role: str, cmd: Command) -> None:
+        with self._lock:
+            ws = self._conns.get(role)
+        if ws is None:
+            # 조용히 삼키면 한쪽만 말하는 시연이 된다.
+            self._warn(f"[{role}] 아직 붙지 않았다 — {cmd.type} 를 버린다")
+            return
+        try:
+            ws.send(encode(cmd.type, **cmd.fields))
+        except Exception as exc:
+            self._warn(f"[{role}] 전송 실패({type(exc).__name__}: {exc})")
+
+    # ── 연결 ──────────────────────────────────────────────────────
+    def handler(self, ws) -> None:
+        """연결 하나. 첫 메시지는 반드시 hello 여야 한다."""
+        role: str | None = None
+        try:
+            for raw in ws:
+                try:
+                    msg = decode(raw)
+                except ProtocolError as exc:
+                    self._warn(f"[{role or '미등록'}] 메시지가 규약에 안 맞는다: {exc}")
+                    continue
+
+                if role is None:
+                    if msg["type"] != "hello":
+                        self._warn(
+                            f"첫 메시지가 hello 가 아니다({msg['type']}) — 연결을 끊는다"
+                        )
+                        return
+                    role = msg.get("role")
+                    if role not in ROLES:
+                        self._warn(f"모르는 역할이다: {role!r} — 연결을 끊는다")
+                        return
+                    self.director.on_hello(
+                        role, msg.get("unit_id"), msg.get("version", "")
+                    )
+                    with self._lock:
+                        self._conns[role] = ws
+                    self._warn(f"[{role}] 붙었다 (version={msg.get('version')})")
+                    continue
+
+                self._dispatch(role, msg)
+        finally:
+            if role is not None:
+                with self._lock:
+                    if self._conns.get(role) is ws:
+                        del self._conns[role]
+                self._warn(f"[{role}] 연결이 끊어졌다")
+
+    def _dispatch(self, role: str, msg: dict) -> None:
+        t = msg["type"]
+        if t == "heard":
+            self.director.on_heard(msg.get("text", ""))
+        elif t == "speaking_ended":
+            self.director.on_speaking_ended(role, msg.get("cue_id", ""))
+        elif t == "speaking_started":
+            pass  # 기록용. 상태는 say 를 보낼 때 이미 옮겼다(불변식 ②)
+        elif t == "error":
+            self.director.on_error(role, msg.get("where", ""), msg.get("detail", ""))
+        else:
+            self._warn(f"[{role}] 로봇이 보낼 수 없는 메시지다: {t}")
+
+    # ── 기동 ──────────────────────────────────────────────────────
+    def serve(self, host: str, port: int):
+        """블로킹. 반환값은 websockets 서버 객체(테스트에서 shutdown 용)."""
+        return _ws_serve(self.handler, host, port)
+
+    def tick_forever(self, interval_s: float, should_stop: Callable[[], bool]) -> None:
+        while not should_stop():
+            self.director.tick()
+            time.sleep(interval_s)
