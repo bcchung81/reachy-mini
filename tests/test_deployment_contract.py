@@ -121,3 +121,109 @@ def test_websockets_가_앱_의존성에_선언돼_있다():
     p = pathlib.Path(__file__).parent.parent / "apps/voice_chat/pyproject.toml"
     deps = tomllib.loads(p.read_text())["project"]["dependencies"]
     assert any(d.startswith("websockets") for d in deps)
+
+
+def _cross_modules():
+    """감독 쪽과 로봇 쪽을 **동시에** 들여온다 — 이 저장소에서만 가능한 일이다.
+    실기에는 `stage/` 가 올라가지 않으므로 어긋남을 잡을 곳이 여기뿐이다."""
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).parent.parent
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "apps/voice_chat/voice_chat"))
+    import stage_client
+
+    from stage import protocol
+    from stage.machine import TurnMachine
+
+    return stage_client, protocol, TurnMachine
+
+
+def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
+    """**이름 집합만 맞춰서는 부족하다.**
+
+    `mic` 의 `open` 필드를 한쪽에서 이름만 바꿔도 이름 집합 테스트는 통과하고,
+    로봇의 `bool(msg.get("open"))` 은 조용히 False 가 된다 — 마이크가 영영
+    안 열리는데 로그는 정상이다(리뷰 I7). 그래서 `TurnMachine` 이 실제로
+    만드는 Command 를 `protocol.encode()` 로 직렬화해 진짜 `StageClient` 의
+    수신 경로에 밀어 넣고, **핸들러가 무엇을 받는지** 본다.
+    """
+    stage_client, protocol, TurnMachine = _cross_modules()
+
+    m = TurnMachine()
+    cmds = m.speak("mc", "c1", "사회자 대사", gaze="partner")
+    cmds += m.on_speaking_ended("mc", "c1")
+    cmds += m.abort()
+
+    got: list[tuple] = []
+    client = stage_client.StageClient(
+        "ws://x",
+        "mc",
+        stage_client.Handlers(
+            on_say=lambda cue_id, text, gaze: got.append(("say", cue_id, text, gaze)),
+            on_mic=lambda open_: got.append(("mic", open_)),
+            on_gaze=lambda target: got.append(("gaze", target)),
+            on_abort=lambda: got.append(("abort",)),
+        ),
+        warn=lambda msg: got.append(("경고", msg)),
+    )
+    for cmd in cmds:
+        client._on_raw(protocol.encode(cmd.type, **cmd.fields))
+
+    assert got == [
+        ("mic", False),                        # 마이크부터 닫는다 (양쪽)
+        ("mic", False),
+        ("gaze", "partner"),                   # 시선은 **독립 메시지**로 간다
+        # 규약 §4 의 `say` 는 `gaze?` 를 허용하지만 `TurnMachine` 은 그 자리를
+        # 안 쓴다 — 그래서 로봇의 `on_say` 가 받는 gaze 는 언제나 None 이다.
+        # 한쪽이 나중에 `say.gaze` 로 옮기고 다른 쪽을 안 고치면 시선이 조용히
+        # 사라진다. 지금의 진실을 여기 박아 둔다.
+        ("say", "c1", "사회자 대사", None),
+        ("mic", True),                         # 듣기로 넘어가며 리스너만 연다
+        ("abort",),
+        ("abort",),
+    ], got
+
+
+def test_로봇이_보낸_보고가_감독의_상태를_실제로_옮긴다():
+    """반대 방향. 지금까지 양쪽 모두 **상대의 흉내**하고만 시험됐다 —
+    진짜 `StageClient` 가 만든 바이트를 진짜 `StageServer` 가 읽게 한다."""
+    import json
+
+    stage_client, protocol, _ = _cross_modules()
+
+    from stage.cues import Cue, CueSheet
+    from stage.machine import State
+    from stage.server import StageServer
+
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        generate=lambda brief, history: "도슨트 대사",
+        warn=lambda m: None,
+    )
+    server.director.on_connect("mc")
+    server.director.on_connect("docent")
+    server.director.start()
+    assert server.director.state is State.MC_SPEAKING
+
+    class _CaptureWS:
+        def __init__(self):
+            self.sent: list[str] = []
+
+        def send(self, raw):
+            self.sent.append(raw)
+
+    ws = _CaptureWS()
+    client = stage_client.StageClient("ws://x", "mc", None, warn=lambda m: None)
+    client._ws = ws
+    client.speaking_started("c1")
+    client.speaking_ended("c1")
+
+    for raw in ws.sent:
+        server._dispatch("mc", protocol.decode(raw))   # 감독이 읽는 그 경로
+
+    # 사회자 몫이 끝났으므로 도슨트가 받아친다 — 필드 이름이 어긋났다면
+    # 유령 메시지로 버려져 여기까지 못 온다.
+    assert server.director.state is State.DOCENT_SPEAKING
+    assert json.loads(ws.sent[0])["type"] == "speaking_started"
