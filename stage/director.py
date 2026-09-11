@@ -52,6 +52,12 @@ class Director:
         self._docent_text: str | None = None
         self._docent_ready = threading.Event()
         self._gen_thread: threading.Thread | None = None
+        # 세대 번호 — `_begin_cue` 가 부를 때마다 하나씩 올라간다. 늦게 끝난
+        # 생성 스레드가 이미 다음 큐로 넘어간 뒤에 결과를 들고 오면, 세대가
+        # 안 맞으므로 버린다. 락은 "세대 확인 + 결과 반영"을 한 번에 묶어
+        # 그 사이에 `_begin_cue` 가 끼어드는 경합을 막는다.
+        self._gen_lock = threading.Lock()
+        self._gen_token = 0
 
     # ── 상태 ──────────────────────────────────────────────────────
     @property
@@ -123,30 +129,48 @@ class Director:
     def _begin_cue(self, cue: Cue) -> None:
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        self._docent_text = None
-        self._docent_ready.clear()
+        with self._gen_lock:
+            self._docent_text = None
+            self._docent_ready = threading.Event()
+            self._gen_token += 1
+            token = self._gen_token
         self._gen_thread = threading.Thread(
-            target=self._generate_docent, args=(cue,), daemon=True
+            target=self._generate_docent, args=(cue, token), daemon=True
         )
         self._gen_thread.start()
         self._emit(self._machine.speak("mc", cue.id, cue.mc, gaze=cue.gaze))
 
-    def _generate_docent(self, cue: Cue) -> None:
+    def _generate_docent(self, cue: Cue, token: int) -> None:
         try:
-            self._docent_text = self._generate(cue.docent_brief, list(self.history))
+            text = self._generate(cue.docent_brief, list(self.history))
+            if not text:
+                # 빈 문자열도 "아무 말도 안 하는 것"과 같다 — 조용히 넘기지 않는다.
+                self._warn(f"[{cue.id}] 도슨트 대사 생성이 빈 문자열을 내놓았다 — 지시문으로 폴백")
+                text = cue.docent_brief
         except Exception as exc:
             # 조용히 벙어리가 되지 않는다. 지시문을 그대로 읽는 것이
             # 아무 말도 안 하는 것보다 낫다.
             self._warn(f"LLM 생성 실패({type(exc).__name__}: {exc}) — 지시문으로 폴백")
-            self._docent_text = cue.docent_brief
-        finally:
-            self._docent_ready.set()
+            text = cue.docent_brief
+
+        with self._gen_lock:
+            if token != self._gen_token:
+                # 이 결과가 나올 즈음 이미 다음 큐가 시작됐다. 그대로 반영하면
+                # 엉뚱한 큐의 대사가 조용히 새어 들어간다 — 버리고 소리 낸다.
+                self._warn(f"[{cue.id}] 도슨트 대사 생성이 늦게 끝나 버려졌다(다음 큐로 이미 넘어갔다)")
+                return
+            self._docent_text = text
+            ready = self._docent_ready
+        ready.set()
 
     def _speak_docent(self, cue: Cue) -> list[Command]:
         if not self._docent_ready.wait(timeout=GENERATE_GRACE_S):
             self._warn("도슨트 대사 생성이 늦다 — 지시문으로 폴백")
             self._docent_text = cue.docent_brief
-        text = self._docent_text or cue.docent_brief
+        text = self._docent_text
+        if not text:
+            self._warn(f"[{cue.id}] 도슨트 대사가 비어 있다 — 지시문으로 폴백")
+            text = cue.docent_brief
         self.history.append({"role": "assistant", "content": f"도슨트: {text}"})
         return self._machine.speak("docent", cue.id, text, gaze="audience")
 
@@ -159,6 +183,9 @@ class Director:
         )
         try:
             text = self._generate(brief, list(self.history))
+            if not text:
+                self._warn("도슨트 응답 생성이 빈 문자열을 내놓았다 — 폴백")
+                text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
         except Exception as exc:
             self._warn(f"LLM 응답 실패({type(exc).__name__}: {exc}) — 폴백")
             text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"

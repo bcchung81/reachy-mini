@@ -5,6 +5,7 @@
 
 import pathlib
 import sys
+import threading
 
 import pytest
 
@@ -252,3 +253,98 @@ def test_abort_는_양쪽을_멈춘다():
     h.d.abort()
     assert sorted(h.types()) == [("docent", "abort"), ("mc", "abort")]
     assert h.d.state is State.IDLE
+
+
+def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진다(monkeypatch):
+    """review finding 1 — 생성이 유예시간을 넘겨 폴백으로 진행된 뒤, 스레드가
+    뒤늦게 끝나면 이미 시작된 다음 큐로 새지 않고 버려져야 한다. 안 그러면
+    엉뚱한 큐의 대사가 조용히(경고 없이) 나온다.
+
+    `threading.Event` 로 정확히 통제한다 — sleep 경합이 아니다:
+    c1 의 생성은 `release_c1` 이 풀릴 때까지 절대 끝나지 않으므로 유예시간
+    안에 반드시 타임아웃하고, `release_c1.set()` 뒤에는 스레드 join 으로
+    "결과가 나왔다"는 사실 자체를 결정적으로 기다린다.
+    """
+    import stage.director as director_mod
+
+    monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
+
+    release_c1 = threading.Event()
+
+    def gen(brief, history):
+        if brief == "첫 지시":
+            release_c1.wait(5.0)
+            return "c1 늦은 대사"
+        return f"[{brief} 로 만든 대사]"
+
+    h = Harness(generate=gen)
+    h.d.start()
+    c1_thread = h.d._gen_thread  # c1 의 생성 스레드 — 곧 유예시간을 넘긴다
+
+    h.d.on_speaking_ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
+    assert h.says()[-1] == ("docent", "첫 지시")
+    h.d.on_speaking_ended("docent", "c1")
+    h.d.on_heard("다음")  # c2 시작 — 새 생성 스레드가 돈다
+    h.clear()
+    h.warnings.clear()
+
+    release_c1.set()  # 이제서야 c1 의 스레드가 풀려 결과를 내놓는다
+    c1_thread.join(2.0)
+    assert not c1_thread.is_alive()
+
+    assert any("버려" in w for w in h.warnings)  # 폐기했다고 경고한다
+    assert h.says() == []  # 아직 c2 도슨트 대사를 말하지 않았다
+
+    h.d.on_speaking_ended("mc", "c2")
+    assert h.says() == [("docent", "[둘째 지시 로 만든 대사]")]  # c1 의 늦은 대사가 아니다
+
+
+def test_정상_생성은_폐기_로직을_넣어도_그대로_말해진다():
+    """review finding 1 회귀 방지 — 세대 검사를 넣어도 정상 경로(스레드가
+    늦지 않게 끝나는 경우)는 그대로 도슨트 대사를 말한다."""
+    ready = threading.Event()
+
+    def gen(brief, history):
+        text = f"[{brief} 로 만든 대사]"
+        ready.set()
+        return text
+
+    h = Harness(generate=gen)
+    h.d.start()
+    assert ready.wait(2.0)
+    h.clear()
+    h.d.on_speaking_ended("mc", "c1")
+    assert h.says() == [("docent", "[첫 지시 로 만든 대사]")]
+
+
+def test_도슨트_생성이_빈_문자열이면_경고하고_지시문으로_폴백한다():
+    """review finding 2 — 빈 문자열도 벙어리가 되는 것과 같다."""
+    h = Harness(generate=lambda brief, history: "")
+    h.d.start()
+    h.clear()
+    h.d.on_speaking_ended("mc", "c1")
+    assert h.says() == [("docent", "첫 지시")]
+    assert any("빈" in w for w in h.warnings)
+
+
+def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
+    """review finding 2 — `_answer` 쪽 폴백도 같은 이유로 조용히 넘기지 않는다."""
+    calls = {"n": 0}
+
+    def gen(brief, history):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
+        return ""  # 질문 응답만 빈 문자열
+
+    h = Harness(generate=gen)
+    h.d.start()
+    h.d.on_speaking_ended("mc", "c1")
+    h.d.on_speaking_ended("docent", "c1")
+    h.clear()
+    h.warnings.clear()
+    h.d.on_heard("마르코니가 누구예요")
+    said = h.says()
+    assert len(said) == 1 and said[0][0] == "docent"
+    assert said[0][1]  # 빈 대사가 아니다
+    assert any("빈" in w for w in h.warnings)
