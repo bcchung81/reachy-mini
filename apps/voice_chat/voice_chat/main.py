@@ -69,13 +69,20 @@ def make_heard_sink(client, mic_open: threading.Event, log=print):
 
 
 def role_of_env() -> str | None:
-    """`REACHY_ROLE` 을 읽는다. 없으면 1대 모드.
+    """`REACHY_ROLE` 을 **설정 사다리**로 읽는다. 없으면 1대 모드.
 
-    오타를 조용히 1대 모드로 흘려보내지 않는다 — 시연장에서 "왜 한 대만
+    `os.environ` 만 보면 실기에서 절대 닿지 않는다. Wireless 의 앱은
+    `POST /api/apps/start-app/` 로 **systemd 데몬이 낳는 자식 프로세스**라
+    (`reachy.sh` 의 robot_up) 운영자 셸의 export 가 건너오지 않는다 —
+    `config.py` 머리말이 주소 3종을 파일 단으로 내린 것과 똑같은 이유다.
+    그래서 `source scripts/stage-env.sh mc` 를 아무리 해도 이 값이 없었고,
+    **두 로봇이 조용히 1대 모드로 떴다**(리뷰 C2). 로그는 정상으로 보인다.
+
+    오타를 조용히 1대 모드로 흘려보내지도 않는다 — 시연장에서 "왜 한 대만
     말하지" 를 추적하는 데 드는 시간이 가장 비싸다.
     """
-    raw = os.environ.get("REACHY_ROLE")
-    if raw is None or not raw.strip():
+    raw = _config.get("REACHY_ROLE", "")
+    if not raw.strip():
         return None
     role = raw.strip().lower()
     if role not in ROLES:
@@ -149,8 +156,10 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
     announce_endpoints()
     announce_voice()
 
-    url = os.environ.get("REACHY_DIRECTOR_URL", "ws://127.0.0.1:8777")
-    print(f"무대감독: {url}  역할: {role}")
+    # 역할과 같은 이유로 사다리를 탄다 — 셸 export 는 실기의 앱에 닿지 않는다.
+    url = _config.get("REACHY_DIRECTOR_URL", "ws://127.0.0.1:8777")
+    print(f"무대감독: {url} ({_config.source('REACHY_DIRECTOR_URL')})  "
+          f"역할: {role} ({_config.source('REACHY_ROLE')})")
 
     with contextlib.ExitStack() as stack:
         llm, speaker, player = build(stack, mini=reachy_mini)

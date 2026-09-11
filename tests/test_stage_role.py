@@ -72,6 +72,46 @@ def test_대문자와_공백을_받아준다(monkeypatch):
     assert main_mod.role_of_env() == "mc"
 
 
+def test_설정파일에_적힌_역할도_읽는다(monkeypatch, tmp_path):
+    """**실기에서 값이 닿는 유일한 길이다.**
+
+    Wireless 의 앱은 `POST /api/apps/start-app/` 로 데몬이 낳는 자식이라
+    `source scripts/stage-env.sh mc` 의 export 가 건너오지 않는다. 환경변수만
+    읽던 시절에는 두 로봇이 **조용히 1대 모드로** 떴고 로그는 정상으로
+    보였다(리뷰 C2).
+    """
+    import json
+
+    import config
+
+    monkeypatch.delenv("REACHY_ROLE", raising=False)
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"REACHY_ROLE": "docent"}))
+    monkeypatch.setattr(config, "path", lambda: cfg)
+    monkeypatch.setattr(config, "_cache", None)
+    try:
+        assert main_mod.role_of_env() == "docent"
+    finally:
+        config._cache = None
+
+
+def test_설정파일의_역할_오타도_소리_내서_실패한다(monkeypatch, tmp_path):
+    import json
+
+    import config
+
+    monkeypatch.delenv("REACHY_ROLE", raising=False)
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"REACHY_ROLE": "MC로봇"}))
+    monkeypatch.setattr(config, "path", lambda: cfg)
+    monkeypatch.setattr(config, "_cache", None)
+    try:
+        with pytest.raises(ValueError, match="REACHY_ROLE"):
+            main_mod.role_of_env()
+    finally:
+        config._cache = None
+
+
 def test_stage_run_이_있다():
     assert callable(main_mod.stage_run)
 

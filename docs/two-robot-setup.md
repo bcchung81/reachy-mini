@@ -107,26 +107,60 @@ LAN 으로 붙는 SDK 클라이언트는 로봇의 앱 락을 우회한다
 
 ---
 
-## 6. 설정 파일 채우기
+## 6. 설정 채우기 — ⚠️ **로봇에서 `export` 하지 않는다**
 
-`scripts/stage-env.sh` 의 `PC_IP` 를 노트북 IP로 바꾸고, 채취한 `unit_id` 를 넣는다.
+로봇의 앱은 `POST /api/apps/start-app/` 로 **데몬(systemd)이 낳는 자식 프로세스**다.
+로봇에 SSH로 들어가 `export REACHY_ROLE=mc` 를 해도 **그 값은 앱에 닿지 않는다.**
+`REACHY_LLM_URL` 같은 주소 3종이 처음부터 설정파일 사다리를 타는 것과 같은 이유다
+(`apps/voice_chat/voice_chat/config.py` 머리말).
 
-**노트북(무대감독)에서:**
+역할이 안 닿으면 로봇은 **조용히 1대 모드로** 뜬다 — 로그는 정상으로 보인다.
+
+### 노트북(무대감독)에서 — 여기는 셸이 맞다
+
+무대감독은 노트북에서 직접 실행하는 프로세스라 export 가 그대로 먹는다.
+
 ```bash
-export REACHY_MC_UNIT=<사회자 hardware_id>
+export REACHY_MC_UNIT=<사회자 hardware_id>        # §3 에서 채취한 값
 export REACHY_DOCENT_UNIT=<도슨트 hardware_id>
 export REACHY_DIRECTOR_PORT=8777
 ```
 
-**각 로봇에서:**
+### 각 로봇에는 — `./reachy.sh robot up` 이 설정파일에 써 넣는다
+
+노트북에서 로봇마다 한 번씩 돌린다. 역할·무대감독 주소·추론 3종 주소가
+로봇의 `~/.config/reachy-mini-voice-chat/config.json` 에 들어간다.
+
 ```bash
-PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 사회자 로봇
-PC_IP=192.168.0.10 source scripts/stage-env.sh docent   # 도슨트 로봇
+REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
+REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 ```
 
-이 스크립트가 `REACHY_ROLE` · 무대감독 주소 · 추론 3종 주소를 한꺼번에 넣는다.
+`REACHY_ROLE` 없이 돌리면 그 로봇의 역할 설정을 **지운다**(1대 모드로 되돌린다).
+지웠다는 줄이 화면에 뜬다 — 안 떴으면 안 지워진 것이다.
+
+확인:
+
+```bash
+ssh pollen@192.168.0.41 cat .config/reachy-mini-voice-chat/config.json
+# {"REACHY_LLM_URL": ..., "REACHY_ROLE": "mc", "REACHY_DIRECTOR_URL": "ws://192.168.0.10:8777"}
+```
+
+앱 기동 로그에도 출처가 같이 찍힌다 — `무대감독: ws://… (설정파일)  역할: mc (설정파일)`.
+`(기본값)` 이라고 나오면 값이 안 닿은 것이다.
+
+### `scripts/stage-env.sh` 는 언제 쓰나
+
+로봇에서 앱을 **손으로** 띄울 때만 쓴다(`.venv/bin/python main.py`). 데몬이 띄우는
+정상 경로에서는 닿지 않는다. 이 스크립트는 `REACHY_MC_UNIT`/`REACHY_DOCENT_UNIT` 을
+다루지 않는다 — 그 둘은 위의 **노트북** 쪽 값이다.
+
+```bash
+PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 로봇에서 손으로 띄울 때만
+```
+
 음성(사회자 `serena` / 도슨트 `sohee`)은 `main.py` 가 역할에 맞춰 자동으로 넣는다 —
-**직접 `TTS_QWEN_VOICE` 를 지정하면 그쪽이 이긴다.**
+**환경변수든 설정파일이든 `TTS_QWEN_VOICE` 를 직접 적으면 그쪽이 이긴다.**
 
 ---
 
