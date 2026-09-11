@@ -662,3 +662,60 @@ def test_관람객_줄만_user_로_들어간다():
     h.d._remember("도슨트: 무선 전신을 실용화한 사람입니다")
     h.d._remember("사회자: 다음으로 가 볼까요")
     assert [m["role"] for m in h.d.history] == ["user", "assistant", "assistant"]
+
+
+# ── 타임아웃 여유분 (리뷰 I3 판정) ───────────────────────────────────
+
+# Qwen3-TTS 첫 합성의 Metal 커널 JIT (`scripts/warmup.py` 실측).
+COLD_SYNTH_S = 8.5
+
+# **실측** 발화 속도(2026-09-11, 57자 → 10.64초). `CHARS_PER_SEC` 는 이보다
+# 보수적으로(4.0) 잡은 **예산용** 값이다 — 둘을 섞어 쓰면 안 된다:
+# 예산은 4.0 으로, 실제로 걸리는 시간은 5.4 로 계산해야 비교가 성립한다.
+MEASURED_CHARS_PER_SEC = 5.4
+
+
+@pytest.mark.parametrize(
+    "글자수",
+    [
+        12,   # 짧은 전환 — 예전 값 5.0 에서 터졌다 (예산 8.0 < 필요 10.7)
+        34,   # 사회자 대사 — 예전 값 5.0 에서 터졌다 (예산 13.5 < 필요 14.8)
+        57,   # 긴 해설 — 예전 값에서도 아슬아슬하게 통과했다 (19.2 > 19.1)
+    ],
+)
+def test_예열을_빠뜨려도_첫_큐가_헛타임아웃되지_않는다(글자수):
+    """**여유분은 합성 지연을 덮는 몫이다.**
+
+    감독은 로봇이 언제 실제로 소리를 내기 시작했는지 모른다 — 로봇은
+    `speaker.speak()` 가 큐에 넣고 돌아온 직후 `speaking_started` 를 보내고
+    합성은 그 뒤에 일어난다. 예열을 건너뛰면 첫 합성에 8.5초가 더 붙는데,
+    예전 여유분 5.0 초로는 짧은·중간 길이가 **거의 확실히** 헛타임아웃됐다.
+    그러면 리스너 마이크가 열리고 직후 로봇이 말을 시작해 사회자가 그것을
+    관람객 발화로 받아적는다 — 자기목소리 루프다.
+
+    실제로 걸리는 시간 = 차가운 합성 + 재생 길이.
+    """
+    필요 = COLD_SYNTH_S + 글자수 / MEASURED_CHARS_PER_SEC
+    예산 = 글자수 / CHARS_PER_SEC + TIMEOUT_MARGIN_S
+    assert 예산 > 필요, (
+        f"{글자수}자: 예산 {예산:.1f}초 < 필요 {필요:.1f}초 — "
+        "예열을 빠뜨린 첫 큐가 헛타임아웃된다"
+    )
+
+
+def test_여유분이_차가운_합성을_덮는다():
+    """상수 하나로 요약 — 여유분은 합성 JIT 보다 커야 한다."""
+    assert TIMEOUT_MARGIN_S > COLD_SYNTH_S, (
+        f"여유분 {TIMEOUT_MARGIN_S} 초가 차가운 합성 {COLD_SYNTH_S} 초를 못 덮는다"
+    )
+
+
+def test_늘어난_여유분이_타임아웃_자체를_없애지는_않는다():
+    """느슨하게 잡았다고 감시가 꺼지면 안 된다 — 멈춘 로봇은 여전히 잡힌다."""
+    h = Harness()
+    h.d.start()
+    h.clear()
+    h.clock.t = len("사회자 첫 대사") / CHARS_PER_SEC + TIMEOUT_MARGIN_S + 0.1
+    h.d.tick()
+    assert h.d.state is State.LISTENING
+    assert any("응답이 없다" in w for w in h.warnings)
