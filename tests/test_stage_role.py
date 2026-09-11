@@ -437,3 +437,24 @@ def test_unit_id_를_못_읽으면_소리_내서_경고한다():
     assert main_mod._unit_id(터지는미니, warn=logs.append) is None
     assert any("unit_id 를 못 읽었다" in m for m in logs)
     assert any("역할 검증이 꺼진다" in m for m in logs)
+
+
+def test_배속_기본값이_1_2_다(monkeypatch, 빈_설정파일):
+    """**1.0 이 아니다.** 설계 §11.4 의 연출 배속(1.06/0.94)은 CLI 기본 1.0
+    기준으로 만든 값이라, 환산 없이 넣으면 시연 전체가 지금보다 느려진다.
+    `ROLE_VOICE` 의 1.27/1.13 이 그 환산값이다 — 근거가 이 기본값이므로
+    기본값이 바뀌면 그 둘도 다시 계산해야 한다."""
+    monkeypatch.delenv("TTS_QWEN_SPEED", raising=False)
+    import tts
+
+    assert tts.qwen_speed() == 1.2
+    assert float(main_mod.ROLE_VOICE["mc"]["speed"]) == pytest.approx(1.2 * 1.06, abs=0.01)
+    assert float(main_mod.ROLE_VOICE["docent"]["speed"]) == pytest.approx(1.2 * 0.94, abs=0.01)
+
+
+def test_배속이_숫자가_아니면_소리_내서_기본값으로_간다(monkeypatch, 빈_설정파일):
+    monkeypatch.setenv("TTS_QWEN_SPEED", "빠르게")
+    import tts
+
+    tts._warned.discard("speed")
+    assert tts.qwen_speed() == 1.2
