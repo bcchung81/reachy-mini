@@ -10,10 +10,23 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from websockets.exceptions import ConnectionClosed
+
 _ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error"})
 _DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort"})
 
 RETRY_S = 2.0
+# `ws.recv(timeout=...)` 폴링 주기.
+#
+# 실제 `websockets.sync.connection.Connection.recv()` 는 `timeout=None` 이면
+# 메시지가 올 때까지 무한정 블록된다 — 예전에는 `for raw in ws:` 로 이 recv 를
+# 감쌌는데, 그 이터레이터도 내부적으로 `recv()` 를 타임아웃 없이 호출하므로
+# 감독이 조용한 구간(큐 사이, 정상 상황)에는 `should_stop()` 을 다시 볼 기회가
+# 없었다. 셧다운 이벤트가 서서 있어도 로봇 프로세스가 끝나지 않는 버그였다 —
+# 데몬의 앱 슬롯이 영영 반환되지 않는다. 그래서 짧은 타임아웃으로 반복 폴링한다.
+# 0.5초는 종료 지연(최악 0.5초 — 무대에서 체감되지 않는다)과 깨어나는 횟수
+# (초당 2회 — 유휴 CPU 비용이 무시할 만하다) 사이의 절충이다.
+POLL_S = 0.5
 
 
 @dataclass
@@ -100,11 +113,23 @@ class StageClient:
                     version=self._version,
                 )
                 try:
-                    for raw in ws:
-                        self._on_raw(raw)
-                        if should_stop():
+                    while not should_stop():
+                        try:
+                            raw = ws.recv(timeout=POLL_S)
+                        except TimeoutError:
+                            # 메시지가 없을 뿐 — 연결은 살아 있다. should_stop 만
+                            # 다시 보고 계속 기다린다. 여기서 끊긴 걸로 오판하면
+                            # 감독이 조용할 때마다 재접속 폭풍이 난다.
+                            continue
+                        except ConnectionClosed as exc:
+                            self._warn(
+                                f"무대감독 연결이 끊어졌다({type(exc).__name__}: {exc})"
+                            )
                             break
+                        self._on_raw(raw)
                 except Exception as exc:
+                    # 그 외 예상 못한 오류(프로토콜 위반, 네트워크 단절 등)도
+                    # 끊어진 걸로 보고 재접속을 시도한다.
                     self._warn(f"무대감독 연결이 끊어졌다({type(exc).__name__}: {exc})")
                 finally:
                     self._ws = None

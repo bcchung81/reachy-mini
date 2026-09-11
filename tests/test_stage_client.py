@@ -9,31 +9,59 @@ import queue
 import sys
 import threading
 
-import pytest
+from websockets.exceptions import ConnectionClosedOK
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
 from stage_client import Handlers, StageClient
 
 
 class FakeWS:
-    """서버가 보낼 메시지를 미리 넣어 두는 가짜 연결."""
+    """서버가 보낼 메시지를 미리 넣어 두는 가짜 연결.
 
-    def __init__(self, inbox=()):
+    `recv(timeout=...)` 로 실제 `websockets.sync.connection.Connection.recv`
+    와 같은 모양을 흉내낸다 — 메시지가 없으면 `TimeoutError`, 닫혔으면
+    `ConnectionClosedOK`. `close_when_empty=False` 로 만들면 큐가 비어도
+    절대 닫히지 않는다 — 연결은 살아 있는데 그냥 조용한 상황(실제 무대감독이
+    큐 사이에 이런다)을 흉내낸다.
+
+    `__iter__` 는 실제 `websockets` 라이브러리의 이터레이터를 그대로
+    흉내낸다 — `recv(timeout=None)` 을 반복 호출하다가 `ConnectionClosedOK`
+    에서만 멈춘다(진짜 무한 블록). `recv()` 를 재사용하므로, `stage_client.run()`
+    이 예전처럼 `for raw in ws:` 로 되돌아가는 회귀가 생겨도 아래 "조용한
+    연결" 테스트가 여전히 잡아낸다.
+    """
+
+    def __init__(self, inbox=(), close_when_empty=True):
         self.sent: list[dict] = []
         self._inbox = queue.Queue()
         for m in inbox:
             self._inbox.put(json.dumps(m))
         self.closed = False
+        self._close_when_empty = close_when_empty
+        self.recv_started = threading.Event()  # 첫 recv 호출 시점 신호(테스트 동기화용)
 
     def send(self, raw):
         self.sent.append(json.loads(raw))
 
+    def recv(self, timeout=None):
+        self.recv_started.set()
+        try:
+            return self._inbox.get_nowait()
+        except queue.Empty:
+            pass
+        if self._close_when_empty:
+            raise ConnectionClosedOK(None, None)
+        try:
+            return self._inbox.get(timeout=timeout)  # timeout=None 이면 진짜로 영원히 블록
+        except queue.Empty:
+            raise TimeoutError
+
     def __iter__(self):
-        while True:
-            try:
-                yield self._inbox.get(timeout=0.3)
-            except queue.Empty:
-                return
+        try:
+            while True:
+                yield self.recv(timeout=None)
+        except ConnectionClosedOK:
+            return
 
     def close(self):
         self.closed = True
@@ -160,3 +188,38 @@ def test_연결_전에_보내면_경고하고_버린다():
     c = StageClient("ws://x", "mc", handlers, warn=warns.append)
     c.heard("다음")
     assert any("연결" in w for w in warns)
+
+
+def test_조용한_연결에서도_should_stop_이_바뀌면_run_이_돌아온다():
+    """실제 소켓의 `recv(timeout=None)` 은 메시지가 올 때까지 무한정 블록된다.
+
+    옛 `for raw in ws:` 구현은 메시지를 하나 받은 뒤에만 `should_stop()` 을
+    다시 봤다 — 감독이 조용한 구간(정상적인 상황)에는 셧다운 신호가 서도
+    영원히 블록됐다. `FakeWS(close_when_empty=False)` 는 큐가 비어도 절대
+    닫히지 않는, 즉 메시지도 종료 신호도 주지 않는 조용한 실연결을 흉내낸다.
+    `run()` 은 그래도 곧 돌아와야 한다.
+
+    `t.join(timeout=...)` 이 바운드 가드다 — 회귀가 나도 스위트가 걸리지
+    않고 이 테스트가 실패로 끝난다.
+    """
+    ws = FakeWS(close_when_empty=False)
+    _, handlers = collector()
+    c = StageClient("ws://x", "mc", handlers, warn=lambda m: None)
+    stop_event = threading.Event()
+
+    def connect_fn(url):
+        return ws
+
+    t = threading.Thread(
+        target=c.run,
+        kwargs=dict(should_stop=stop_event.is_set, connect_fn=connect_fn),
+        daemon=True,
+    )
+    t.start()
+    assert ws.recv_started.wait(timeout=2.0), "recv 루프에 들어가지 못했다"
+    stop_event.set()
+    t.join(timeout=2.0)
+    assert not t.is_alive(), (
+        "run() 이 조용한 연결(recv 가 절대 안 끝나는 실제 소켓과 같다)에서 "
+        "should_stop 을 못 보고 블록됐다"
+    )
