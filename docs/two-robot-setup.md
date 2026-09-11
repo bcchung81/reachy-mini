@@ -190,10 +190,23 @@ PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 로봇에서 손으로
 ```
 ① 공유기 켜기
 ② 로봇 2대 켜고 WiFi 붙는 것 확인 (curl 로 status 200)
-③ 노트북에서 추론 3종 기동      ./reachy.sh (LLM·STT·TTS)
-④ 무대감독 기동                 .venv/bin/python -m stage
-⑤ 각 로봇에서 앱 실행           (역할 환경변수를 넣은 뒤)
+③ 무대감독 기동                 .venv/bin/python -m stage
+④ 사회자 로봇 기동   REACHY_ROLE=mc     REACHY_ROBOT_HOST=… ./reachy.sh robot up
+⑤ 도슨트 로봇 기동   REACHY_ROLE=docent REACHY_ROBOT_HOST=… ./reachy.sh robot up
 ```
+
+`robot up` 하나가 **추론 3종 기동 → config 동기화 → 기상 → 예열 → 앱 기동**을 순서대로
+한다. 두 번째 호출에서 추론 3종과 예열은 이미 돼 있으므로 금방 지나간다.
+
+> **⚠️ 예열을 건너뛰지 않는다.** Qwen3-TTS 첫 합성은 Metal 커널 JIT 로 **8.5초**가
+> 걸리는데(`scripts/warmup.py` 실측) 감독의 발화 타임아웃 여유는 5초다. 예열 없이 첫 큐를
+> 시작하면 감독이 "발화 종료 응답이 없다" 며 강제로 듣기 상태로 돌아가고, 직후 로봇이
+> 말을 시작해 사회자가 그것을 관람객 발화로 받아적는다.
+> `robot up` 이 "예열을 건너뛰었다" 고 찍으면 `./reachy.sh warmup` 을 따로 돌린다.
+> 자세한 것은 `docs/real-robot-deployment.md` §15.2-3.
+>
+> 로봇에서 앱을 손으로 띄우는 경우에도 노트북에서 `./reachy.sh serve` 와
+> `./reachy.sh warmup` 을 먼저 돌린다.
 
 무대감독 콘솔에 두 로봇이 붙었다는 로그가 뜨면 `s` 를 눌러 시작한다.
 
@@ -240,6 +253,11 @@ PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 로봇에서 손으로
 - [ ] 한 큐를 끝까지 돌려본다: 사회자 → 도슨트 → "다음"
 - [ ] **로봇 한 대를 일부러 꺼본다** — 남은 한 대가 양쪽 대사를 읽는지(1인 모드),
       경고가 누가 끊겼는지 말하는지
+- [ ] **역할을 일부러 바꿔 걸어 본다** — `REACHY_MC_UNIT` 에 도슨트 값을 넣고 기동해
+      **정말 실패하는지** 확인한다. 이 분기는 시뮬에서 한 번도 안 돌아 봤다
+      (`unit_id` 가 시뮬에서 언제나 `null` 이라 "없으면 통과" 쪽만 실행된다)
+- [ ] 콘솔에서 `s` 를 **두 번** 눌러 본다 — `거절됨: …` 이 뜨고 콘솔이 살아 있어야 한다
+- [ ] 예열이 실제로 됐는지 — 첫 큐의 사회자 발화가 8초 넘게 안 나오면 예열이 빠진 것이다
 
 ---
 
