@@ -49,6 +49,10 @@ class Director:
         self.history: list[dict] = []
 
         self._deadline: float | None = None
+        # 방금 보낸 `say` 에 준 시간 예산. `speaking_started` 가 오면 그 시점을
+        # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
+        # 참고.
+        self._speak_budget: float = 0.0
         self._docent_text: str | None = None
         self._docent_ready = threading.Event()
         self._gen_thread: threading.Thread | None = None
@@ -156,6 +160,31 @@ class Director:
                 return
             self._answer(text)
 
+    def on_speaking_started(self, role: str, cue_id: str) -> None:
+        """발화 시작 보고. **데드라인을 여기서 다시 건다.**
+
+        예전에는 `say` 를 보낸 순간부터 시간을 셌다. 그 사이에 든 시간
+        (전송, 로봇의 수신 루프가 밀린 시간, 앱이 바쁜 시간)이 전부 발화
+        예산을 깎아먹어, 로봇이 **말을 시작하기도 전에** 데드라인이 터질 수
+        있었다. 그러면 `force_listening` 이 리스너 마이크를 열고, 그 직후
+        로봇이 말을 시작해 사회자가 그것을 관람객 발화로 받아적는다 —
+        불변식 ① 이 막으려던 자기목소리 루프가 타임아웃 경로로 되살아난다.
+
+        ⚠️ **남은 구멍**: 로봇은 `speaker.speak()` 가 큐에 넣고 돌아온
+        직후에 이것을 보낸다(`main.py` 의 speak_one). TTS 합성 자체는 그
+        뒤에 일어나므로, 모델이 차가워 첫 합성이 오래 걸리는 경우는 이
+        재설정으로 덮이지 않는다 — `TIMEOUT_MARGIN_S` 가 그 몫이다.
+        (`docs/real-robot-deployment.md` 의 2대 구성 잔여 위험)
+        """
+        with self._lock:
+            if role != self._machine.speaking_role or cue_id != self._machine.cue_id:
+                self._warn(
+                    f"[{role}] 유령 speaking_started({cue_id!r}) — 지금 말하는 것은 "
+                    f"{self._machine.speaking_role}/{self._machine.cue_id!r} 다. 버린다"
+                )
+                return
+            self._deadline = self._now() + self._speak_budget
+
     def on_speaking_ended(self, role: str, cue_id: str) -> None:
         with self._lock:
             # 관람객 창구를 열어줄 로봇도 `_who()` 로 정한다 — 1인 모드에서
@@ -165,7 +194,16 @@ class Director:
             # 어느 로봇의 마이크도 열리지 않아 관람객 창구가 아예 없어진다.
             cmds = self._machine.on_speaking_ended(role, cue_id, self._who("mc"))
             if not cmds:
-                return  # 유령 메시지 — 상태를 건드리지 않는다
+                # 유령 메시지 — 상태를 건드리지 않는다. 하지만 **조용히
+                # 버리지도 않는다**: 여기에 걸리는 진짜 종료 보고가 있다면
+                # (타임아웃이 먼저 터져 `speaking_role` 을 리셋해 버린 경우가
+                # 대표적이다) 그 로봇의 발화가 통째로 타임아웃 보호를 잃은
+                # 것이고, 그 사실이 로그에 없으면 추적할 수 없다.
+                self._warn(
+                    f"[{role}] 유령 speaking_ended({cue_id!r}) — 지금 말하는 것은 "
+                    f"{self._machine.speaking_role}/{self._machine.cue_id!r} 다. 버린다"
+                )
+                return
             self._deadline = None
 
             # 큐 id 만으로 "사회자 몫이 방금 끝났다" 를 판정한다 — role 은
@@ -308,7 +346,10 @@ class Director:
     def _emit(self, cmds: list[Command]) -> None:
         for cmd in coalesce(cmds):
             if cmd.type == "say":
-                self._deadline = self._now() + self._estimate(cmd.fields["text"])
+                # 예산을 기억해 둔다 — `speaking_started` 가 오면 그 시점부터
+                # 다시 센다(on_speaking_started 참고).
+                self._speak_budget = self._estimate(cmd.fields["text"])
+                self._deadline = self._now() + self._speak_budget
             self._send(cmd.to, cmd)
 
     @staticmethod

@@ -240,3 +240,17 @@ def test_빠른_재연결에서_새_연결을_끊긴_것으로_보고하지_않�
         "mc 는 새 연결로 계속 붙어 있다 — 1인 모드로 내려가면 안 된다"
     )
     assert not any("[mc]" in w and "끊겼다" in w for w in warnings), warnings
+
+
+def test_발화_시작_보고가_감독까지_닿는다(server):
+    """예전에는 `_dispatch` 가 `pass` 로 버렸다 — 타임아웃 기준점을 다시 거는
+    유일한 신호인데 감독이 아예 못 봤다(리뷰 I3)."""
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        before = server.director._deadline
+        mc.send(json.dumps({"type": "speaking_started", "cue_id": "c1"}))
+        for _ in range(60):              # 서버 스레드가 처리할 때까지
+            if server.director._deadline != before:
+                break
+            time.sleep(0.05)
+        assert server.director._deadline != before, "데드라인이 다시 걸리지 않았다"

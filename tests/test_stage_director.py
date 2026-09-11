@@ -564,3 +564,51 @@ def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달�
     assert h.d.state is State.LISTENING
     assert h.says() == []
     assert h.mics() == [("docent", True)]
+
+
+# ── 타임아웃 기준점 (리뷰 I3) ────────────────────────────────────────
+
+def test_발화_시작_보고가_데드라인을_다시_건다():
+    """`say` 를 보낸 시점이 아니라 **로봇이 말을 시작한 시점**부터 센다.
+
+    전송·수신 지연이 발화 예산을 깎아먹으면, 로봇이 말하기도 전에 데드라인이
+    터져 `force_listening` 이 리스너 마이크를 연다 — 그 직후 로봇이 말을
+    시작하면 사회자가 그것을 관람객 발화로 받아적는다(자기목소리 루프).
+    """
+    h = Harness()
+    h.d.start()
+    budget = h.d._deadline - h.clock.t
+
+    h.clock.t += budget - 0.5          # 거의 다 썼다 (아직 말을 시작 못 했다)
+    h.d.on_speaking_started("mc", "c1")
+    assert h.d._deadline == pytest.approx(h.clock.t + budget)
+
+    # 예전에는 여기서 이미 타임아웃이었다.
+    h.clock.t += budget - 0.5
+    h.clear()
+    h.d.tick()
+    assert h.mics() == []
+    assert h.d.state is State.MC_SPEAKING
+
+
+def test_유령_발화_시작_보고는_데드라인을_건드리지_않고_경고한다():
+    h = Harness()
+    h.d.start()
+    before = h.d._deadline
+    h.clock.t += 1.0
+    h.d.on_speaking_started("docent", "없는-큐")
+    assert h.d._deadline == before
+    assert any("유령 speaking_started" in w for w in h.warnings)
+
+
+def test_유령_발화_종료는_버리되_소리_내서_버린다():
+    """조용히 버리면, 타임아웃이 먼저 터져 상태를 리셋한 뒤 도착한 **진짜**
+    종료 보고도 흔적 없이 사라진다 — 그 로봇의 발화가 타임아웃 보호를
+    통째로 잃었다는 사실을 아무도 모른다(리뷰 I3)."""
+    h = Harness()
+    h.d.start()
+    h.clear()
+    h.d.on_speaking_ended("docent", "없는-큐")
+    assert h.sent == []
+    assert any("유령 speaking_ended" in w for w in h.warnings)
+    assert h.d.state is State.MC_SPEAKING

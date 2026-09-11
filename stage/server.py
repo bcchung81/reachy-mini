@@ -101,7 +101,11 @@ class StageServer:
         elif t == "speaking_ended":
             self.director.on_speaking_ended(role, msg.get("cue_id", ""))
         elif t == "speaking_started":
-            pass  # 기록용. 상태는 say 를 보낼 때 이미 옮겼다(불변식 ②)
+            # 상태는 say 를 보낼 때 이미 옮겼다(불변식 ②). 여기서 하는 일은
+            # **타임아웃 데드라인을 발화 시작 시점으로 다시 거는 것**이다 —
+            # 예전에는 `pass` 라, say 를 보낸 뒤 로봇이 실제로 말을 시작하기까지
+            # 든 시간이 전부 발화 예산에서 깎였다(리뷰 I3).
+            self.director.on_speaking_started(role, msg.get("cue_id", ""))
         elif t == "error":
             self.director.on_error(role, msg.get("where", ""), msg.get("detail", ""))
         else:
