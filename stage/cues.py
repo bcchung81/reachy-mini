@@ -98,6 +98,20 @@ def is_advance(text: str) -> bool:
     t = text.strip()
     if not t or len(t) > _ADVANCE_MAX_CHARS:
         return False
+
+    # 위치 우선 판정: 마지막 낱말이 전환어로 **시작**하면 곧장 진행 신호로 본다.
+    # 질문 표지를 부분 문자열로 넓힌 대가로 반대 방향 사각지대가 열렸다
+    # (2026-09-11 리뷰) — "궁금한 거 없어요 다음"처럼 질문 낱말이 앞쪽에
+    # 섞여 있어도 전체를 보면 진짜 전환이다. 부분 문자열 포함 검사는 부정문을
+    # 못 가른다. 한국어 전환 발화는 전환어로 끝나고("...다음", "...계속"),
+    # 질문은 의문 표지로 끝난다("...궁금해요", "...설명해줘") — 그래서
+    # **마지막 낱말의 위치**가 이 둘을 가른다. startswith 를 쓰는 이유는
+    # "계속하죠"처럼 전환어에 어미가 붙는 경우도 잡아야 해서다(equality 로
+    # 하면 회귀한다).
+    last_word = t.split()[-1]
+    if any(last_word.startswith(w) for w in _ADVANCE_WORDS):
+        return True
+
     if any(q in t for q in _QUESTION_MARKS):
         return False
     return any(w in t for w in _ADVANCE_WORDS)
