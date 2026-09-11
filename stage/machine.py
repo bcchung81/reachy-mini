@@ -78,15 +78,21 @@ class TurnMachine:
         )
         return cmds
 
-    def on_speaking_ended(self, role: str, cue_id: str) -> list[Command]:
-        """발화 종료 보고. 지금 말하는 로봇·큐가 아니면 무시한다."""
+    def on_speaking_ended(
+        self, role: str, cue_id: str, listener: str = "mc"
+    ) -> list[Command]:
+        """발화 종료 보고. 지금 말하는 로봇·큐가 아니면 무시한다.
+
+        `listener` 는 관람객 창구를 열어 줄 로봇이다 — 보통 사회자지만,
+        1인 모드에서는 남은 한 대가 그 역할도 겸한다(`Director._who()`).
+        """
         if role != self.speaking_role or cue_id != self.cue_id:
             return []  # 늦게 도착한 유령 메시지 — 상태를 건드리지 않는다
-        return self._to_listening()
+        return self._to_listening(listener)
 
-    def force_listening(self) -> list[Command]:
+    def force_listening(self, listener: str = "mc") -> list[Command]:
         """타임아웃 복구. 호출부가 반드시 경고를 남긴다."""
-        return self._to_listening()
+        return self._to_listening(listener)
 
     def abort(self) -> list[Command]:
         """즉시 중단. 마이크는 열지 않는다 — 사람이 다시 시작시킨다."""
@@ -98,12 +104,17 @@ class TurnMachine:
             Command(to="docent", type="abort"),
         ]
 
-    def _to_listening(self) -> list[Command]:
+    def _to_listening(self, listener: str) -> list[Command]:
         self.state = State.LISTENING
         self.speaking_role = None
         self.cue_id = None
-        # **사회자 마이크만 연다.** 관람객 창구는 하나뿐이다(설계 §2).
-        return [Command(to="mc", type="mic", fields={"open": True})]
+        # **리스너의 마이크만, 정확히 하나만 연다.** 관람객 창구는 하나뿐이다
+        # (설계 §2). 보통은 사회자가 리스너다 — 도슨트는 평소 절대 듣지
+        # 않는다. 하지만 사회자가 없으면(1인 모드, 설계 §7) 남은 로봇이
+        # 관람객 창구 자체를 겸한다. 그래서 "사회자 마이크" 가 아니라
+        # "리스너의 마이크" 가 불변이다 — 누가 리스너인지는 호출부
+        # (`Director._who("mc")`) 가 정한다, 이 클래스는 로봇 배치를 모른다.
+        return [Command(to=listener, type="mic", fields={"open": True})]
 
 
 def coalesce(cmds: list[Command]) -> list[Command]:

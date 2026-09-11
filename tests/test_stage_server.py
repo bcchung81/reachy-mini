@@ -160,6 +160,23 @@ def test_연결이_끊기면_감독이_1인_모드로_내려간다(server):
         assert server.director.solo_role == "mc"
 
 
+def test_사회자가_없으면_도슨트가_직접_듣는다(server):
+    """review finding — `_to_listening` 이 "사회자" 로 고정돼 있으면 도슨트
+    1인 모드에서는 어느 마이크도 안 열린다(관람객 창구가 아예 사라진다).
+    실제 소켓으로 도슨트 자신의 마이크 열기 지시가 진짜로 도착하는지까지
+    확인한다 — 감독의 내부 상태만 보는 것과 달리 전송 경로 전체가 맞다."""
+    with connect(url_of(server)) as docent:
+        hello(docent, "docent")
+        time.sleep(0.2)
+        server.director.start()          # 사회자가 없다 — 도슨트가 사회자 몫도 읽는다
+        drain(docent, 3)                 # mic·gaze·say (사회자 몫)
+        ended(docent)                    # 사회자 몫 종료 → 도슨트 몫 시작
+        drain(docent, 3)                 # mic·gaze·say (도슨트 몫)
+        ended(docent, "c1:docent")       # 도슨트 몫 종료
+        opened = drain(docent, 1)        # 도슨트 자신의 마이크가 열린다
+        assert opened[0]["type"] == "mic" and opened[0]["open"] is True
+
+
 class _StubWS:
     """`handler()` 가 요구하는 최소 인터페이스만 흉내낸다 — 진짜 소켓 없이
     stale 핸들러의 `finally` 가 언제 실행되는지를 손으로(결정적으로) 통제한다.

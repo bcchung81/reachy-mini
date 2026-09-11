@@ -158,7 +158,12 @@ class Director:
 
     def on_speaking_ended(self, role: str, cue_id: str) -> None:
         with self._lock:
-            cmds = self._machine.on_speaking_ended(role, cue_id)
+            # 관람객 창구를 열어줄 로봇도 `_who()` 로 정한다 — 1인 모드에서
+            # 리스닝으로 넘어갈 때 마이크를 열어야 할 대상은 "사회자" 가
+            # 아니라 "남은 한 대" 다. 여기서 고정값을 쓰면(review finding
+            # 1인 모드 두 번째 라운드) 사회자가 끊긴 도슨트 1인 모드에서
+            # 어느 로봇의 마이크도 열리지 않아 관람객 창구가 아예 없어진다.
+            cmds = self._machine.on_speaking_ended(role, cue_id, self._who("mc"))
             if not cmds:
                 return  # 유령 메시지 — 상태를 건드리지 않는다
             self._deadline = None
@@ -198,7 +203,7 @@ class Director:
             role = self._machine.speaking_role
             self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
             self._deadline = None
-            self._emit(self._machine.force_listening())
+            self._emit(self._machine.force_listening(self._who("mc")))
 
     def abort(self) -> None:
         with self._lock:

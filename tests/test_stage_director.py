@@ -548,7 +548,12 @@ def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달�
 
 def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달한다_도슨트만_남았을_때():
     """위 테스트의 반대 방향 — 아무 테스트도 덮지 않던 자리(사회자가 끊겨
-    도슨트가 양쪽을 읽는 경우)라 finding 1 이 여기서 새어 나갔었다."""
+    도슨트가 양쪽을 읽는 경우)라 finding 1 이 여기서 새어 나갔었다.
+
+    마이크도 도슨트 것이 열려야 한다 — 사회자가 없으니 도슨트가 관람객
+    창구를 겸한다(§ 리뷰 finding, 세 번째 라운드: `_to_listening` 이
+    "사회자" 로 고정돼 있어 도슨트 1인 모드에서는 아무 마이크도 안 열렸었다).
+    """
     h = Harness()
     h.d.on_connect("docent")
     h.d.on_disconnect("mc")
@@ -558,4 +563,4 @@ def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달�
     h.d.on_speaking_ended("docent", "c1:docent")  # 도슨트 몫 종료
     assert h.d.state is State.LISTENING
     assert h.says() == []
-    assert h.mics() == [("mc", True)]
+    assert h.mics() == [("docent", True)]

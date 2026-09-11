@@ -64,7 +64,7 @@ def test_gaze_가_없으면_gaze_를_보내지_않는다():
 
 
 def test_발화가_끝나면_LISTENING_이_되고_사회자_마이크만_연다():
-    # 관람객 창구는 사회자 하나뿐이다 — 도슨트 마이크는 상시 닫힘.
+    # 관람객 창구는 기본적으로 사회자 하나뿐이다 — 도슨트 마이크는 상시 닫힘.
     m = TurnMachine()
     m.speak("docent", "02-history", "1864년 맥스웰이…")
     cmds = m.on_speaking_ended("docent", "02-history")
@@ -73,6 +73,18 @@ def test_발화가_끝나면_LISTENING_이_되고_사회자_마이크만_연다(
     opened = mic_opens(cmds)
     assert len(opened) == 1
     assert opened[0].to == "mc"
+
+
+def test_리스너를_지정하면_그_로봇의_마이크만_연다():
+    # 1인 모드(설계 §7) — 사회자가 없으면 남은 로봇이 관람객 창구를 겸한다.
+    # `TurnMachine` 자신은 로봇 배치를 모르니, 리스너는 호출부가 정한다.
+    m = TurnMachine()
+    m.speak("docent", "01-intro", "제가 양쪽을 다 읽습니다")
+    cmds = m.on_speaking_ended("docent", "01-intro", listener="docent")
+    assert m.state is State.LISTENING
+    opened = mic_opens(cmds)
+    assert len(opened) == 1
+    assert opened[0].to == "docent"
 
 
 def test_발화_중에_또_말하라고_하면_거절한다():
@@ -107,6 +119,16 @@ def test_타임아웃_복구는_무조건_LISTENING_으로_되돌린다():
     assert [c.to for c in mic_opens(cmds)] == ["mc"]
 
 
+def test_강제_복구도_지정한_리스너로_돌아간다():
+    # 1인 모드에서 타임아웃 복구가 나면, 없는 사회자가 아니라 남은
+    # 로봇의 마이크가 열려야 관람객 창구가 실제로 살아난다.
+    m = TurnMachine()
+    m.speak("docent", "01-intro", "…")
+    cmds = m.force_listening(listener="docent")
+    assert m.state is State.LISTENING
+    assert [c.to for c in mic_opens(cmds)] == ["docent"]
+
+
 def test_abort_는_양쪽을_멈추고_IDLE_로_간다():
     m = TurnMachine()
     m.speak("docent", "02-history", "1864년 맥스웰이…")
@@ -117,12 +139,19 @@ def test_abort_는_양쪽을_멈추고_IDLE_로_간다():
 
 
 def test_무작위_사건_열에서도_불변식이_깨지지_않는다():
-    """생성 테스트 — 손으로 못 떠올린 순서를 기계가 떠올리게 한다."""
+    """생성 테스트 — 손으로 못 떠올린 순서를 기계가 떠올리게 한다.
+
+    `listener` 도 매 전이마다 무작위로 고른다 — 1인 모드(설계 §7)에서는
+    사회자가 아니라 남은 로봇이 리스너가 된다. 리뷰가 지목한 대로, 이
+    단언이 `"mc"` 로 고정돼 있으면 리스너 매개변수 자체를 검증하지 못하고
+    "기본값이 우연히 mc" 라는 사실만 반복 확인하는 테스트가 된다.
+    """
     rng = random.Random(20260911)
     for _ in range(500):
         m = TurnMachine()
         for _ in range(40):
             op = rng.choice(["speak", "ended", "force", "abort"])
+            listener = rng.choice(["mc", "docent"])
             if op == "speak":
                 role = rng.choice(["mc", "docent"])
                 try:
@@ -132,18 +161,20 @@ def test_무작위_사건_열에서도_불변식이_깨지지_않는다():
                     continue
             elif op == "ended":
                 cmds = m.on_speaking_ended(
-                    rng.choice(["mc", "docent"]), f"c{rng.randint(0, 3)}"
+                    rng.choice(["mc", "docent"]), f"c{rng.randint(0, 3)}", listener
                 )
             elif op == "force":
-                cmds = m.force_listening()
+                cmds = m.force_listening(listener)
             else:
                 cmds = m.abort()
 
             # 불변식 ① — 발화 중에는 어떤 마이크도 열리지 않는다
             if m.state in (State.MC_SPEAKING, State.DOCENT_SPEAKING):
                 assert mic_opens(cmds) == [], f"{m.state} 에서 마이크가 열렸다"
-            # 열리는 마이크는 언제나 사회자 것뿐이다
-            assert all(c.to == "mc" for c in mic_opens(cmds))
+            # 열리는 마이크는 언제나 그 전이에 지정한 리스너의 것 하나뿐이다
+            # — 정확히 하나만 연다는 것과, 그게 고정된 "사회자" 가 아니라
+            # 호출부가 정한 리스너라는 것을 함께 확인한다.
+            assert all(c.to == listener for c in mic_opens(cmds))
             # 발화 중인 로봇은 최대 하나다
             assert (m.speaking_role is None) == (
                 m.state not in (State.MC_SPEAKING, State.DOCENT_SPEAKING)
