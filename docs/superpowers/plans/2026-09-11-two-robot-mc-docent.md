@@ -2908,7 +2908,7 @@ Expected: PASS (12 + 7 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 350 passed
+Expected: 346 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -2992,10 +2992,42 @@ Expected: FAIL — `큐가 없는 섹션: ['5', '6', ... '19']`
 
 **원장 §1 "걷어낸 것"의 규칙을 지킨다** — 상대연도(`몇 년 전`)를 쓰지 않고 절대연도로만 적는다. 이 규칙을 `docent_brief` 안에도 반복해 적는다(LLM 이 프롬프트 안에서만 본다).
 
+- [ ] **Step 3.5: `is_advance` 의 사각지대를 막는다**
+
+Task 3 리뷰에서 나온 것이다. **`"다음 얘기 궁금해요"` 가 진행 신호로 오인된다** —
+14자라 길이 가드를 통과하고, `?` 도 없고, `_QUESTION_MARKS` 의 의문사도 없다.
+설계가 "비싸다" 고 지목한 방향의 실패다: 관람객 질문이 사라지면서 섹션까지 넘어간다.
+
+`stage/cues.py` 의 `_QUESTION_MARKS` 에 의문 표지를 더한다:
+
+```python
+# 질문 표지. 하나라도 있으면 진행 신호로 보지 않고 LLM 에 넘긴다 —
+# "다음은 뭔가요?" 를 전환으로 먹으면 관람객의 질문이 통째로 사라진다.
+#
+# 의문사만으로는 부족하다(2026-09-11 리뷰). "다음 얘기 궁금해요" 는 의문사도
+# 물음표도 없지만 명백한 질문이다. 묻는 **의도**를 드러내는 낱말을 함께 본다.
+_QUESTION_MARKS = (
+    "?", "뭐", "무엇", "어떻게", "왜", "누구", "언제", "어디", "얼마",
+    "궁금", "알려", "설명", "알고",
+)
+```
+
+`tests/test_stage_cues.py` 의 `test_진행_신호가_아닌_것을_넘기지_않는다` 파라미터에
+다음을 추가한다:
+
+```python
+        "다음 얘기 궁금해요",       # 의문사도 물음표도 없지만 질문이다
+        "다음 거 설명해줘",
+        "계속 알려주세요",
+```
+
+이 세 개는 수정 전에는 **모두 진행 신호로 오인된다.** 먼저 추가해 RED 를 확인하고
+그 다음 `_QUESTION_MARKS` 를 고친다.
+
 - [ ] **Step 4: 통과를 확인한다**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q`
-Expected: PASS (25 passed)
+Expected: PASS (28 passed)
 
 - [ ] **Step 5: 큐시트를 눈으로 검토한다**
 
@@ -3014,7 +3046,7 @@ for c in load_cues():
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 351 passed
+Expected: 356 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3222,7 +3254,7 @@ Expected: PASS (24 + 8 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 357 passed
+Expected: 362 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3246,7 +3278,7 @@ Claude-Session: https://claude.ai/code/session_01VAebqsSLo4nL4PoQPUKSs4"
 
 ### 코드
 
-- [ ] `.venv/bin/python -m pytest tests/ -q` → **357 passed** (착수 시점 235 + 122)
+- [ ] `.venv/bin/python -m pytest tests/ -q` → **362 passed** (착수 시점 235 + 127)
 - [ ] 시뮬 2대로 종단 시연 (설계 §8 에서 실측 검증한 구성):
   ```bash
   # 터미널 1·2 — 로봇 2대 대역 (mjpython/Cocoa 제약을 우회하는 구성, 실측 검증됨)
