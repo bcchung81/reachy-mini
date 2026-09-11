@@ -3254,7 +3254,7 @@ Expected: PASS (24 + 8 passed)
 - [ ] **Step 6: 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
-Expected: 362 passed
+Expected: 369 passed
 
 - [ ] **Step 7: 커밋**
 
@@ -3278,7 +3278,7 @@ Claude-Session: https://claude.ai/code/session_01VAebqsSLo4nL4PoQPUKSs4"
 
 ### 코드
 
-- [ ] `.venv/bin/python -m pytest tests/ -q` → **362 passed** (착수 시점 235 + 127)
+- [ ] `.venv/bin/python -m pytest tests/ -q` → **375 passed** (착수 시점 235 + 140)
 - [ ] 시뮬 2대로 종단 시연 (설계 §8 에서 실측 검증한 구성):
   ```bash
   # 터미널 1·2 — 로봇 2대 대역 (mjpython/Cocoa 제약을 우회하는 구성, 실측 검증됨)
