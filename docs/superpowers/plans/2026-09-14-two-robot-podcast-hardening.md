@@ -97,7 +97,7 @@
 - Produces: `TurnMachine.seq: int` (마지막 `speak()` 의 번호, 시작 0), `TurnMachine.speak(role, cue_id, text, gaze=None) -> list[Command]` 의 `say` 필드에 `seq: int`, `TurnMachine.on_speaking_ended(role, cue_id, listener="mc", seq=None) -> list[Command]` (seq 불일치는 유령), `Director.on_speaking_started(role, cue_id, seq)`, `Director.on_speaking_ended(role, cue_id, seq)`, `Handlers.on_say(cue_id: str, text: str, seq: int | None)`, `StageClient.speaking_started(cue_id, seq)`, `StageClient.speaking_ended(cue_id, seq)`.
 - 이후 태스크는 전부 이 시그니처를 쓴다. 로봇 → 감독 `speaking_started`/`speaking_ended` 메시지에 `seq` 필드가 추가된다(메시지 종류 9종은 그대로).
 
-- [ ] **Step 1: 상태기계 실패 테스트**
+- [x] **Step 1: 상태기계 실패 테스트**
 
 `tests/test_stage_machine.py` 끝에 추가:
 
@@ -141,12 +141,12 @@ def test_seq_없는_종료_보고는_유령이다():
                 )
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_machine.py -q`
 Expected: 새 테스트 3개 FAIL (`KeyError: 'seq'` / `TypeError: unexpected keyword 'seq'`)
 
-- [ ] **Step 3: 상태기계 구현**
+- [x] **Step 3: 상태기계 구현**
 
 `stage/machine.py` — `__init__` 에 `self.seq = 0` 추가. `speak()` 에서 상태를 옮긴 뒤:
 
@@ -174,12 +174,12 @@ Expected: 새 테스트 3개 FAIL (`KeyError: 'seq'` / `TypeError: unexpected ke
 
 `is_current(role, cue_id, seq) -> bool` 를 추가해 같은 조건을 돌려주고, `on_speaking_ended` 가 이것을 쓴다(감독의 `on_speaking_started` 도 같은 규칙을 써야 한다 — 두 파일에 규칙을 두 번 적지 않는다).
 
-- [ ] **Step 4: 통과 확인**
+- [x] **Step 4: 통과 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_machine.py -q`
 Expected: 전부 PASS
 
-- [ ] **Step 5: 감독·콘솔·서버 실패 테스트**
+- [x] **Step 5: 감독·콘솔·서버 실패 테스트**
 
 `tests/test_stage_director.py` 의 `Harness` 에 헬퍼를 넣는다:
 
@@ -232,7 +232,7 @@ def seq_in(msgs):
 
 기존 `ended(mc)` 호출은 `ended(mc, seq=seq_in(mc_msgs))` 로 바꾼다(`start_and_drain` 의 반환값 이름을 확인해 그 변수를 쓴다). `tests/test_deployment_contract.py` 의 왕복 테스트(`speaking_started/ended` 를 `protocol.decode` + `server._dispatch` 로 미는 곳)는 `client.speaking_ended("c1", 1)` 로 seq 를 실어 보내고 감독 상태가 LISTENING 으로 바뀌는지 단언한다 — 필드 이름이 한쪽에서만 바뀌면 여기서 깨진다.
 
-- [ ] **Step 6: 클라이언트·앱 실패 테스트**
+- [x] **Step 6: 클라이언트·앱 실패 테스트**
 
 `tests/test_stage_client.py` — `collector()` 의 `on_say` 람다를 `lambda cue_id, text, seq: got.append(("say", cue_id, text, seq))` 로 바꾸고, 기존 `gaze` 를 단언하던 두 테스트를 seq 로 바꾼다:
 
@@ -263,12 +263,12 @@ def test_발성_경계_보고에_seq_를_되돌려준다():
 
 `tests/test_stage_role.py` 의 `SayRunner` 테스트들은 `speak_one(cue_id, text, gaze)` 를 `speak_one(cue_id, text, seq)` 로, `r.on_say("c1", "긴 대사", None)` 은 그대로 둔다(셋째 인자가 seq 가 됐을 뿐이다).
 
-- [ ] **Step 7: 실패 확인**
+- [x] **Step 7: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_director.py tests/test_stage_console.py tests/test_stage_server.py tests/test_stage_client.py tests/test_stage_role.py tests/test_deployment_contract.py -q`
 Expected: seq 관련 테스트 FAIL, 나머지는 시그니처 오류로 FAIL 가능
 
-- [ ] **Step 8: 감독·서버·클라이언트·앱 구현**
+- [x] **Step 8: 감독·서버·클라이언트·앱 구현**
 
 `stage/director.py`:
 
@@ -311,12 +311,12 @@ Expected: seq 관련 테스트 FAIL, 나머지는 시그니처 오류로 FAIL �
 
 `apps/voice_chat/voice_chat/main.py` — `SayRunner.on_say(self, cue_id, text, seq=None)` 이 워커에 `(cue_id, text, seq)` 를 넘기고, `speak_one(cue_id, text, seq)` 의 finally 는 `client.speaking_started(cue_id, seq)` / `client.speaking_ended(cue_id, seq)` 를 부른다.
 
-- [ ] **Step 9: 통과 확인 + 전체 회귀**
+- [x] **Step 9: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures, 445 + 새 테스트 수
 
-- [ ] **Step 10: lessons.md + 커밋**
+- [x] **Step 10: lessons.md + 커밋**
 
 `docs/lessons.md` 「무대감독」 절에 추가:
 
@@ -347,7 +347,7 @@ git commit -m "fix(stage): 발화마다 seq 를 붙여 r/a→s 뒤의 유령 종
 **Interfaces:**
 - Produces: `Director.next() -> None` (IDLE/LISTENING 에서 다음 큐 시작, 마지막이면 경고; 발화 중이면 `TurnError`). `on_heard` 의 진행 분기는 내부적으로 같은 `_next_locked()` 를 쓴다.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_director.py`:
 
@@ -397,12 +397,12 @@ def test_발화_중_n_은_중단하고_다음으로_간다():
     assert h.says()[-1] == ("mc", "사회자 둘째 대사")
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_director.py tests/test_stage_console.py -q -k "start_를_다시\|next\|n_을_누르면\|발화_중_n"`
 Expected: FAIL
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `stage/director.py`:
 
@@ -442,12 +442,12 @@ Expected: FAIL
         director.next()
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### 거절할 요청은 **부작용 전에** 거절한다
@@ -477,7 +477,7 @@ git commit -m "fix(stage): start 를 부작용 전에 거절하고 콘솔 n 이 
 **Interfaces:**
 - Produces: `Director.reject(role: str, reason: str)` (그 역할을 거부 목록에 넣고 경고), `Director.rejected: set[str]`, `Director.start()` 는 거부 목록이 비어 있지 않으면 `TurnError`. `Director.on_connect(role)` 가 현재 상태에 맞는 `mic` 지시를 그 로봇에게 다시 보낸다. `Director.on_disconnect(role)` 가 LISTENING 이면 남은 리스너의 마이크를 연다.
 
-- [ ] **Step 1: 실패 테스트 — 감독**
+- [x] **Step 1: 실패 테스트 — 감독**
 
 `tests/test_stage_director.py`:
 
@@ -526,7 +526,7 @@ def test_듣는_중에_리스너가_끊기면_남은_로봇의_마이크를_연�
     assert h.mics() == [("docent", True)]
 ```
 
-- [ ] **Step 2: 실패 테스트 — 서버(실제 소켓)**
+- [x] **Step 2: 실패 테스트 — 서버(실제 소켓)**
 
 `tests/test_stage_server.py`:
 
@@ -587,12 +587,12 @@ def test_role_이_문자열이_아닌_hello_는_경고하고_끊는다(server):
 
 > `test_text_가_null_…` 의 도슨트 seq 는 도슨트가 받은 3통 중 `say` 의 seq 다. `drain(docent, 3)` 의 반환값을 변수에 받아 `seq_in(...)` 에 넘긴다 — 위 코드의 `drain_last_say` 는 그 변수를 뜻하는 자리표시가 아니라 **그 변수로 바꿔 쓴다**.
 
-- [ ] **Step 3: 실패 확인**
+- [x] **Step 3: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_director.py tests/test_stage_server.py -q`
 Expected: 새 테스트 FAIL
 
-- [ ] **Step 4: 구현**
+- [x] **Step 4: 구현**
 
 `stage/director.py`:
 
@@ -676,12 +676,12 @@ Expected: 새 테스트 FAIL
 
 `heard` 는 `text = self._str_field(role, msg, "text")`, `None` 이면 return. `speaking_*` 는 `cue_id` 같은 방식, `seq` 는 `int` 또는 `None` 만 받고 아니면 경고 후 버린다. `error` 는 `where`/`detail` 을 `str()` 로 감싼다.
 
-- [ ] **Step 5: 통과 확인 + 전체 회귀**
+- [x] **Step 5: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 6: lessons.md + 커밋**
+- [x] **Step 6: lessons.md + 커밋**
 
 ```markdown
 ### 검증 실패는 **경고 채널**로 나가야 검증이다
@@ -717,7 +717,7 @@ git commit -m "fix(stage): 역할 검증 실패를 경고로 받고, 재접속�
 **Interfaces:**
 - Produces: `load_cues()` 는 필수 필드가 `str` 이 아니면(`None`·숫자 포함) `CueError`. `stage-env.sh` 는 인자가 없으면 `return 1`(source) / `exit 1`(실행) 하고 셸 옵션을 바꾸지 않는다.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_cues.py`:
 
@@ -762,12 +762,12 @@ def test_source_에서_인자가_없으면_셸을_죽이지_않고_실패를_알
     assert "stage-env.sh" in result.stderr
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py tests/test_stage_env_script.py -q`
 Expected: 새 테스트 FAIL
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `stage/cues.py::load_cues` 의 필수 필드 검사:
 
@@ -793,12 +793,12 @@ fi
 ROLE="$1"
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures (기존 `test_인자가_없으면_소리_내서_실패한다` 는 `bash SCRIPT` 실행이라 `exit 1` 로 그대로 통과)
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### source 되는 스크립트에 `set -e` 를 두지 않는다
@@ -832,7 +832,7 @@ git commit -m "fix(stage): 큐시트 필드 타입을 검증하고 stage-env.sh 
 **Interfaces:**
 - Produces: `main.make_abort(speaker, player, log=print) -> Callable[[], None]` — `speaker.stop()` 뒤 `player.cancel()`(player 가 있으면). `StageClient._on_raw` 는 핸들러 예외를 `warn` 하고 **연결을 유지**한다.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_client.py`:
 
@@ -891,12 +891,12 @@ def test_abort_는_소리와_모션을_함께_끊는다():
     assert calls == ["stop"]
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_client.py tests/test_stage_role.py -q -k "핸들러_예외\|객체가_아닌\|abort_는_소리"`
 Expected: FAIL
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `stage_client.py::_on_raw`:
 
@@ -948,12 +948,12 @@ def make_abort(speaker, player, log=print):
 
 `stage_run` 의 `Handlers(... on_abort=make_abort(speaker, player))`.
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### 전송 오류와 처리 오류를 **한 except 로 묶지 않는다**
@@ -980,7 +980,7 @@ git commit -m "fix(app): 감독 지시 처리 예외를 연결 끊김과 가르�
 **Interfaces:**
 - Produces: `voice_loop(llm, speaker, player, respond, should_stop=None, mic_open=None)` — `mic_open: Callable[[], bool] | None`. `False` 를 주는 동안은 프레임을 버리고 VAD 를 리셋하며 STT 를 부르지 않는다(끼어들기 판정도 돌지 않는다). `main.listener_alive(thread) -> bool`. `main.run_listener(voice_loop_fn, args, kwargs, client, log) -> None` — 청취 루프를 감싸 예외를 로그·감독에 보고한다.
 
-- [ ] **Step 1: 실패 테스트 — 게이트**
+- [x] **Step 1: 실패 테스트 — 게이트**
 
 `tests/test_barge_in.py` 의 `_run_loop` 를 확장한다 — `gate=None` 인자를 받아 `vl.voice_loop(..., mic_open=gate)` 로 넘기고, `transcribe` 호출을 세는 리스트를 돌려준다:
 
@@ -1027,7 +1027,7 @@ def test_게이트가_닫힌_동안_모은_발화는_열린_뒤에도_넘어가�
     assert spk.stt_calls == []
 ```
 
-- [ ] **Step 2: 실패 테스트 — 청취 스레드 생존**
+- [x] **Step 2: 실패 테스트 — 청취 스레드 생존**
 
 `tests/test_stage_role.py`:
 
@@ -1091,12 +1091,12 @@ def test_마이크_이터레이터_안의_예외_뒤에도_계속_듣는다(monk
     assert made["n"] == 2, "예외 뒤 이터레이터를 다시 만들지 않았다"
 ```
 
-- [ ] **Step 3: 실패 확인**
+- [x] **Step 3: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_barge_in.py tests/test_stage_role.py -q -k "게이트\|청취\|이터레이터"`
 Expected: FAIL (`TypeError: unexpected keyword 'mic_open'`, `AttributeError: listener_alive`)
 
-- [ ] **Step 4: 구현 — voice_loop**
+- [x] **Step 4: 구현 — voice_loop**
 
 시그니처: `def voice_loop(llm, speaker, player, respond, should_stop=None, mic_open=None) -> None:`. 루프 머리, `busy = speaker.speaking` 바로 뒤에:
 
@@ -1124,7 +1124,7 @@ Expected: FAIL (`TypeError: unexpected keyword 'mic_open'`, `AttributeError: lis
                 frames = mic.frames()
 ```
 
-- [ ] **Step 5: 구현 — main.py**
+- [x] **Step 5: 구현 — main.py**
 
 ```python
 def listener_alive(thread) -> bool:
@@ -1160,12 +1160,12 @@ def run_listener(loop_fn, args, kwargs, client, log=print) -> None:
 
 `make_heard_sink` 는 그대로 둔다(두 번째 방어선). 주석에 "일차 방어선은 `voice_loop(mic_open=)` 이다" 를 적는다.
 
-- [ ] **Step 6: 통과 확인 + 전체 회귀**
+- [x] **Step 6: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 7: 문서·lessons.md + 커밋**
+- [x] **Step 7: 문서·lessons.md + 커밋**
 
 `docs/real-robot-deployment.md` §15.2-4 를 고친다: "안전에는 문제가 없다(구조로 막힌다)" → "**틀렸다(2026-09-14)** — 게이트가 STT 결과 시점에만 있어 도슨트 마지막 문장이 관람객 발화로 올라갔다. 지금은 `voice_loop(mic_open=)` 이 캡처 단에서 막고, STT 낭비도 같이 사라졌다." `docs/lessons.md`:
 
@@ -1204,7 +1204,7 @@ git commit -m "fix(app): 사회자 청취 게이트를 캡처 단으로 옮겨 �
 **Interfaces:**
 - Produces: `EnergyVAD.feed()` 는 과길이 발화에서 (a) 적응 바닥이 부트스트랩됐으면(`len(_noise) >= 30`) 버퍼를 **발화로 반환**하고 바닥을 건드리지 않는다, (b) 아니면 기존대로 바닥을 재파종하고 버린다. 두 경우 모두 로그 한 줄. `EnergyVAD.overlong_resets` 는 (b) 만 센다, 새 속성 `overlong_passed` 가 (a) 를 센다.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_vad.py`:
 
@@ -1237,12 +1237,12 @@ def test_바닥이_안_잡혔을_때의_과길이는_여전히_버린다(capsys)
     assert "과길이" in capsys.readouterr().out
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_vad.py -q -k 과길이`
 Expected: 첫 테스트 FAIL (`len(got) == 0`), 둘째는 `overlong_passed` 없음 또는 로그 없음으로 FAIL
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `audio_in.py` — `__init__` 에 `self._overlong_passed = 0`, 속성 `overlong_passed`. `feed()` 의 과길이 분기:
 
@@ -1265,12 +1265,12 @@ Expected: 첫 테스트 FAIL (`len(got) == 0`), 둘째는 `overlong_passed` 없�
             return None
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures (기존 `test_소음_바닥이_초기_임계보다_높아도_스스로_빠져나온다`·`test_과길이_발화는_STT로_넘기지_않는다` 는 부트스트랩 전 케이스라 그대로 통과)
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### 같은 신호라도 **바닥이 잡혔는가**에 따라 뜻이 다르다
@@ -1298,7 +1298,7 @@ git commit -m "fix(vad): 바닥이 잡힌 뒤의 과길이 발화는 버리지 �
 **Interfaces:**
 - Produces: `_worker` 는 항목을 미리 꺼냈는지를 `prefetched: bool` 로 기억하고, finally 에서 그 값으로만 `task_done()` 을 부른다. 외부 시그니처 변경 없음.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_barge_in.py`:
 
@@ -1324,12 +1324,12 @@ def test_발화_뒤에_모션_사운드가_와도_워커가_죽지_않는다(str
     assert got, "워커가 죽어 이후 발화가 나오지 않았다"
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_barge_in.py -q -k 모션_사운드가_와도`
 Expected: FAIL (`speaking` 이 True 로 남거나 `unfinished_tasks` 가 0 이 아님; stderr 에 `ValueError: task_done() called too many times`)
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `tts.py::_worker`:
 
@@ -1358,12 +1358,12 @@ Expected: FAIL (`speaking` 이 True 로 남거나 `unfinished_tasks` 가 0 이 �
                     self._q.task_done()
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### 회계 플래그는 **그 사실**을 기록한다 — 다른 사실에서 유도하지 않는다
@@ -1392,7 +1392,7 @@ git commit -m "fix(tts): 미리 꺼낸 모션 사운드에서 task_done 을 두 
 **Interfaces:**
 - Produces: `session.speak(text, speaker, player, category: str | None = None)` — `None` 이면 `motion.classify(text)` 로 고른다. `MotionPlayer.play_for(category)` 는 표에 없는 category 면 `print` 로 경고하고 `None`.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_session_speak.py`:
 
@@ -1430,12 +1430,12 @@ def test_모르는_category_는_경고하고_None_이다(capsys):
 
 > `MotionPlayer.__init__` 의 실제 시그니처와 `_available` 계산은 `motion.py:60-100` 을 읽고 맞춘다. `tests/test_motion.py` 에 이미 가짜 드라이버/무브 헬퍼가 있으면 그것을 쓴다.
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_session_speak.py tests/test_motion.py -q -k "category"`
 Expected: FAIL (`pl.played == [("neutral", False)]`)
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `session.py::speak`:
 
@@ -1464,12 +1464,12 @@ def speak(text: str, speaker, player, category: str | None = None) -> None:
             return None
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add apps/voice_chat/voice_chat/session.py apps/voice_chat/voice_chat/motion.py tests/test_session_speak.py tests/test_motion.py
@@ -1488,7 +1488,7 @@ git commit -m "feat(app): 2대 모드 발화에도 문장으로 고른 모션을
 **Interfaces:**
 - Produces: `Cue.mc_after: str = ""` (선택. 있으면 문자열이어야 한다). 감독은 `f"{cue.id}:docent"` 가 끝나면 `mc_after` 가 있을 때 사회자에게 `say(cue_id=f"{cue.id}:after", gaze="audience")` 를 보내고, 그것이 끝나야 LISTENING 이다. 없으면 기존대로 곧장 LISTENING.
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_cues.py`:
 
@@ -1547,12 +1547,12 @@ def test_받아치기도_이력에_남는다():
     assert h.d.history[-1]["content"] == "사회자: 받아치기"
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py tests/test_stage_director.py -q -k "mc_after\|받아치"`
 Expected: FAIL (`TypeError: unexpected keyword 'mc_after'`)
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `stage/cues.py`:
 
@@ -1601,12 +1601,12 @@ class Cue:
             self._emit(cmds)
 ```
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add stage/cues.py stage/director.py tests/test_stage_cues.py tests/test_stage_director.py
@@ -1626,7 +1626,7 @@ git commit -m "feat(stage): 도슨트 뒤 사회자 받아치기(mc_after)로 �
 **Interfaces:**
 - Produces: `stage.cues.QA_ACK_LINES: tuple[str, ...]`, `stage.director.QA_FALLBACK: str`. 관람객 질문이 들어오면 감독은 **즉시** 사회자에게 `say(cue_id=f"{cue.id}:ack")` 를 보내고(LLM 대기 없음), 생성은 스레드에서 돈다. `:ack` 가 끝나면 도슨트 `say(cue_id=f"{cue.id}:qa")`. 내부 생성 슬롯은 `_pending_text/_pending_ready/_gen_token` 하나로 도슨트 해설과 질문 응답이 같이 쓴다(한 턴에 생성은 하나뿐이다).
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_director.py` — 기존 두 테스트를 새 흐름으로 고친다:
 
@@ -1699,12 +1699,12 @@ def test_도슨트_프롬프트에_음성_출력_규칙이_있다():
     assert "음성" in p and "목록" in p and "이모지" in p
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_director.py tests/test_stage_main.py -q -k "질문\|확인_멘트\|음성_출력"`
 Expected: FAIL
 
-- [ ] **Step 3: 구현**
+- [x] **Step 3: 구현**
 
 `stage/cues.py`:
 
@@ -1771,12 +1771,12 @@ QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음�
 
 `stage/__main__.py::_system_prompt` 에 한 줄 추가: `"네 말은 음성으로 읽힌다. 목록·이모지·특수문자·마크다운을 쓰지 않고 문장은 마침표로 끝낸다. "`
 
-- [ ] **Step 4: 통과 확인 + 전체 회귀**
+- [x] **Step 4: 통과 확인 + 전체 회귀**
 
 Run: `.venv/bin/python -m pytest tests/ -q`
 Expected: 0 failures
 
-- [ ] **Step 5: lessons.md + 커밋**
+- [x] **Step 5: lessons.md + 커밋**
 
 ```markdown
 ### 락을 쥔 채 네트워크를 기다리지 않는다 — 고정 멘트가 그 시간을 산다
@@ -1803,7 +1803,7 @@ git commit -m "feat(stage): 질문에 사회자 확인 멘트로 먼저 답하�
 **Interfaces:**
 - 소비: Task 10 의 `Cue.mc_after`. 큐 id 는 바꾸지 않는다(`test_큐시트가_해설_원장의_모든_섹션을_덮는다`).
 
-- [ ] **Step 1: 실패 테스트**
+- [x] **Step 1: 실패 테스트**
 
 `tests/test_stage_cues.py`:
 
@@ -1840,12 +1840,12 @@ def test_사회자_대사가_한_틀로_반복되지_않는다():
     assert len(set(firsts)) >= 8, f"첫 낱말이 너무 겹친다: {firsts}"
 ```
 
-- [ ] **Step 2: 실패 확인**
+- [x] **Step 2: 실패 확인**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py -q -k "위치_지시어\|받아치기가\|길이가\|한_틀"`
 Expected: FAIL
 
-- [ ] **Step 3: 큐시트 교체**
+- [x] **Step 3: 큐시트 교체**
 
 `data/cues.yaml` 머리말에 한 줄 더한다: `#   mc_after      도슨트 뒤 사회자의 받아치기 + 관람객 창구 안내. 고정 대사`. 그리고 19개의 `mc` 를 아래로 바꾸고 `mc_after` 를 각 큐의 `gaze` 앞에 넣는다(`docent_brief`·`gaze` 는 손대지 않는다):
 
@@ -1911,12 +1911,12 @@ Expected: FAIL
 
 > 19-closing 의 mc 에 "여기까지" 가 있다 — `_DEIXIS` 의 "여기" 에 걸린다. **"오늘의 전파체험관 이야기는 이것으로 마칩니다."** 로 쓴다. 마찬가지로 각 줄을 넣은 뒤 테스트가 지목하는 낱말을 고친다.
 
-- [ ] **Step 4: 통과 확인 + 눈으로 검토**
+- [x] **Step 4: 통과 확인 + 눈으로 검토**
 
 Run: `.venv/bin/python -m pytest tests/test_stage_cues.py tests/test_stage_director.py -q`
 Expected: 전부 PASS. 그리고 `docs/exhibit-guide.md` 「정본」 표와 대조해 사실(연도·숫자)이 mc/mc_after 에 새로 들어가지 않았는지 본다 — 받아치기는 감상이지 사실 진술이 아니어야 한다.
 
-- [ ] **Step 5: 커밋**
+- [x] **Step 5: 커밋**
 
 ```bash
 git add data/cues.yaml tests/test_stage_cues.py
@@ -1934,11 +1934,11 @@ git commit -m "feat(cues): 사회자 대사를 대담 프레임으로 다시 쓰
 - Modify: `docs/lessons.md` — 이전 라운드에 빠진 5건을 짧게 등재: `fa8b068`(발화 워커로 abort 즉시), `f9fa6c5`(콘솔 EOF/TurnError), `32b86ce`(데드라인을 발화 시작 시점부터), `925d163`/`69e636a`(1인 모드 cue id 구분·리스너 마이크), `3ea7e35`(이력 상한). 각각 증상 → 원인 → 규칙 3줄.
 - Create: `docs/two-robot-offline-test.md` — 사용자가 요청한 **실기 2대 오프라인 테스트 순서**(`two-robot-setup.md` 를 절차 순서로 압축: ① 공유기 ② 로봇 한 대씩 WiFi ③ 고정 IP·hardware_id ④ startup-app 비움 ⑤ 노트북 `serve`+`warmup` ⑥ `python -m stage` ⑦ `robot up` ×2 ⑧ 확인 항목 ⑨ 고장 시 콘솔 키). 코드에 없는 절차는 적지 않는다.
 
-- [ ] **Step 1: 문서 수정**
+- [x] **Step 1: 문서 수정**
 
 각 파일을 위 목록대로 고친다. 설계 §4 표의 `speaking_started`/`speaking_ended` 행을 `{cue_id, seq}` 로, `say` 행을 `{cue_id, seq, text}` 로. §4.1 에 `DOCENT_SPEAKING ──ended──▶ MC_SPEAKING(mc_after) ──ended──▶ LISTENING` 과 `LISTENING ──heard(질문)──▶ MC_SPEAKING(:ack) ──ended──▶ DOCENT_SPEAKING(:qa)` 를 넣는다.
 
-- [ ] **Step 2: 문서-코드 대조 테스트**
+- [x] **Step 2: 문서-코드 대조 테스트**
 
 `tests/test_deployment_contract.py` 에:
 
@@ -1952,7 +1952,7 @@ def test_설계_문서의_메시지_필드가_코드와_맞는다():
 
 Run: `.venv/bin/python -m pytest tests/ -q` → 0 failures
 
-- [ ] **Step 3: 커밋**
+- [x] **Step 3: 커밋**
 
 ```bash
 git add docs/ tests/test_deployment_contract.py
