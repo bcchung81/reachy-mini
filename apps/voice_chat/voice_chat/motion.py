@@ -116,7 +116,15 @@ class MotionPlayer:
         force=True 면 진행 중인 모션을 끊고 재생한다. 공연(노래·춤) 요청처럼
         상호작용의 목적 자체인 동작은 겹친다고 버리면 안 된다.
         """
-        candidates = [n for n in CATEGORY_MOVES.get(category, []) if n in self._available]
+        if category not in CATEGORY_MOVES:
+            # 조용히 None 을 주면 "왜 안 움직이지" 를 못 찾는다(리뷰 B1 — 'neutral').
+            print(
+                f"  [모션 경고] 모션 범주가 아니다: {category!r}"
+                f" (쓸 수 있는 것: {', '.join(CATEGORY_MOVES)})",
+                flush=True,
+            )
+            return None
+        candidates = [n for n in CATEGORY_MOVES[category] if n in self._available]
         if not candidates:
             return None
         return self.play(

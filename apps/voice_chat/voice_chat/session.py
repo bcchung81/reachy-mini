@@ -137,11 +137,15 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     return llm, speaker, player
 
 
-def speak(text: str, speaker, player, category: str = "neutral") -> None:
+def speak(text: str, speaker, player, category: str | None = None) -> None:
     """받은 텍스트를 말하고 그에 맞는 모션을 낸다. **LLM 을 부르지 않는다.**
 
     1대 구성에서는 `respond()` 가 LLM 스트림을 받은 뒤 이 경로로 말하고,
     2대 구성에서는 무대감독이 만든 텍스트로 이것만 쓴다.
+
+    `category` 를 안 주면 **문장으로 고른다**(`motion.classify`). 예전 기본값
+    'neutral' 은 모션 표에 없는 이름이라 2대 모드의 모든 발화가 모션 없이 나갔다
+    — 로봇이 말하는 내내 몸이 가만히 있었다(리뷰 B1).
 
     **재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
     끼어들기 판정이 한 번도 돌지 않는다 — 재생 중 마이크를 어떻게 다룰지는
@@ -152,6 +156,7 @@ def speak(text: str, speaker, player, category: str = "neutral") -> None:
         # 빈 대사를 말하는 로봇이 되지 않는다. 감독 쪽 사고를 여기서 흡수한다.
         return
     if player is not None:
+        category = category or classify(text)
         name = player.play_for(category)
         print(f"  [모션 {category}/{name}]")
     print(f"미니> {text}")

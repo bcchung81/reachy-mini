@@ -348,3 +348,10 @@ def test_해설_규칙이_기존_우선순위를_깨지_않는다():
     assert classify("노래 불러줘") == "perform"
     assert classify("전파에 대한 노래 불러줘") == "perform"
     assert classify("안녕") == "greet"
+
+
+def test_모르는_category_는_경고하고_None_이다(capsys):
+    """조용히 None 을 주면 "왜 안 움직이지" 를 못 찾는다(리뷰 B1 — 'neutral')."""
+    p = MotionPlayer(FakeDriver(), FakeMoves(), None)
+    assert p.play_for("neutral") is None
+    assert "모션 범주" in capsys.readouterr().out

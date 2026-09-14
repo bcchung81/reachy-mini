@@ -79,3 +79,14 @@ def test_재생_완료를_기다리지_않는다():
 def test_respond_는_여전히_동작한다():
     # 1대 구성 회귀 방지 — speak() 를 뽑아내도 기존 경로가 살아 있어야 한다.
     assert callable(session.respond)
+
+
+def test_category_를_안_주면_문장으로_고른다():
+    """리뷰 B1 — 2대 모드의 say 는 category 를 안 주는데 기본값 'neutral' 은 모션 표에
+    없어 언제나 None 이었다. 로봇이 말하는 내내 몸이 가만히 있었다."""
+    sp, pl = FakeSpeaker(), FakePlayer()
+    session.speak("도슨트, 햄이 뭔가요?", sp, pl)
+    assert pl.played == [("curious", False)]
+    sp, pl = FakeSpeaker(), FakePlayer()
+    session.speak("1912년 4월 타이타닉호가 침몰할 때 잭 필립스가 구조를 요청했습니다.", sp, pl)
+    assert pl.played == [("no", False)]
