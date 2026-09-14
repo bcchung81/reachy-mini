@@ -256,3 +256,37 @@ def test_mc_after_가_문자열이_아니면_거절한다(tmp_path):
 """)
     with pytest.raises(CueError, match="mc_after"):
         load_cues(p)
+
+
+# ── 대담 프레임 (B4) ─────────────────────────────────────────────────
+
+_DEIXIS = ("여기", "이곳", "저기", "이쪽", "저쪽")
+
+
+def test_사회자_대사에_위치_지시어가_없다():
+    """두 로봇은 책상 위에 고정돼 있고 관람객이 움직인다(원장 「걷어낸 것」).
+    "여기는 ~존입니다" 는 로봇이 그 자리에 있다는 거짓말이다(리뷰 B4)."""
+    for c in load_cues():
+        for w in _DEIXIS:
+            assert w not in c.mc, f"{c.id} mc: {w!r}"
+            assert w not in c.mc_after, f"{c.id} mc_after: {w!r}"
+
+
+def test_모든_큐에_받아치기가_있고_다음을_안내한다():
+    cues = load_cues()
+    for c in cues:
+        assert c.mc_after, f"{c.id} 에 mc_after 가 없다"
+    for c in cues[:-1]:                 # 마지막 큐는 '다음' 이 없다
+        assert "다음" in c.mc_after, f"{c.id} 받아치기가 진행 신호를 안내하지 않는다"
+
+
+def test_사회자_대사_길이가_예산_안이다():
+    # CHARS_PER_SEC=4 → 130자면 32초 + 여유 15초. 이보다 길면 한 큐가 늘어진다.
+    for c in load_cues():
+        assert len(c.mc) <= 130, f"{c.id} mc {len(c.mc)}자"
+        assert len(c.mc_after) <= 90, f"{c.id} mc_after {len(c.mc_after)}자"
+
+
+def test_사회자_대사가_한_틀로_반복되지_않는다():
+    firsts = [c.mc.split(" ")[0] for c in load_cues()]
+    assert len(set(firsts)) >= 8, f"첫 낱말이 너무 겹친다: {firsts}"
