@@ -244,3 +244,13 @@ def test_로봇이_보낸_보고가_감독의_상태를_실제로_옮긴다():
     # 유령 메시지로 버려져 여기까지 못 온다.
     assert server.director.state is State.DOCENT_SPEAKING
     assert json.loads(ws.sent[0])["type"] == "speaking_started"
+
+
+def test_설계_문서의_메시지_필드가_코드와_맞는다():
+    """문서와 코드가 어긋나면 다음 사람이 문서를 믿고 한쪽만 고친다 — seq 처럼
+    양쪽이 짝인 필드는 문서에도 박아 둔다."""
+    doc = (pathlib.Path(__file__).parent.parent
+           / "docs/superpowers/specs/2026-09-11-two-robot-mc-docent-design.md").read_text()
+    assert "`speaking_started` / `speaking_ended` | `{cue_id, seq}`" in doc
+    assert "mc_after" in doc
+    assert ":ack" in doc

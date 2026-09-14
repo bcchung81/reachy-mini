@@ -83,14 +83,14 @@ WebSocket + JSON. 메시지 9종(로봇→감독 5, 감독→로봇 4).
 |---|---|---|
 | `hello` | `{role, unit_id, version}` | 역할 자기신고. `unit_id` 불일치면 **기동 실패**(사회자/도슨트 뒤바뀜을 시연 전에 잡는다). `None`이면 경고 후 통과 — §6.3·§8.2 |
 | `heard` | `{text, t}` | STT 결과 (사회자만) |
-| `speaking_started` / `speaking_ended` | `{cue_id}` | **실제 발성 경계.** 게이팅의 진실은 여기뿐 |
+| `speaking_started` / `speaking_ended` | `{cue_id, seq}` | **실제 발성 경계.** 게이팅의 진실은 여기뿐. `seq` 는 `say` 에서 받은 발화 번호를 그대로 되돌린다 — 콘솔 `r` 이 같은 `cue_id` 를 재발행하므로 이것 없이는 중단된 발화의 늦은 종료 보고를 못 가른다(2026-09-14, 리뷰 A2) |
 | `error` | `{where, detail}` | 조용한 실패 금지 |
 
 **감독 → 로봇**
 
 | 메시지 | 내용 |
 |---|---|
-| `say` | `{cue_id, text, emotion?, gaze?}` |
+| `say` | `{cue_id, seq, text}` — `gaze` 는 별도 메시지로 간다(구현이 그렇다) |
 | `mic` | `{open: bool}` |
 | `gaze` | `{target: "partner" \| "audience"}` |
 | `abort` | 즉시 중단 |
@@ -98,12 +98,17 @@ WebSocket + JSON. 메시지 9종(로봇→감독 5, 감독→로봇 4).
 ### 4.1 상태기계
 
 ```
-IDLE ──시작──▶ MC_SPEAKING
-MC_SPEAKING ──speaking_ended──▶ LISTENING
-LISTENING ──heard("다음"류)──▶ 다음 큐 ──▶ MC_SPEAKING | DOCENT_SPEAKING
-LISTENING ──heard(질문)──▶ LLM ──▶ DOCENT_SPEAKING
-DOCENT_SPEAKING ──speaking_ended──▶ MC_SPEAKING(받아치기) | LISTENING
+IDLE ──시작──▶ MC_SPEAKING(cue.mc)
+MC_SPEAKING(cue.mc) ──ended──▶ DOCENT_SPEAKING(:docent)   ← 사회자가 말하는 동안 생성
+DOCENT_SPEAKING(:docent) ──ended──▶ MC_SPEAKING(:after, cue.mc_after) ──ended──▶ LISTENING
+                                     (mc_after 가 없으면 곧장 LISTENING)
+LISTENING ──heard("다음"류)──▶ 다음 큐 ──▶ MC_SPEAKING(cue.mc)
+LISTENING ──heard(질문)──▶ MC_SPEAKING(:ack, 확인 멘트)   ← 이 동안 LLM 이 답을 생성(락 밖)
+MC_SPEAKING(:ack) ──ended──▶ DOCENT_SPEAKING(:qa) ──ended──▶ LISTENING
 ```
+
+(2026-09-14 갱신) 받아치기 `mc_after` 와 질문 확인 멘트 `:ack` 는 **관람객에게 창구가 열렸음을
+말로 알리고, 그 시간에 LLM 지연을 숨긴다** — 둘 다 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
 
 ### 4.2 불변식 — 이 설계의 전부
 
