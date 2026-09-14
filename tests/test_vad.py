@@ -218,3 +218,34 @@ def test_발화가_끝나면_보고가_내려간다():
     for _ in range(40):              # 1.2초 침묵 → hangover 초과
         vad.feed(_floor(0.001))
     assert not vad.speaking and not vad.active
+
+
+# ── 과길이 발화: 바닥이 잡혀 있으면 말이다 (리뷰 A6) ─────────────────
+
+
+def test_바닥이_잡힌_뒤의_긴_질문은_버리지_않는다(capsys):
+    """관람객이 10초 넘게 물으면 버퍼로 바닥을 재파종해 임계가 음성×3 으로
+    튀었고, 1.5초 침묵 전까지 다음 질문을 못 들었다. 바닥이 이미 잡혀 있으면
+    그 위의 긴 소리는 잡음이 아니라 말이다."""
+    vad = EnergyVAD()
+    for f in frames_of("silence", 3.0):        # 바닥 부트스트랩(표본 ≥30)
+        vad.feed(f)
+    th_before = vad.threshold
+    outs = [vad.feed(f) for f in frames_of("speech", 11.0)]
+    got = [o for o in outs if o is not None]
+    assert len(got) == 1, "긴 발화가 통째로 버려졌다"
+    assert len(got[0]) >= RATE * 9
+    assert vad.threshold == th_before, "발화 버퍼로 바닥이 재파종됐다"
+    assert vad.overlong_passed == 1 and vad.overlong_resets == 0
+    assert "과길이" in capsys.readouterr().out
+    # 곧바로 이어지는 보통 길이 질문도 들린다
+    outs = run(vad, [("silence", 0.3), ("speech", 1.0), ("silence", SILENCE)])
+    assert len(outs) == 1
+
+
+def test_바닥이_안_잡혔을_때의_과길이는_여전히_버린다(capsys):
+    vad = EnergyVAD()
+    outs = [vad.feed(_floor()) for _ in range(int(12 / 0.03))]
+    assert all(o is None for o in outs)
+    assert vad.overlong_resets == 1
+    assert "과길이" in capsys.readouterr().out

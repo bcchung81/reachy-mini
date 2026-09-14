@@ -58,7 +58,8 @@ class EnergyVAD:
         # 발화가 이보다 길어지면 강제로 닫는다. 0.7초 쉼 없이 10초를 이어 말하는 일은
         # 드물다 — 이 한도에 걸린다는 건 대개 바닥 소음이 임계를 계속 넘는다는 뜻이다.
         self._max_utterance_s = float(config.get("REACHY_VAD_MAX_UTTERANCE_S", "10.0"))
-        self._overlong = 0
+        self._overlong = 0          # 바닥 미확보 상태에서 강제 종료·폐기한 횟수
+        self._overlong_passed = 0   # 바닥이 잡힌 뒤 긴 발화를 STT 로 넘긴 횟수
         self._noise: collections.deque = collections.deque(maxlen=100)  # 3초
         self._hangover_s = hangover_s
         self._min_speech_s = min_speech_s
@@ -94,15 +95,35 @@ class EnergyVAD:
 
         self._voiced.append(frame)  # 발화 중
         if self.buffered_s > self._max_utterance_s:
+            if self._adaptive and len(self._noise) >= 30:
+                # **바닥이 이미 잡혀 있다.** 그 위로 10초 넘게 이어진 소리는 잡음이
+                # 아니라 긴 질문이다. 예전에는 여기서도 아래 재파종을 타서 임계가
+                # 음성×3 으로 튀었고, 관람객의 다음 질문을 1.5초 침묵 전까지 못
+                # 들었다 — 로그 한 줄 없이(리뷰 A6). 발화로 넘기고 바닥은 둔다.
+                self._overlong_passed += 1
+                print(
+                    f"  [VAD] 과길이 발화({self.buffered_s:.1f}s) — 바닥이 잡혀 있어"
+                    " STT 로 넘긴다",
+                    flush=True,
+                )
+                utterance = np.concatenate(self._voiced)
+                self.reset()
+                return utterance
             # **닫힌 고리를 여기서 끊는다.** 바닥이 임계보다 높으면 발화가 영영
             # 안 끝나고, 대기 상태로 못 돌아오니 표본이 안 쌓여 임계도 못 오른다.
             # 버퍼의 RMS 로 바닥을 재파종하면 임계가 실제 바닥의 배수로 올라가
             # 다음 프레임부터 대기 상태가 유지된다 — 스스로 빠져나온다.
             #
             # 버퍼는 **STT 로 넘기지 않는다.** 잡음 10초를 넘기면 환각 응답이 나와
-            # 로봇이 혼자 떠든다. 침묵보다 나쁘다.
+            # 로봇이 혼자 떠든다. 침묵보다 나쁘다. 이 분기는 바닥 **미확보** 때만
+            # 돈다 — 확보 뒤의 긴 소리는 위에서 말로 넘긴다.
             self._seed_noise(self._voiced)
             self._overlong += 1
+            print(
+                f"  [VAD] 과길이 강제종료({self.buffered_s:.1f}s) — 바닥 미확보,"
+                " 재파종하고 STT 로 넘기지 않는다",
+                flush=True,
+            )
             self.reset()
             return None
         if rms >= threshold:
@@ -130,6 +151,11 @@ class EnergyVAD:
     def buffered_s(self) -> float:
         """지금 모아 둔 발화 길이(초) — 상한 감시·로그용."""
         return sum(len(f) for f in self._voiced) / self._rate
+
+    @property
+    def overlong_passed(self) -> int:
+        """바닥이 잡힌 뒤 긴 발화를 STT 로 넘긴 횟수 — 로그용."""
+        return self._overlong_passed
 
     @property
     def overlong_resets(self) -> int:
