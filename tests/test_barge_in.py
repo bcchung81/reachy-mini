@@ -113,8 +113,11 @@ def _frames(rms_values, n_each=1, rate=16000, chunk_s=0.03):
     return out
 
 
-def _run_loop(monkeypatch, frames, barge_in, speaking_frames):
-    """voice_loop 을 가짜 마이크·가짜 Speaker 로 한 바퀴 돌린다."""
+def _run_loop(monkeypatch, frames, barge_in, speaking_frames, gate=None):
+    """voice_loop 을 가짜 마이크·가짜 Speaker 로 한 바퀴 돌린다.
+
+    `gate` 는 감독의 마이크 게이트(`mic_open`) 흉내 — None 이면 1대 모드다.
+    돌아온 Speaker 의 `stt_calls` 에 STT 로 넘어간 발화 길이가 쌓인다."""
     monkeypatch.setenv("REACHY_BARGE_IN", "1" if barge_in else "0")
     import voice_loop as vl
 
@@ -148,12 +151,13 @@ def _run_loop(monkeypatch, frames, barge_in, speaking_frames):
             return getattr(self, "out_level", 0.0)
 
     spk = FakeSpeaker()
+    spk.stt_calls = []
     monkeypatch.setattr(vl, "MicCapture", lambda *a, **k: FakeMic())
-    monkeypatch.setattr(vl, "transcribe", lambda utt: "")
+    monkeypatch.setattr(vl, "transcribe", lambda utt: (spk.stt_calls.append(len(utt)), "")[1])
     # 프레임마다 speaking 을 한 칸씩 소모한다
     orig_rms = vl._rms
     monkeypatch.setattr(vl, "_rms", lambda f: (spk.tick(), orig_rms(f))[1])
-    vl.voice_loop(None, spk, None, lambda *a: None)
+    vl.voice_loop(None, spk, None, lambda *a: None, mic_open=gate)
     return spk
 
 
@@ -1225,3 +1229,76 @@ def test_정상_발화는_환각으로_잡지_않는다():
     assert not vl._hallucinated("전파체험관에서 제일 재미있는 부스가 어디예요")
     assert not vl._hallucinated("타이타닉 이야기 좀 해줘")
     assert not vl._hallucinated("삐삐가 뭔지 알려줘")
+
+
+# ── 감독의 마이크 게이트는 캡처 단에서 (리뷰 A1) ─────────────────────
+
+
+def _speech_then_silence():
+    # 1.2초 말 + 1.2초 침묵 — hangover(0.7s) 를 넘겨 발화가 닫힌다
+    return _frames([0.05], n_each=40) + _frames([0.001], n_each=40)
+
+
+def test_마이크_게이트가_닫혀_있으면_상대_로봇의_말을_STT_에_넘기지_않는다(monkeypatch):
+    """리뷰 A1 — 게이트를 STT **결과** 시점에만 걸면, 도슨트 마지막 문장을 캡처한
+    뒤 게이트가 열리고 나서 전사가 도착해 관람객 발화로 올라간다(자기목소리 루프).
+    캡처 단에서 막아야 한다."""
+    spk = _run_loop(monkeypatch, _speech_then_silence(), barge_in=False,
+                    speaking_frames=0, gate=lambda: False)
+    assert spk.stt_calls == []
+
+
+def test_마이크_게이트가_열리면_듣는다(monkeypatch):
+    spk = _run_loop(monkeypatch, _speech_then_silence(), barge_in=False,
+                    speaking_frames=0, gate=lambda: True)
+    assert len(spk.stt_calls) == 1
+
+
+def test_게이트가_닫힌_동안_모은_발화는_열린_뒤에도_넘어가지_않는다(monkeypatch):
+    """닫혀 있는 동안 VAD 가 담아 둔 것이 열리는 순간 발화로 튀어나오면 안 된다 —
+    그것이 정확히 도슨트의 마지막 문장이다."""
+    state = {"open": False, "n": 0}
+
+    def gate():
+        state["n"] += 1
+        if state["n"] == 40:          # 말이 끝나는 프레임에서 열린다
+            state["open"] = True
+        return state["open"]
+
+    spk = _run_loop(monkeypatch, _speech_then_silence(), barge_in=False,
+                    speaking_frames=0, gate=gate)
+    assert spk.stt_calls == []
+
+
+def test_마이크_이터레이터_안의_예외_뒤에도_계속_듣는다(monkeypatch):
+    """리뷰 A5b(L1) — 제너레이터는 예외 한 번에 죽는다. 같은 객체로 재진입하면
+    StopIteration 이라 루프가 조용히 끝났다. 새 이터레이터를 다시 만들어야 한다."""
+    monkeypatch.setenv("REACHY_BARGE_IN", "0")
+    import voice_loop as vl
+
+    importlib.reload(vl)
+    made = {"n": 0}
+    quiet = _frames([0.001], n_each=5)
+
+    class Mic:
+        def frames(self):
+            made["n"] += 1
+            if made["n"] == 1:
+                yield quiet[0]
+                raise ValueError("프레임 도중 터짐")
+            for f in quiet:
+                yield f
+
+        def close(self):
+            pass
+
+    class Spk:
+        speaking = False
+
+        def output_level(self, w=0.35):
+            return 0.0
+
+    monkeypatch.setattr(vl, "MicCapture", lambda *a, **k: Mic())
+    monkeypatch.setattr(vl, "transcribe", lambda u: "")
+    vl.voice_loop(None, Spk(), None, lambda *a: None)
+    assert made["n"] == 2, "예외 뒤 이터레이터를 다시 만들지 않았다"

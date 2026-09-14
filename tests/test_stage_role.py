@@ -480,3 +480,35 @@ def test_abort_는_소리와_모션을_함께_끊는다():
     calls.clear()
     main_mod.make_abort(Sp(), None, log=lambda m: None)()
     assert calls == ["stop"]
+
+
+# ── 청취 스레드 생존 (리뷰 A5b) ─────────────────────────────────────
+
+
+def test_죽은_청취_스레드는_리스너로_치지_않는다():
+    """MicCapture 가 못 뜨면 스레드가 곧장 죽는데 `voice_thread is not None`
+    은 True 라 사회자가 귀먹은 채 진행됐고 경고가 없었다."""
+    import threading
+
+    t = threading.Thread(target=lambda: None)
+    assert main_mod.listener_alive(None) is False
+    assert main_mod.listener_alive(t) is False        # 아직 안 시작
+    t.start()
+    t.join()
+    assert main_mod.listener_alive(t) is False        # 끝났다
+
+
+def test_청취_루프가_죽으면_감독과_로그에_알린다():
+    logs: list[str] = []
+    errors: list[tuple[str, str]] = []
+
+    class C:
+        def error(self, where, detail):
+            errors.append((where, detail))
+
+    def boom(*a, **k):
+        raise RuntimeError("마이크 파이프라인을 기동하지 못했다")
+
+    main_mod.run_listener(boom, (), {}, C(), log=logs.append)
+    assert errors and errors[0][0] == "voice_loop"
+    assert any("청취 루프가 죽었다" in m for m in logs)

@@ -53,10 +53,11 @@ ROLE_VOICE = {
 def make_heard_sink(client, mic_open: threading.Event, log=print):
     """STT 결과를 감독에게 올리는 함수를 만든다. **마이크가 닫혀 있으면 버린다.**
 
-    감독은 발화 중 `mic(open=False)` 를 보내지만 `voice_loop` 는 그걸 모르고
-    계속 듣는다. 여기서 막지 않으면 로봇이 **상대 로봇의 목소리를 받아적어**
-    감독에 올리고, 그것이 이 저장소가 이미 밟은 자기목소리 루프다.
-    설계 §4.2 불변식 ① 이 로봇 쪽에서 실제로 성립하는 지점이 여기다.
+    **이것은 이중 방어선이다.** 일차 게이트는 `voice_loop(mic_open=...)` 의 캡처
+    단이다 — 닫힌 동안 프레임을 버리고 VAD 를 리셋한다. 여기(STT 결과 시점)만
+    있었을 때는 상대 로봇의 마지막 문장을 VAD 가 담아 두었다가, 게이트가 열린
+    뒤 전사가 도착해 관람객 발화로 올라갔다(리뷰 A1 — 자기목소리 루프).
+    그래도 남겨 둔다: STT 왕복 중에 게이트가 닫혔다면 그 결과는 버려야 한다.
     """
 
     def on_heard(text: str, *args, **kwargs) -> None:
@@ -155,6 +156,30 @@ def apply_role_voice(role: str) -> None:
         if _config.source(env) != "기본값":
             continue  # 환경변수든 설정파일이든 사람이 정한 값이 이긴다
         os.environ[env] = cfg[key]
+
+
+def listener_alive(thread) -> bool:
+    """청취 루프가 **실제로 돌고 있는가.** `is not None` 은 기동 직후 죽은 스레드도
+    True 다 — 그러면 사회자가 귀먹은 채 진행되고 경고가 없다(리뷰 A5b)."""
+    return thread is not None and thread.is_alive()
+
+
+def run_listener(loop_fn, args, kwargs, client, log=print) -> None:
+    """청취 루프를 감싼다. 죽으면 **소리 내서** 죽는다 — 로그와 감독 양쪽에.
+
+    `MicCapture` 가 못 뜨면 `voice_loop` 는 `RuntimeError` 로 곧장 끝난다. 스레드
+    안이라 아무도 못 받고, 예전에는 `threading.excepthook` 의 traceback 한 줄이
+    전부였다 — 운영자가 봐야 할 "관람객 발화로는 진행되지 않는다" 는 말이 없었다.
+    """
+    try:
+        loop_fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        log(
+            f"  [경고] 청취 루프가 죽었다({type(exc).__name__}: {exc}) — 관람객 발화로는 "
+            "진행되지 않는다. 무대감독 콘솔에서 n(다음)/p(이전)으로 진행한다"
+        )
+        if client is not None:
+            client.error("voice_loop", f"{type(exc).__name__}: {exc}")
 
 
 # STT 왕복 하나가 최대 15초까지 걸릴 수 있다(stt.py:43 의 requests timeout=15).
@@ -289,7 +314,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
 
         say_runner = SayRunner(speak_one)
 
-        on_mic = make_mic_sink(mic_open, has_listener=lambda: voice_thread is not None)
+        on_mic = make_mic_sink(mic_open, has_listener=lambda: listener_alive(voice_thread))
 
         client = StageClient(
             url,
@@ -307,9 +332,14 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         # 사회자만 듣는다. 도슨트는 감독의 지시만 받는다.
         if role == "mc":
             voice_thread = threading.Thread(
-                target=voice_loop,
-                args=(llm, speaker, player, make_heard_sink(client, mic_open)),
-                kwargs={"should_stop": stop_event.is_set},
+                target=run_listener,
+                args=(
+                    voice_loop,
+                    (llm, speaker, player, make_heard_sink(client, mic_open)),
+                    # 게이트는 **캡처 단**에 건다(리뷰 A1) — make_heard_sink 는 이중 방어선.
+                    {"should_stop": stop_event.is_set, "mic_open": mic_open.is_set},
+                    client,
+                ),
                 daemon=True,
             )
             voice_thread.start()

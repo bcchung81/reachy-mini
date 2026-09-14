@@ -255,12 +255,18 @@ def _check_wake(audio, hit: threading.Event, busy: threading.Event, speaker=None
         busy.clear()
 
 
-def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
+def voice_loop(llm, speaker, player, respond, should_stop=None, mic_open=None) -> None:
     """`should_stop` 은 매 프레임 확인하는 종료 조건이다(실기의 stop_event.is_set).
 
     프레임이 30ms 마다 오므로 그 간격으로 반응한다. `respond()` 는 큐에 넣고 곧바로
     반환하므로(재생 완료를 기다리지 않는다) 로봇이 말하는 동안에도 이 루프는 돈다 —
     그래야 끼어들기 판정이 실행된다.
+
+    `mic_open` 은 2대 구성에서 무대감독이 여닫는 마이크 게이트다(None 이면 1대
+    모드 — 게이트 없음). **캡처 단에서 막는다** — 닫힌 동안은 프레임을 버리고
+    VAD 를 리셋하며 STT 를 부르지 않는다. 결과 단(`main.make_heard_sink`)에서만
+    버리면 상대 로봇의 마지막 문장을 VAD 가 담아 두었다가 게이트가 열린 뒤 전사가
+    도착해 관람객 발화로 올라간다 — 도슨트가 자기 말에 답하는 무한 루프(리뷰 A1).
     """
     mic, vad = MicCapture(), EnergyVAD()
     print("음성 모드 — 말을 걸어보세요 (Ctrl-C 종료)", flush=True)
@@ -307,6 +313,19 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
                     # 로봇이 완전히 귀머거리였다.
                     busy = speaker.speaking
                     now = time.time()
+                    if mic_open is not None and not mic_open():
+                        # **감독의 마이크 게이트 — 캡처 단.** 상대 로봇이 말하는
+                        # 동안이다. 여기서 리셋해야 그 목소리가 VAD 버퍼에 남지
+                        # 않고, 게이트가 열린 뒤 관람객 발화로 튀어나오지 않는다
+                        # (리뷰 A1). STT 도 안 부르므로 PC 추론 낭비도 사라진다 —
+                        # 예전에는 도슨트 발화 전부를 전사한 뒤 결과만 버렸다.
+                        recent.clear()
+                        loud.clear()
+                        heard.clear()
+                        heard_speech.clear()
+                        vad.reset()
+                        guard_until = now + POST_PLAYBACK_GUARD_S
+                        continue
                     # 모터 정숙(§12): 발화를 모으는 동안 sway·호흡·대기 모션을
                     # 접는다 — 서보 소음이 STT 와 소음 바닥 추정을 오염시킨다.
                     # 30ms 마다 bool 하나 넘기는 것이라 비용은 없다.
@@ -596,6 +615,11 @@ def voice_loop(llm, speaker, player, respond, should_stop=None) -> None:
                 loud.clear()
                 heard.clear()
                 heard_speech.clear()
+                # **제너레이터는 안에서 예외가 나면 끝난다.** 같은 객체로 재진입
+                # 하면 곧장 StopIteration 이라 위 for 가 "EOS" 로 조용히 끝났다 —
+                # 한 프레임의 사고로 귀를 잃지 않으려던 이 복구가 실제로는
+                # 루프를 끝내고 있었다(리뷰 A5b). 새 이터레이터를 만든다.
+                frames = mic.frames()
     except KeyboardInterrupt:
         pass
     finally:
