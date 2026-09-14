@@ -58,7 +58,11 @@ def _dispatch(director: Director, cmd: str, out) -> None:
     if cmd == "s":
         director.start()
     elif cmd == "n":
-        director.on_heard("다음")
+        # 콘솔은 STT 판정기를 거치지 않는다. `on_heard("다음")` 을 흉내내면
+        # LISTENING 이 아닐 때(`a` 뒤, 발화 중) 거부된다 — `p`·`r` 과 같은
+        # 모양으로 먼저 멈추고 간다(리뷰 A7b).
+        director.abort()
+        director.next()
     elif cmd == "p":
         # 오인식으로 섹션이 넘어가 버렸을 때 되돌리는 유일한 길이다(설계 §7).
         # `r` 와 같은 모양으로 중단부터 한다 — 대개 잘못 넘어간 대사가

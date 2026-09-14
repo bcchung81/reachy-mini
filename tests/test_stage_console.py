@@ -205,3 +205,16 @@ def test_r_로_다시_시작한_뒤_중단된_발화의_늦은_종료_보고는_
     assert any("유령" in w for w in h.warnings)
     h.ended("mc", "c1")                              # 진짜 보고
     assert h.says()[-1][0] == "docent"
+
+
+def test_a_뒤에_n_을_누르면_다음_큐로_간다():
+    """리뷰 A7b — 예전엔 `n` 이 on_heard("다음") 경유라 IDLE 에서 버려졌다."""
+    h = Harness()
+    h.run(["s", "a", "n", "q"])
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_발화_중_n_은_중단하고_다음으로_간다():
+    h = Harness()
+    h.run(["s", "n", "q"])
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")

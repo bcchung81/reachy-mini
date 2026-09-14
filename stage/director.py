@@ -12,7 +12,7 @@ import time
 from typing import Callable
 
 from stage.cues import Cue, CueSheet, is_advance
-from stage.machine import Command, State, TurnMachine, coalesce
+from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
@@ -191,11 +191,7 @@ class Director:
                 self._warn(f"발화 중({self._machine.state.value})에 들린 말을 버린다: {text!r}")
                 return
             if is_advance(text):
-                nxt = self._sheet.advance()
-                if nxt is None:
-                    self._warn("마지막 큐다 — 더 진행할 곳이 없다")
-                    return
-                self._begin_cue(nxt)
+                self._next_locked()
                 return
             self._answer(text)
 
@@ -269,6 +265,28 @@ class Director:
         with self._lock:
             self._begin_cue(self._sheet.current())
 
+    def next(self) -> None:
+        """다음 큐로 간다 — 콘솔 `n` 과 관람객의 진행 신호가 **같은 길**을 탄다.
+
+        예전 콘솔 `n` 은 `on_heard("다음")` 을 흉내냈다. 그러면 `is_advance` 의
+        조정이 콘솔을 끊고, LISTENING 이 아니면(`a` 로 멈춘 뒤, 발화 중) "발화
+        중(idle)에 들린 말을 버린다" 는 엉뚱한 경고와 함께 아무 일도 안 일어난다
+        — 운영자가 망가진 섹션을 건너뛸 길이 없었다(리뷰 A7b).
+        """
+        with self._lock:
+            self._next_locked()
+
+    def _next_locked(self) -> None:
+        if self._machine.state in SPEAKING:
+            raise TurnError(
+                f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
+            )
+        nxt = self._sheet.advance()
+        if nxt is None:
+            self._warn("마지막 큐다 — 더 진행할 곳이 없다")
+            return
+        self._begin_cue(nxt)
+
     def previous(self) -> None:
         """이전 큐로 되돌려 다시 진행한다 — 수동 오버라이드(설계 §7).
 
@@ -307,6 +325,16 @@ class Director:
 
     # ── 내부 ──────────────────────────────────────────────────────
     def _begin_cue(self, cue: Cue) -> None:
+        # **먼저 거절한다.** 발화 중이면 아래 `speak()` 가 TurnError 를 던지는데,
+        # 그 전에 이력에 사회자 대사를 넣고 생성 스레드를 갈아끼우면 거절된
+        # start() 가 부작용을 남긴다 — 운영자의 `s` 두 번이 이력을 오염시키고
+        # 진행 중인 도슨트 생성을 "다음 큐로 넘어갔다" 는 엉뚱한 경고와 함께
+        # 버린 뒤 LLM 을 다시 불렀다(리뷰 A7a). 검증 → 부작용 순서다.
+        if self._machine.state in SPEAKING:
+            raise TurnError(
+                f"{self._machine.speaking_role} 가 아직 말하는 중이다"
+                f"(큐 {self._machine.cue_id}) — 동시 발화를 막는다"
+            )
         # **사회자 대사도 이력에 넣는다 — 생성 스레드를 띄우기 전에.**
         # 설계 §5.2 는 이력이 하나이고 `사회자:`/`도슨트:`/`관람객:` 접두로
         # 구분한다고 못박는다. 사회자 몫을 빠뜨리면 도슨트의 LLM 은 방금

@@ -734,3 +734,35 @@ def test_늘어난_여유분이_타임아웃_자체를_없애지는_않는다():
     h.d.tick()
     assert h.d.state is State.LISTENING
     assert any("응답이 없다" in w for w in h.warnings)
+
+
+# ── 거절은 부작용 전에 (리뷰 A7a) / next (리뷰 A7b) ──────────────────
+
+
+def test_발화_중에_start_를_다시_불러도_이력과_생성이_오염되지_않는다():
+    """운영자의 `s` 두 번. 거절은 하되 **부작용이 없어야** 한다(리뷰 A7a)."""
+    from stage.machine import TurnError
+    h = Harness()
+    h.d.start()
+    with pytest.raises(TurnError):
+        h.d.start()
+    assert [l["content"] for l in h.d.history] == ["사회자: 사회자 첫 대사"]
+    assert len(h.gen_calls) == 1
+    assert not any("버려졌다" in w for w in h.warnings)
+
+
+def test_next_는_IDLE_에서도_다음_큐로_간다():
+    h = Harness()
+    h.d.start()
+    h.d.abort()
+    h.clear()
+    h.d.next()
+    assert h.says() == [("mc", "사회자 둘째 대사")]
+
+
+def test_next_는_발화_중이면_거절한다():
+    from stage.machine import TurnError
+    h = Harness()
+    h.d.start()
+    with pytest.raises(TurnError):
+        h.d.next()
