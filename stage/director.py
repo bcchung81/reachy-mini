@@ -132,6 +132,8 @@ class Director:
         self._lock = threading.Lock()
 
         self._connected: set[str] = set()
+        # 역할 검증(`on_hello`)에 실패한 로봇. 비어 있지 않으면 `start()` 를 거절한다.
+        self._rejected: set[str] = set()
 
     # ── 상태 ──────────────────────────────────────────────────────
     @property
@@ -145,6 +147,22 @@ class Director:
             return next(iter(self._connected))
         return None
 
+    @property
+    def rejected(self) -> frozenset[str]:
+        return frozenset(self._rejected)
+
+    def reject(self, role: str, reason: str) -> None:
+        """역할 검증에 실패한 로봇. 맞는 로봇이 붙기 전에는 시연을 시작하지 않는다.
+
+        서버가 `on_hello` 의 `UnitMismatch` 를 받아 여기로 넘긴다. 예전에는 그
+        예외가 핸들러 밖으로 새어 websockets 로거의 traceback 만 2초마다
+        반복됐고, 감독의 경고 채널에는 아무것도 없어 `s` 로 뒤바뀐 로봇과
+        시연을 시작할 수 있었다(리뷰 A4).
+        """
+        with self._lock:
+            self._rejected.add(role)
+            self._warn(f"[{role}] 거부됨 — {reason} 맞는 로봇이 붙기 전에는 시작하지 않는다")
+
     def on_connect(self, role: str) -> None:
         # `server.py::handler` 가 커넥션 스레드에서 부르는 새 공개 진입점이다.
         # 다른 공개 메서드 안에서(`_who()` 를 통해서든) 이걸 부르지 않으므로
@@ -152,6 +170,11 @@ class Director:
         # 커넥션 스레드 여럿이 동시에 건드리는 경합만 막으면 된다.
         with self._lock:
             self._connected.add(role)
+            # **마이크 상태를 다시 준다.** 갓 붙은 앱의 게이트는 닫혀 있다. 감독이
+            # LISTENING 인데 리스너가 다시 붙었으면 마이크를 열어 줘야 관람객
+            # 창구가 산다 — 안 그러면 앱 재기동/WiFi 순단 뒤 아무도 안 듣는데
+            # 경고도 없다(리뷰 A5a). `mic` 지시는 멱등이라 다시 보내도 안전하다.
+            self._emit(self._resync_mic(role))
 
     def on_disconnect(self, role: str) -> None:
         with self._lock:
@@ -161,6 +184,16 @@ class Director:
                     f"[{role}] 이 끊겼다 — 1인 모드로 내려간다. "
                     f"{self.solo_role} 가 양쪽 대사를 읽는다"
                 )
+                if self._machine.state is State.LISTENING:
+                    # 끊긴 쪽이 리스너였을 수 있다 — 남은 로봇에게 창구를 넘긴다.
+                    # 안 그러면 LISTENING 인데 아무 마이크도 안 열린 채 데드라인도
+                    # 없어 감독이 영영 기다린다(리뷰 A5a).
+                    self._emit(self._machine.force_listening(self._who("mc")))
+
+    def _resync_mic(self, role: str) -> list[Command]:
+        """이 로봇이 지금 가져야 할 마이크 상태 — 리스너이고 듣는 중일 때만 연다."""
+        open_ = self._machine.state is State.LISTENING and role == self._who("mc")
+        return [Command(to=role, type="mic", fields={"open": open_})]
 
     def _who(self, preferred: str) -> str:
         """대사를 읽을 로봇. 1인 모드면 남은 한 대가 전부 읽는다."""
@@ -184,6 +217,7 @@ class Director:
                     f"{role} 자리에 다른 로봇이 있다: 기대 {expected!r}, 신고 {unit_id!r}. "
                     "사회자와 도슨트가 뒤바뀌었는지 확인한다."
                 )
+            self._rejected.discard(role)   # 맞는 로봇이 붙었다 — 거부를 푼다
 
     def on_heard(self, text: str) -> None:
         with self._lock:
@@ -263,6 +297,11 @@ class Director:
     # ── 바깥에서 부르는 것 ────────────────────────────────────────
     def start(self) -> None:
         with self._lock:
+            if self._rejected:
+                raise TurnError(
+                    f"거부된 역할이 있다: {sorted(self._rejected)} — "
+                    "로봇을 바꿔 걸고 다시 붙인 뒤 시작한다"
+                )
             self._begin_cue(self._sheet.current())
 
     def next(self) -> None:

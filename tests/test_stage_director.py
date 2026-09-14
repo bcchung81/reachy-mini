@@ -766,3 +766,51 @@ def test_next_는_발화_중이면_거절한다():
     h.d.start()
     with pytest.raises(TurnError):
         h.d.next()
+
+
+# ── 거부 목록·재접속 재동기화 (리뷰 A4·A5a) ─────────────────────────
+
+
+def test_거부된_역할이_있으면_start_가_거절한다():
+    from stage.machine import TurnError
+    h = Harness(expect_units={"mc": "AAA"})
+    with pytest.raises(UnitMismatch):
+        h.d.on_hello("mc", "BBB", "1.9.0")
+    h.d.reject("mc", "뒤바뀜")
+    assert "mc" in h.d.rejected
+    with pytest.raises(TurnError, match="mc"):
+        h.d.start()
+    h.d.on_hello("mc", "AAA", "1.9.0")   # 맞는 로봇이 붙으면 풀린다
+    h.d.start()
+    assert h.says() == [("mc", "사회자 첫 대사")]
+
+
+def test_듣는_중에_다시_붙은_리스너에게_마이크를_다시_연다():
+    """리뷰 A5a — 앱 재기동/WiFi 순단 뒤 mic_open 이 비어 있는 채로 남아 청취가 죽었다."""
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_connect("docent")
+    h.d.start(); h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
+    h.d.on_disconnect("mc")
+    h.clear()
+    h.d.on_connect("mc")
+    assert h.mics() == [("mc", True)]
+
+
+def test_말하는_중에_다시_붙은_로봇에게는_마이크를_닫는다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_connect("docent")
+    h.d.start()
+    h.clear()
+    h.d.on_disconnect("docent"); h.d.on_connect("docent")
+    assert ("docent", False) in h.mics()
+    assert ("docent", True) not in h.mics()
+
+
+def test_듣는_중에_리스너가_끊기면_남은_로봇의_마이크를_연다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_connect("docent")
+    h.d.start(); h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    h.clear()
+    h.d.on_disconnect("mc")
+    assert h.mics() == [("docent", True)]

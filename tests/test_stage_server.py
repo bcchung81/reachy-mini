@@ -48,9 +48,15 @@ def url_of(server_):
     return f"ws://127.0.0.1:{server_.port}"
 
 
-def hello(ws, role, unit_id=None):
+def hello(ws, role, unit_id=None, expect_resync=True):
+    """hello 를 보내고, 감독이 접속 직후 되돌려 주는 **마이크 재동기화 한 통**을
+    걷어낸다(리뷰 A5a — 재접속한 로봇은 현재 마이크 상태를 모른다). 등록이
+    거절되는 경우(`expect_resync=False`)에는 그 한 통이 오지 않는다."""
     ws.send(json.dumps({"type": "hello", "role": role, "unit_id": unit_id,
                         "version": "1.9.0"}))
+    if expect_resync:
+        m = recv(ws)
+        assert m["type"] == "mic", f"접속 직후 mic 재동기화가 아니라 {m} 가 왔다"
 
 
 # 연결마다 마지막으로 받은 `say` 의 seq — 로봇이 되돌려 줘야 하는 값이다.
@@ -133,7 +139,7 @@ def test_hello_없이_보낸_메시지는_거절하고_끊는다(server):
 
 def test_모르는_역할은_거절한다(server):
     with connect(url_of(server)) as ws:
-        hello(ws, "감독")
+        hello(ws, "감독", expect_resync=False)
         time.sleep(0.3)
         assert any("역할" in w for w in server.warnings)
 
@@ -336,3 +342,77 @@ def test_같은_역할로_다시_붙으면_옛_연결을_닫고_경고한다(ser
         server.director.start()
         assert any(m["type"] == "say" for m in drain(second, 3))
     first.close()
+
+
+# ── 방어선 (리뷰 A4·A8b) ─────────────────────────────────────────────
+
+@pytest.fixture
+def strict_server():
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    warnings: list[str] = []
+    s = StageServer(sheet, generate=lambda b, h: "도슨트 대사",
+                    expect_units={"mc": "AAA"}, warn=warnings.append)
+    s.warnings = warnings
+    from websockets.sync.server import serve as ws_serve
+    srv = ws_serve(s.handler, "127.0.0.1", 0)
+    s.port = srv.socket.getsockname()[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    yield s
+    srv.shutdown()
+    t.join(timeout=2)
+
+
+def _wait_warning(server_, needle, n=60):
+    for _ in range(n):
+        if any(needle in w for w in server_.warnings):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_뒤바뀐_로봇은_경고_한_줄로_거부되고_감독은_살아_있다(strict_server):
+    """리뷰 A4 — 예전엔 UnitMismatch 가 핸들러 밖으로 새어 traceback 만 남고
+    시연은 그냥 시작됐다."""
+    with connect(url_of(strict_server)) as mc:
+        hello(mc, "mc", unit_id="BBB", expect_resync=False)
+        with pytest.raises(Exception):
+            mc.recv(timeout=2)          # 감독이 연결을 닫는다
+    assert _wait_warning(strict_server, "뒤바뀌었는지")
+    assert "mc" in strict_server.director.rejected
+    from stage.machine import TurnError
+    with pytest.raises(TurnError):
+        strict_server.director.start()
+    assert not any("연결이 끊어졌다" in w for w in strict_server.warnings), (
+        "거부된 연결을 '끊어졌다' 로 오해하게 적었다"
+    )
+
+
+def test_text_가_null_인_heard_는_경고하고_연결을_유지한다(server):
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        ended(mc)
+        drain(docent, 3); drain(mc, 1)
+        ended(docent, "c1:docent")
+        drain(mc, 1)                                    # mic open
+        mc.send(json.dumps({"type": "heard", "text": None}))
+        assert _wait_warning(server, "규약")
+        time.sleep(0.2)
+        assert server.director.solo_role is None, "타입 오류로 연결이 끊겨 1인 모드가 됐다"
+
+
+def test_seq_가_숫자가_아닌_종료_보고는_경고하고_버린다(server):
+    with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
+        start_and_drain(server, mc, docent)
+        mc.send(json.dumps({"type": "speaking_ended", "cue_id": "c1", "seq": "one"}))
+        assert _wait_warning(server, "규약")
+        from stage.machine import State
+        assert server.director.state is State.MC_SPEAKING
+
+
+def test_role_이_문자열이_아닌_hello_는_경고하고_끊는다(server):
+    with connect(url_of(server)) as ws:
+        ws.send(json.dumps({"type": "hello", "role": ["mc"], "unit_id": None, "version": ""}))
+        with pytest.raises(Exception):
+            ws.recv(timeout=2)
+    assert _wait_warning(server, "모르는 역할")

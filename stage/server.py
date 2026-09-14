@@ -12,7 +12,7 @@ from typing import Callable
 from websockets.sync.server import serve as _ws_serve
 
 from stage.cues import CueSheet
-from stage.director import Director
+from stage.director import Director, UnitMismatch
 from stage.machine import Command
 from stage.protocol import ROLES, ProtocolError, decode, encode
 
@@ -64,13 +64,27 @@ class StageServer:
                             f"첫 메시지가 hello 가 아니다({msg['type']}) — 연결을 끊는다"
                         )
                         return
-                    role = msg.get("role")
-                    if role not in ROLES:
-                        self._warn(f"모르는 역할이다: {role!r} — 연결을 끊는다")
+                    r = msg.get("role")
+                    # 검증 전에 `role` 에 대입하지 않는다 — 비해시 값(list)이면
+                    # `in ROLES` 가 TypeError 를 내고 finally 가 또 한 번 터져
+                    # 경고 한 줄 없이 끝났다(리뷰 A8b).
+                    if not isinstance(r, str) or r not in ROLES:
+                        self._warn(f"모르는 역할이다: {r!r} — 연결을 끊는다")
                         return
-                    self.director.on_hello(
-                        role, msg.get("unit_id"), msg.get("version", "")
-                    )
+                    role = r
+                    try:
+                        self.director.on_hello(
+                            role, msg.get("unit_id"), msg.get("version", "")
+                        )
+                    except UnitMismatch as exc:
+                        # 사람이 읽을 한 줄로 남기고 이 연결만 닫는다. 예전에는
+                        # 여기서 새어 나가 websockets 로거의 traceback 만 2초마다
+                        # 반복됐고, 콘솔 `s` 는 뒤바뀐 로봇으로 시연을 시작했다
+                        # (리뷰 A4). `role` 을 되돌려 finally 가 "끊어졌다" 로
+                        # 오해하게 적지 않게 한다 — 붙은 적이 없다.
+                        self.director.reject(role, str(exc))
+                        role = None
+                        return
                     with self._lock:
                         old = self._conns.get(role)
                         self._conns[role] = ws
@@ -109,6 +123,32 @@ class StageServer:
                     self.director.on_disconnect(role)
                 self._warn(f"[{role}] 연결이 끊어졌다")
 
+    def _str_field(self, role: str, msg: dict, key: str) -> str | None:
+        """와이어 필드를 문자열로 검증한다. 아니면 경고하고 None.
+
+        `protocol.decode` 는 `type` 만 본다. `text: null` 이 그대로 내려오면
+        `is_advance(None)` 에서 AttributeError 가 나 연결이 1011 로 닫히고, 감독은
+        그것을 끊김으로 봐 **1인 모드로 내려갔다**(리뷰 A8b). 규약 위반은 그
+        메시지만 버린다 — 연결을 잃을 이유가 아니다.
+        """
+        v = msg.get(key)
+        if not isinstance(v, str):
+            self._warn(
+                f"[{role}] {msg['type']}.{key} 가 규약에 안 맞는다"
+                f"({type(v).__name__}) — 이 메시지를 버린다"
+            )
+            return None
+        return v
+
+    def _seq_field(self, role: str, msg: dict) -> tuple[int | None, bool]:
+        v = msg.get("seq")
+        if v is None or (isinstance(v, int) and not isinstance(v, bool)):
+            return v, True
+        self._warn(
+            f"[{role}] {msg['type']}.seq 가 규약에 안 맞는다({type(v).__name__}) — 이 메시지를 버린다"
+        )
+        return None, False
+
     def _dispatch(self, role: str, msg: dict) -> None:
         t = msg["type"]
         if t == "heard":
@@ -123,17 +163,25 @@ class StageServer:
                     f"heard 를 버린다: {msg.get('text', '')!r}"
                 )
                 return
-            self.director.on_heard(msg.get("text", ""))
-        elif t == "speaking_ended":
-            self.director.on_speaking_ended(role, msg.get("cue_id", ""), msg.get("seq"))
-        elif t == "speaking_started":
-            # 상태는 say 를 보낼 때 이미 옮겼다(불변식 ②). 여기서 하는 일은
-            # **타임아웃 데드라인을 발화 시작 시점으로 다시 거는 것**이다 —
-            # 예전에는 `pass` 라, say 를 보낸 뒤 로봇이 실제로 말을 시작하기까지
-            # 든 시간이 전부 발화 예산에서 깎였다(리뷰 I3).
-            self.director.on_speaking_started(role, msg.get("cue_id", ""), msg.get("seq"))
+            text = self._str_field(role, msg, "text")
+            if text is None:
+                return
+            self.director.on_heard(text)
+        elif t in ("speaking_ended", "speaking_started"):
+            cue_id = self._str_field(role, msg, "cue_id")
+            seq, ok = self._seq_field(role, msg)
+            if cue_id is None or not ok:
+                return
+            if t == "speaking_ended":
+                self.director.on_speaking_ended(role, cue_id, seq)
+            else:
+                # 상태는 say 를 보낼 때 이미 옮겼다(불변식 ②). 여기서 하는 일은
+                # **타임아웃 데드라인을 발화 시작 시점으로 다시 거는 것**이다 —
+                # 예전에는 `pass` 라, say 를 보낸 뒤 로봇이 실제로 말을 시작하기까지
+                # 든 시간이 전부 발화 예산에서 깎였다(리뷰 I3).
+                self.director.on_speaking_started(role, cue_id, seq)
         elif t == "error":
-            self.director.on_error(role, msg.get("where", ""), msg.get("detail", ""))
+            self.director.on_error(role, str(msg.get("where", "")), str(msg.get("detail", "")))
         else:
             self._warn(f"[{role}] 로봇이 보낼 수 없는 메시지다: {t}")
 
