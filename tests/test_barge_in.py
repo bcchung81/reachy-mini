@@ -1302,3 +1302,31 @@ def test_마이크_이터레이터_안의_예외_뒤에도_계속_듣는다(monk
     monkeypatch.setattr(vl, "transcribe", lambda u: "")
     vl.voice_loop(None, Spk(), None, lambda *a: None)
     assert made["n"] == 2, "예외 뒤 이터레이터를 다시 만들지 않았다"
+
+
+# ── 워커 큐 회계 (리뷰 A3) ───────────────────────────────────────────
+
+
+def test_발화_뒤에_모션_사운드가_와도_워커가_죽지_않는다(stream_url, monkeypatch):
+    """워커가 다음 항목을 미리 꺼낼 때 task_done() 을 한 번 부르고, 그 항목이
+    모션 사운드면(`ahead=None`) finally 의 `mine is None` 판정이 또 task_done()
+    을 불러 ValueError 로 워커가 죽었다. 그 뒤 speaking 이 영영 True 라 마이크
+    게이트가 닫힌 채 굳는다. "답변 + 감정 모션" 은 1대 모드의 보통 경로다.
+
+    **사운드가 큐에 있는 채로 워커가 첫 문장을 열어야** 미리 꺼내기가 사운드를
+    집는다 — 그래서 셋을 한꺼번에 넣는다. ValueError 는 unfinished_tasks 가
+    음수로 떨어지는 task_done() 에서 터지므로 둘째 문장에서 워커가 죽는다."""
+    monkeypatch.setattr(SlowStream, "chunks", 3)     # 절 하나 0.3초
+    got = []
+    s = tts_mod.Speaker(play_pcm=lambda chunks, rate: [got.append(c) for c in chunks])
+    s.speak("첫 문장입니다.")
+    s.play_sound((np.zeros(2400, dtype=np.int16)).tobytes(), 24000)
+    s.speak("둘째 문장입니다.")
+    s.wait_idle(timeout=15)
+    assert not s.speaking, "워커가 죽어 speaking 이 내려가지 않았다"
+    assert s._q.unfinished_tasks == 0
+    # 죽지 않았다면 그 뒤의 발화도 나온다
+    got.clear()
+    s.speak("셋째 문장입니다.")
+    time.sleep(0.8)
+    assert got, "워커가 죽어 이후 발화가 나오지 않았다"

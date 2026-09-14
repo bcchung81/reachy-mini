@@ -1026,9 +1026,11 @@ class Speaker:
             if held is not None:
                 item = held
                 held, self._held = None, None
+                prefetched = True   # 꺼낼 때 이미 task_done 했다
             else:
                 item = self._q.get()
                 ahead = None
+                prefetched = False
             voice, text, seed, gen = item.voice, item.text, item.seed, item.gen
             mine, ahead = ahead, None
             # 여기서 지우는 플래그는 없다 — 취소는 세대 비교다. stop() 이후에
@@ -1085,8 +1087,13 @@ class Speaker:
                     self._pending -= 1
                     if self._pending == 0 and self._held is None:
                         self._speaking.clear()
-                if mine is None:
-                    # 미리 꺼낸 항목은 꺼낼 때 이미 task_done 했다
+                # **`mine is None` 으로 판정하지 않는다.** 미리 꺼낸 항목이 모션
+                # 사운드면 선요청 핸들이 없어(`ahead=None`) mine 도 None 이라
+                # task_done 을 두 번 불렀고, `ValueError: task_done() called too
+                # many times` 로 워커가 죽었다 — speaking 이 영영 True 라 마이크
+                # 게이트가 닫힌 채 굳는다. "답변 + 감정 모션" 은 1대 모드의 보통
+                # 경로다(리뷰 A3). 회계는 "미리 꺼냈는가" 그 사실로만 한다.
+                if not prefetched:
                     self._q.task_done()
                 # 끼어들기가 걸렸으면 미리 받아 둔 다음 항목도 버린다.
                 # **세대로 판정한다** — 예전 Event 방식은 다음 pickup 의 clear() 가
