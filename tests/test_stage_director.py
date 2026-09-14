@@ -26,7 +26,7 @@ class Clock:
 class Harness:
     """감독 하나와 그가 내보낸 지시를 모으는 그릇."""
 
-    def __init__(self, generate=None, expect_units=None):
+    def __init__(self, generate=None, expect_units=None, after=("", "")):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
         self.all_sent: list[tuple[str, str, dict]] = []
@@ -34,8 +34,8 @@ class Harness:
         self.clock = Clock()
         self.gen_calls: list[tuple[str, int]] = []
         sheet = CueSheet([
-            Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
-            Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience"),
+            Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0]),
+            Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
         ])
 
         def _gen(brief, history):
@@ -814,3 +814,33 @@ def test_듣는_중에_리스너가_끊기면_남은_로봇의_마이크를_연�
     h.clear()
     h.d.on_disconnect("mc")
     assert h.mics() == [("docent", True)]
+
+
+# ── 사회자 받아치기 (B2) ─────────────────────────────────────────────
+
+
+def test_도슨트가_끝나면_사회자가_받아치고_그_뒤에야_마이크가_열린다():
+    """관람객은 마이크가 언제 열렸는지 모른다. 사회자가 말로 창구를 연다."""
+    h = Harness(after=("네, 그렇군요. 궁금한 점 있으면 말씀해 주세요.", ""))
+    h.d.start(); h.ended("mc", "c1")
+    h.clear()
+    h.ended("docent", "c1:docent")
+    assert h.says() == [("mc", "네, 그렇군요. 궁금한 점 있으면 말씀해 주세요.")]
+    assert h.d.state is State.MC_SPEAKING
+    assert all(open_ is False for _, open_ in h.mics())
+    h.clear()
+    h.ended("mc", "c1:after")
+    assert h.d.state is State.LISTENING
+    assert h.mics() == [("mc", True)]
+
+
+def test_받아치기가_없는_큐는_도슨트_뒤_곧장_듣는다():
+    h = Harness()
+    h.d.start(); h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
+
+
+def test_받아치기도_이력에_남는다():
+    h = Harness(after=("받아치기", ""))
+    h.d.start(); h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    assert h.d.history[-1]["content"] == "사회자: 받아치기"

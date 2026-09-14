@@ -13,6 +13,8 @@ import yaml
 GAZE_TARGETS = frozenset({"partner", "audience"})
 
 _REQUIRED = ("id", "title", "mc", "docent_brief", "gaze")
+# 선택 문자열 필드 — 있으면 문자열이어야 한다.
+_OPTIONAL_STR = ("mc_after",)
 
 # 진행 신호로 볼 낱말의 어근.
 _ADVANCE_WORDS = ("다음", "계속", "넘어가", "진행")
@@ -34,6 +36,9 @@ class Cue:
     mc: str
     docent_brief: str
     gaze: str
+    # 도슨트 뒤 사회자의 받아치기. 관람객 창구가 열린다는 것을 **말로** 알린다 —
+    # 마이크가 열려도 관람객은 모른다(리뷰 B2). 비면 곧장 듣기로 간다.
+    mc_after: str = ""
 
 
 def cues_path() -> pathlib.Path:
@@ -82,7 +87,15 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
         if item["id"] in seen:
             raise CueError(f"{p}: 큐 id 가 중복이다 — {item['id']!r}")
         seen.add(item["id"])
-        out.append(Cue(**{k: item[k] for k in _REQUIRED}))
+        extra = {}
+        for key in _OPTIONAL_STR:
+            v = item.get(key, "")
+            if v is None:
+                v = ""
+            if not isinstance(v, str):
+                raise CueError(f"{p} {item['id']}: {key} 는 문자열이어야 한다({type(v).__name__})")
+            extra[key] = v.strip()
+        out.append(Cue(**{k: item[k] for k in _REQUIRED}, **extra))
     return out
 
 

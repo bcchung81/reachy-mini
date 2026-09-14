@@ -288,6 +288,15 @@ class Director:
             cue = self._sheet.current()
             if cue_id == cue.id:
                 cmds = cmds + self._speak_docent(cue)
+            elif cue_id == f"{cue.id}:docent" and cue.mc_after:
+                # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
+                # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
+                # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
+                # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
+                self._remember(f"사회자: {cue.mc_after}")
+                cmds = cmds + self._machine.speak(
+                    self._who("mc"), f"{cue.id}:after", cue.mc_after, gaze="audience"
+                )
             self._emit(cmds)
 
     def on_error(self, role: str, where: str, detail: str) -> None:

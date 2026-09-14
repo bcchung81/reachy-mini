@@ -236,3 +236,23 @@ def test_숫자인_id_는_거절한다(tmp_path):
 """)
     with pytest.raises(CueError, match="문자열"):
         load_cues(p)
+
+
+# ── 받아치기 mc_after (B2) ───────────────────────────────────────────
+
+
+def test_mc_after_는_선택이고_없으면_빈_문자열이다(tmp_path):
+    p = write(tmp_path, """
+- {id: "a", title: "t", mc: "m", docent_brief: "b", gaze: partner}
+- {id: "b", title: "t", mc: "m", docent_brief: "b", gaze: partner, mc_after: "네, 그렇군요."}
+""")
+    a, b = load_cues(p)
+    assert a.mc_after == "" and b.mc_after == "네, 그렇군요."
+
+
+def test_mc_after_가_문자열이_아니면_거절한다(tmp_path):
+    p = write(tmp_path, """
+- {id: "a", title: "t", mc: "m", docent_brief: "b", gaze: partner, mc_after: 3}
+""")
+    with pytest.raises(CueError, match="mc_after"):
+        load_cues(p)
