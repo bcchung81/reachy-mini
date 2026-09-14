@@ -153,17 +153,66 @@ def test_진행_신호를_들으면_다음_큐로_간다():
     assert h.says() == [("mc", "사회자 둘째 대사")]
 
 
-def test_질문을_들으면_도슨트가_답한다():
+def test_질문을_들으면_사회자가_먼저_받고_도슨트가_답한다():
+    """B3 — 질문 뒤 LLM 이 도는 동안 정적이 흐르지 않는다. 큐 전환과 같은 수법이다:
+    사회자 고정 멘트가 흐르는 동안 생성한다. 그래서 `on_heard` 는 LLM 을 기다리지 않는다."""
+    from stage.cues import QA_ACK_LINES
     h = Harness()
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")
     h.clear()
     h.d.on_heard("마르코니가 누구예요")
+    assert len(h.says()) == 1 and h.says()[0][0] == "mc"
+    assert h.says()[0][1] in QA_ACK_LINES
+    assert h.d.state is State.MC_SPEAKING
+    h.clear()
+    h.ended("mc", "c1:ack")
     answered = h.says()
-    assert len(answered) == 1
-    assert answered[0][0] == "docent"
+    assert len(answered) == 1 and answered[0][0] == "docent"
+    assert "마르코니가 누구예요" in answered[0][1]
     assert h.d.state is State.DOCENT_SPEAKING
+
+
+def test_질문_응답_생성은_on_heard_를_막지_않는다():
+    """`_answer` 가 락을 쥔 채 LLM 을 기다리면 콘솔 `a` 가 그동안 먹지 않는다(리뷰 C1)."""
+    import time
+    gate = threading.Event()
+    seen = threading.Event()
+
+    def slow(brief, history):
+        if brief.startswith("관람객이"):
+            seen.set()
+            gate.wait(5)
+        return "답"
+
+    h = Harness(generate=slow)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    t0 = time.monotonic()
+    h.d.on_heard("질문")
+    assert time.monotonic() - t0 < 1.0, "on_heard 가 LLM 을 기다렸다"
+    assert seen.wait(2.0), "생성 스레드가 돌지 않았다"
+    h.d.abort()                      # 락이 자유로워야 즉시 돌아온다
+    assert time.monotonic() - t0 < 1.0
+    gate.set()
+
+
+def test_확인_멘트는_돌아가며_쓴다():
+    from stage.cues import QA_ACK_LINES
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    seen = []
+    for _ in range(len(QA_ACK_LINES)):
+        h.clear()
+        h.d.on_heard("질문")
+        seen.append(h.says()[0][1])
+        h.ended("mc", "c1:ack")
+        h.ended("docent", "c1:qa")
+    assert len(set(seen)) == len(QA_ACK_LINES)
 
 
 def test_질문과_답이_대화_이력에_쌓인다():
@@ -173,8 +222,12 @@ def test_질문과_답이_대화_이력에_쌓인다():
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")
     h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    # 관람객 → 사회자 확인 멘트 → 도슨트 답, 셋 다 하나의 이력에 남는다
+    tail = [m["content"].split(":")[0] for m in h.d.history[-3:]]
+    assert tail == ["관람객", "사회자", "도슨트"]
     roles = [m["role"] for m in h.d.history]
-    assert roles[-2:] == ["user", "assistant"]
+    assert roles[-3:] == ["user", "assistant", "assistant"]
 
 
 def test_발화_중에_들린_말은_버리고_경고한다():
@@ -359,8 +412,9 @@ def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
     h.clear()
     h.warnings.clear()
     h.d.on_heard("마르코니가 누구예요")
-    said = h.says()
-    assert len(said) == 1 and said[0][0] == "docent"
+    h.ended("mc", "c1:ack")
+    said = [x for x in h.says() if x[0] == "docent"]
+    assert len(said) == 1
     assert said[0][1]  # 빈 대사가 아니다
     assert any("빈" in w for w in h.warnings)
 
@@ -440,7 +494,7 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     d.start()  # 사회자 데드라인 설정
     assert gen_started.wait(2.0), "생성 스레드가 시작되지 않았다"
     gen_release.set()
-    assert d._docent_ready.wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
+    assert d._pending_ready.wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
 
     clock.t = 10_000.0  # 사회자 데드라인을 확실히 지난 시각으로 만든다
 
@@ -653,7 +707,7 @@ def test_사회자_대사가_도슨트_생성에_실제로_넘어간다():
 
     h = Harness(generate=gen)
     h.d.start()
-    assert h.d._docent_ready.wait(2.0)
+    assert h.d._pending_ready.wait(2.0)
     assert 본것 and 본것[0][-1]["content"] == "사회자: 사회자 첫 대사"
 
 

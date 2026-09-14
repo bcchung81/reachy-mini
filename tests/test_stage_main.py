@@ -77,3 +77,9 @@ def test_이력을_호출마다_갈아끼운다():
         stage_main.LLMClient = 원래
 
     assert 본것 == [[{"role": "assistant", "content": "사회자: 앞선 말"}]]
+
+
+def test_도슨트_프롬프트에_음성_출력_규칙이_있다():
+    """도슨트 답은 TTS 로 읽힌다 — 목록·이모지가 나오면 그 기호를 소리 내 읽는다(리뷰 B5)."""
+    p = stage_main._system_prompt()
+    assert "음성" in p and "목록" in p and "이모지" in p

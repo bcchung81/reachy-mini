@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Callable
 
-from stage.cues import Cue, CueSheet, is_advance
+from stage.cues import QA_ACK_LINES, Cue, CueSheet, is_advance
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
@@ -62,6 +62,9 @@ GENERATE_GRACE_S = 8.0
 # 얘기를 했는가" 에는 충분하다 — 그보다 먼 맥락은 `docent_brief` 가 준다.
 HISTORY_MAX = 12
 
+# 관람객 질문에 LLM 이 답을 못 만들었을 때 도슨트가 하는 말.
+QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
+
 
 class UnitMismatch(RuntimeError):
     """로봇이 신고한 hardware id 가 기대값과 다르다 — 두 대가 뒤바뀌었다."""
@@ -92,9 +95,12 @@ class Director:
         # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
         # 참고.
         self._speak_budget: float = 0.0
-        self._docent_text: str | None = None
-        self._docent_ready = threading.Event()
+        # 생성 슬롯 하나 — 도슨트 해설(큐 시작 때)과 질문 응답(확인 멘트 때)이
+        # 같이 쓴다. 한 턴에 생성은 하나뿐이다.
+        self._pending_text: str | None = None
+        self._pending_ready = threading.Event()
         self._gen_thread: threading.Thread | None = None
+        self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
         # 세대 번호 — `_begin_cue` 가 부를 때마다 하나씩 올라간다. 늦게 끝난
         # 생성 스레드가 이미 다음 큐로 넘어간 뒤에 결과를 들고 오면, 세대가
         # 안 맞으므로 버린다. 락은 "세대 확인 + 결과 반영"을 한 번에 묶어
@@ -288,6 +294,12 @@ class Director:
             cue = self._sheet.current()
             if cue_id == cue.id:
                 cmds = cmds + self._speak_docent(cue)
+            elif cue_id == f"{cue.id}:ack":
+                # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
+                # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
+                cmds = cmds + self._speak_pending(
+                    "docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa"
+                )
             elif cue_id == f"{cue.id}:docent" and cue.mc_after:
                 # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
                 # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
@@ -394,59 +406,69 @@ class Director:
 
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        with self._gen_lock:
-            self._docent_text = None
-            self._docent_ready = threading.Event()
-            self._gen_token += 1
-            token = self._gen_token
-        self._gen_thread = threading.Thread(
-            target=self._generate_docent, args=(cue, token), daemon=True
-        )
-        self._gen_thread.start()
+        self._spawn_generate(cue.docent_brief, cue.docent_brief, cue.id)
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, cue.mc, gaze=cue.gaze)
         )
 
-    def _generate_docent(self, cue: Cue, token: int) -> None:
+    def _spawn_generate(self, brief: str, fallback: str, label: str) -> None:
+        """생성 슬롯을 비우고 스레드를 띄운다. 이력은 **이 시점의 사본**이다.
+
+        도슨트 해설과 질문 응답이 같은 슬롯을 쓴다 — 세대 번호가 하나라
+        늦게 끝난 쪽은 어느 것이든 버려진다.
+        """
+        with self._gen_lock:
+            self._pending_text = None
+            self._pending_ready = threading.Event()
+            self._gen_token += 1
+            token = self._gen_token
+        self._gen_thread = threading.Thread(
+            target=self._generate_pending, args=(brief, token, fallback, label),
+            daemon=True,
+        )
+        self._gen_thread.start()
+
+    def _generate_pending(self, brief: str, token: int, fallback: str, label: str) -> None:
         try:
-            text = self._generate(cue.docent_brief, list(self.history))
+            text = self._generate(brief, list(self.history))
             if not text:
                 # 빈 문자열도 "아무 말도 안 하는 것"과 같다 — 조용히 넘기지 않는다.
-                self._warn(f"[{cue.id}] 도슨트 대사 생성이 빈 문자열을 내놓았다 — 지시문으로 폴백")
-                text = cue.docent_brief
+                self._warn(f"[{label}] 대사 생성이 빈 문자열을 내놓았다 — 폴백")
+                text = fallback
         except Exception as exc:
-            # 조용히 벙어리가 되지 않는다. 지시문을 그대로 읽는 것이
-            # 아무 말도 안 하는 것보다 낫다.
-            self._warn(f"LLM 생성 실패({type(exc).__name__}: {exc}) — 지시문으로 폴백")
-            text = cue.docent_brief
+            # 조용히 벙어리가 되지 않는다. 폴백(지시문 또는 사과 한 줄)을
+            # 그대로 읽는 것이 아무 말도 안 하는 것보다 낫다.
+            self._warn(f"[{label}] LLM 생성 실패({type(exc).__name__}: {exc}) — 폴백")
+            text = fallback
 
         with self._gen_lock:
             if token != self._gen_token:
-                # 이 결과가 나올 즈음 이미 다음 큐가 시작됐다. 그대로 반영하면
-                # 엉뚱한 큐의 대사가 조용히 새어 들어간다 — 버리고 소리 낸다.
-                self._warn(f"[{cue.id}] 도슨트 대사 생성이 늦게 끝나 버려졌다(다음 큐로 이미 넘어갔다)")
+                # 이 결과가 나올 즈음 이미 다음 큐(또는 다음 질문)가 시작됐다.
+                # 그대로 반영하면 엉뚱한 대사가 조용히 새어 들어간다 — 버리고 소리 낸다.
+                self._warn(f"[{label}] 대사 생성이 늦게 끝나 버려졌다(다음 턴으로 이미 넘어갔다)")
                 return
-            self._docent_text = text
-            ready = self._docent_ready
+            self._pending_text = text
+            ready = self._pending_ready
         ready.set()
 
-    def _speak_docent(self, cue: Cue) -> list[Command]:
-        if not self._docent_ready.wait(timeout=GENERATE_GRACE_S):
-            self._warn("도슨트 대사 생성이 늦다 — 지시문으로 폴백")
-            self._docent_text = cue.docent_brief
-        text = self._docent_text
+    def _speak_pending(self, role_pref: str, cue_id: str, fallback: str, label: str) -> list[Command]:
+        """생성된 대사를 도슨트에게 준다. 유예를 넘기면 폴백을 읽는다."""
+        if not self._pending_ready.wait(timeout=GENERATE_GRACE_S):
+            self._warn(f"[{label}] 대사 생성이 늦다 — 폴백")
+            self._pending_text = fallback
+        text = self._pending_text
         if not text:
-            self._warn(f"[{cue.id}] 도슨트 대사가 비어 있다 — 지시문으로 폴백")
-            text = cue.docent_brief
+            self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
+            text = fallback
         self._remember(f"도슨트: {text}")
-        # 사회자 몫과 구분되는 id 를 쓴다 — `_answer` 의 `:qa` 와 같은 이유다.
-        # 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 `on_speaking_ended` 가
-        # 그대로 쓰므로, 도슨트 몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인
-        # 모드에서 같은 로봇이 도슨트 몫을 끝낸 speaking_ended 가 다시
-        # "사회자 몫이 끝났다" 로 오판돼 도슨트 몫을 무한히 반복한다.
-        return self._machine.speak(
-            self._who("docent"), f"{cue.id}:docent", text, gaze="audience"
-        )
+        # 사회자 몫과 구분되는 id 를 쓴다(`:docent`/`:qa`). 맨 `cue.id` 는 "사회자
+        # 몫이 끝났다" 판정에 `on_speaking_ended` 가 그대로 쓰므로, 도슨트 몫까지
+        # 같은 id 를 쓰면(리뷰 finding 1) 1인 모드에서 같은 로봇이 도슨트 몫을
+        # 끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로 오판돼 무한 반복한다.
+        return self._machine.speak(self._who(role_pref), cue_id, text, gaze="audience")
+
+    def _speak_docent(self, cue: Cue) -> list[Command]:
+        return self._speak_pending("docent", f"{cue.id}:docent", cue.docent_brief, cue.id)
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
@@ -455,19 +477,16 @@ class Director:
             f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. "
             "도슨트로서 3문장 이내로 답한다."
         )
-        try:
-            text = self._generate(brief, list(self.history))
-            if not text:
-                self._warn("도슨트 응답 생성이 빈 문자열을 내놓았다 — 폴백")
-                text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
-        except Exception as exc:
-            self._warn(f"LLM 응답 실패({type(exc).__name__}: {exc}) — 폴백")
-            text = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
-        self._remember(f"도슨트: {text}")
+        # **여기서 LLM 을 기다리지 않는다.** 예전에는 락을 쥔 채 왕복 전체를 기다려
+        # 콘솔 `a` 와 tick() 이 그동안 멈췄다(리뷰 C1). 사회자의 확인 멘트가 흐르는
+        # 동안 스레드에서 만든다 — 관람객에게도 정적 대신 반응이 먼저 간다(B3).
+        # 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
+        self._spawn_generate(brief, QA_FALLBACK, f"{cue.id}:qa")
+        ack = QA_ACK_LINES[self._ack_i % len(QA_ACK_LINES)]
+        self._ack_i += 1
+        self._remember(f"사회자: {ack}")
         self._emit(
-            self._machine.speak(
-                self._who("docent"), f"{cue.id}:qa", text, gaze="audience"
-            )
+            self._machine.speak(self._who("mc"), f"{cue.id}:ack", ack, gaze="audience")
         )
 
     def _remember(self, line: str) -> None:

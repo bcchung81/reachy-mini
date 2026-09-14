@@ -126,8 +126,13 @@ def test_들은_말이_감독에_닿는다(server):
         assert opened[0]["type"] == "mic" and opened[0]["open"] is True
 
         mc.send(json.dumps({"type": "heard", "text": "마르코니가 누구예요"}))
+        # 질문 → 사회자가 먼저 확인 멘트(mic·gaze·say)를 받는다(B3) → 그 뒤 도슨트 답
+        mc_msgs = drain(mc, 3)
+        assert any(m["type"] == "say" and m["cue_id"] == "c1:ack" for m in mc_msgs)
+        drain(docent, 1)                 # 도슨트 마이크 닫힘
+        ended(mc, "c1:ack")
         doc_msgs = drain(docent, 3)
-        assert any(m["type"] == "say" for m in doc_msgs)
+        assert any(m["type"] == "say" and m["cue_id"] == "c1:qa" for m in doc_msgs)
 
 
 def test_hello_없이_보낸_메시지는_거절하고_끊는다(server):
@@ -315,8 +320,11 @@ def test_사회자가_없으면_도슨트의_heard_를_받아준다(server):
         drain(docent, 1)                   # 마이크가 열린다
 
         docent.send(json.dumps({"type": "heard", "text": "마르코니가 누구예요"}))
+        msgs = drain(docent, 3)            # 1인 모드 — 확인 멘트도 도슨트가 읽는다
+        assert any(m["type"] == "say" and m["cue_id"] == "c1:ack" for m in msgs)
+        ended(docent, "c1:ack")
         msgs = drain(docent, 3)
-        assert any(m["type"] == "say" for m in msgs)
+        assert any(m["type"] == "say" and m["cue_id"] == "c1:qa" for m in msgs)
 
 
 def test_같은_역할로_다시_붙으면_옛_연결을_닫고_경고한다(server):
