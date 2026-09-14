@@ -67,7 +67,7 @@ def test_발화가_끝나면_LISTENING_이_되고_사회자_마이크만_연다(
     # 관람객 창구는 기본적으로 사회자 하나뿐이다 — 도슨트 마이크는 상시 닫힘.
     m = TurnMachine()
     m.speak("docent", "02-history", "1864년 맥스웰이…")
-    cmds = m.on_speaking_ended("docent", "02-history")
+    cmds = m.on_speaking_ended("docent", "02-history", seq=m.seq)
     assert m.state is State.LISTENING
     assert m.speaking_role is None
     opened = mic_opens(cmds)
@@ -80,7 +80,7 @@ def test_리스너를_지정하면_그_로봇의_마이크만_연다():
     # `TurnMachine` 자신은 로봇 배치를 모르니, 리스너는 호출부가 정한다.
     m = TurnMachine()
     m.speak("docent", "01-intro", "제가 양쪽을 다 읽습니다")
-    cmds = m.on_speaking_ended("docent", "01-intro", listener="docent")
+    cmds = m.on_speaking_ended("docent", "01-intro", listener="docent", seq=m.seq)
     assert m.state is State.LISTENING
     opened = mic_opens(cmds)
     assert len(opened) == 1
@@ -100,14 +100,14 @@ def test_다른_로봇의_종료_보고는_무시한다():
     # 늦게 도착한 유령 메시지가 상태를 무너뜨리면 안 된다.
     m = TurnMachine()
     m.speak("mc", "01-intro", "안녕하세요")
-    assert m.on_speaking_ended("docent", "01-intro") == []
+    assert m.on_speaking_ended("docent", "01-intro", seq=m.seq) == []
     assert m.state is State.MC_SPEAKING
 
 
 def test_다른_큐의_종료_보고는_무시한다():
     m = TurnMachine()
     m.speak("mc", "01-intro", "안녕하세요")
-    assert m.on_speaking_ended("mc", "99-없는큐") == []
+    assert m.on_speaking_ended("mc", "99-없는큐", seq=m.seq) == []
     assert m.state is State.MC_SPEAKING
 
 
@@ -161,7 +161,8 @@ def test_무작위_사건_열에서도_불변식이_깨지지_않는다():
                     continue
             elif op == "ended":
                 cmds = m.on_speaking_ended(
-                    rng.choice(["mc", "docent"]), f"c{rng.randint(0, 3)}", listener
+                    rng.choice(["mc", "docent"]), f"c{rng.randint(0, 3)}", listener,
+                    seq=rng.choice([m.seq, m.seq - 1]),
                 )
             elif op == "force":
                 cmds = m.force_listening(listener)
@@ -223,3 +224,35 @@ def test_coalesce_는_마이크_지시를_say_앞에_둔다():
     out = coalesce(cmds)
     assert out[0].type == "mic"
     assert out[1].type == "say"
+
+
+# ── 발화 시퀀스 ────────────────────────────────────────────────
+
+
+def test_say_마다_seq_가_하나씩_오른다():
+    m = TurnMachine()
+    a = [c for c in m.speak("mc", "c1", "…") if c.type == "say"][0]
+    m.on_speaking_ended("mc", "c1", seq=a.fields["seq"])
+    b = [c for c in m.speak("mc", "c1", "…") if c.type == "say"][0]
+    assert b.fields["seq"] == a.fields["seq"] + 1
+    assert m.seq == b.fields["seq"]
+
+
+def test_같은_큐라도_낡은_seq_의_종료_보고는_유령이다():
+    """콘솔 `r`(abort→start) 뒤에 중단된 발화의 늦은 종료 보고가 온다.
+    cue_id 는 같으므로 seq 로만 가른다 — 못 가르면 사회자가 다시 말하는
+    중에 도슨트가 시작해 두 로봇이 동시에 말한다(리뷰 A2)."""
+    m = TurnMachine()
+    old = [c for c in m.speak("mc", "c1", "…") if c.type == "say"][0].fields["seq"]
+    m.abort()
+    m.speak("mc", "c1", "…")   # 같은 cue_id 재발행
+    assert m.on_speaking_ended("mc", "c1", seq=old) == []
+    assert m.state is State.MC_SPEAKING
+    assert m.on_speaking_ended("mc", "c1", seq=m.seq) != []
+    assert m.state is State.LISTENING
+
+
+def test_seq_없는_종료_보고는_유령이다():
+    m = TurnMachine()
+    m.speak("mc", "c1", "…")
+    assert m.on_speaking_ended("mc", "c1") == []

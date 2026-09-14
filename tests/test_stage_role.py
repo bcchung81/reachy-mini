@@ -271,7 +271,7 @@ def test_발화가_수신_루프를_막지_않는다():
     말하는중 = threading.Event()
     끝내라 = threading.Event()
 
-    def speak_one(cue_id, text, gaze):
+    def speak_one(cue_id, text, seq):
         말하는중.set()
         끝내라.wait(5)
 
@@ -299,7 +299,7 @@ def test_말하는_도중에_abort_와_mic_이_처리된다():
     멈춰 = threading.Event()
     받은것: list[str] = []
 
-    def speak_one(cue_id, text, gaze):
+    def speak_one(cue_id, text, seq):
         말하는중.set()
         멈춰.wait(5)   # speaker.wait_idle() 흉내 — 발화가 흐르는 동안
         받은것.append("발화끝")
@@ -341,7 +341,7 @@ def test_발화가_겹쳐_들어오면_기다리며_경고한다():
     끝내라 = threading.Event()
     순서: list[str] = []
 
-    def speak_one(cue_id, text, gaze):
+    def speak_one(cue_id, text, seq):
         순서.append(f"start:{cue_id}")
         시작.set()
         끝내라.wait(5)

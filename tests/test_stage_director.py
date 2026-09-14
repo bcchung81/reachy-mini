@@ -28,6 +28,8 @@ class Harness:
 
     def __init__(self, generate=None, expect_units=None):
         self.sent: list[tuple[str, str, dict]] = []
+        # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
+        self.all_sent: list[tuple[str, str, dict]] = []
         self.warnings: list[str] = []
         self.clock = Clock()
         self.gen_calls: list[tuple[str, int]] = []
@@ -45,7 +47,10 @@ class Harness:
         self.d = Director(
             sheet,
             generate=_gen,
-            send=lambda role, cmd: self.sent.append((role, cmd.type, cmd.fields)),
+            send=lambda role, cmd: (
+                self.sent.append((role, cmd.type, cmd.fields)),
+                self.all_sent.append((role, cmd.type, cmd.fields)),
+            ),
             now=self.clock,
             expect_units=expect_units,
             warn=self.warnings.append,
@@ -62,6 +67,16 @@ class Harness:
 
     def clear(self):
         self.sent.clear()
+
+    def seq_of(self, cue_id):
+        """마지막으로 보낸 그 큐의 say 가 받은 seq — 로봇이 되돌려 줄 값."""
+        return [f["seq"] for _, t, f in self.all_sent if t == "say" and f["cue_id"] == cue_id][-1]
+
+    def ended(self, role, cue_id):
+        self.d.on_speaking_ended(role, cue_id, self.seq_of(cue_id))
+
+    def started(self, role, cue_id):
+        self.d.on_speaking_started(role, cue_id, self.seq_of(cue_id))
 
 
 def test_시작하면_사회자가_첫_큐를_말한다():
@@ -104,7 +119,7 @@ def test_사회자_발화가_끝나면_도슨트가_바로_받는다():
     h = Harness()
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     assert h.says() == [("docent", "[첫 지시 로 만든 대사]")]
     assert h.d.state is State.DOCENT_SPEAKING
 
@@ -114,16 +129,16 @@ def test_사회자에서_도슨트로_넘어갈_때_마이크가_열리지_않�
     h = Harness()
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     assert all(open_ is False for _, open_ in h.mics())
 
 
 def test_도슨트_발화가_끝나면_사회자_마이크가_열린다():
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     h.clear()
-    h.d.on_speaking_ended("docent", "c1:docent")  # 도슨트 몫에 붙는 구분 id
+    h.ended("docent", "c1:docent")  # 도슨트 몫에 붙는 구분 id
     assert h.d.state is State.LISTENING
     assert h.mics() == [("mc", True)]
 
@@ -131,8 +146,8 @@ def test_도슨트_발화가_끝나면_사회자_마이크가_열린다():
 def test_진행_신호를_들으면_다음_큐로_간다():
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
     h.clear()
     h.d.on_heard("다음")
     assert h.says() == [("mc", "사회자 둘째 대사")]
@@ -141,8 +156,8 @@ def test_진행_신호를_들으면_다음_큐로_간다():
 def test_질문을_들으면_도슨트가_답한다():
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
     h.clear()
     h.d.on_heard("마르코니가 누구예요")
     answered = h.says()
@@ -155,8 +170,8 @@ def test_질문과_답이_대화_이력에_쌓인다():
     # 사회자와 도슨트가 하나의 이력을 본다 — 그래서 말이 이어진다.
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
     h.d.on_heard("마르코니가 누구예요")
     roles = [m["role"] for m in h.d.history]
     assert roles[-2:] == ["user", "assistant"]
@@ -174,11 +189,11 @@ def test_발화_중에_들린_말은_버리고_경고한다():
 def test_마지막_큐에서_진행_신호를_받으면_끝내고_경고한다():
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
     h.d.on_heard("다음")                      # c2 로
-    h.d.on_speaking_ended("mc", "c2")
-    h.d.on_speaking_ended("docent", "c2:docent")
+    h.ended("mc", "c2")
+    h.ended("docent", "c2:docent")
     h.clear()
     h.d.on_heard("다음")
     assert h.says() == []
@@ -213,7 +228,7 @@ def test_LLM_이_실패하면_지시문을_읽고_경고한다():
     h = Harness(generate=boom)
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     said = h.says()
     assert len(said) == 1 and said[0][0] == "docent"
     assert said[0][1]                      # 빈 대사를 말하지 않는다
@@ -281,9 +296,9 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     h.d.start()
     c1_thread = h.d._gen_thread  # c1 의 생성 스레드 — 곧 유예시간을 넘긴다
 
-    h.d.on_speaking_ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
+    h.ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
     assert h.says()[-1] == ("docent", "첫 지시")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("docent", "c1:docent")
     h.d.on_heard("다음")  # c2 시작 — 새 생성 스레드가 돈다
     h.clear()
     h.warnings.clear()
@@ -295,7 +310,7 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     assert any("버려" in w for w in h.warnings)  # 폐기했다고 경고한다
     assert h.says() == []  # 아직 c2 도슨트 대사를 말하지 않았다
 
-    h.d.on_speaking_ended("mc", "c2")
+    h.ended("mc", "c2")
     assert h.says() == [("docent", "[둘째 지시 로 만든 대사]")]  # c1 의 늦은 대사가 아니다
 
 
@@ -313,7 +328,7 @@ def test_정상_생성은_폐기_로직을_넣어도_그대로_말해진다():
     h.d.start()
     assert ready.wait(2.0)
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     assert h.says() == [("docent", "[첫 지시 로 만든 대사]")]
 
 
@@ -322,7 +337,7 @@ def test_도슨트_생성이_빈_문자열이면_경고하고_지시문으로_�
     h = Harness(generate=lambda brief, history: "")
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     assert h.says() == [("docent", "첫 지시")]
     assert any("빈" in w for w in h.warnings)
 
@@ -339,8 +354,8 @@ def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
 
     h = Harness(generate=gen)
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")
-    h.d.on_speaking_ended("docent", "c1:docent")
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
     h.clear()
     h.warnings.clear()
     h.d.on_heard("마르코니가 누구예요")
@@ -356,7 +371,7 @@ def test_도슨트_타임아웃도_올바른_로봇을_지목한다():
     나중에 `role` 대신 실수로 고정 문자열을 넣는 회귀를 여기서 잡는다."""
     h = Harness()
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")  # 이제 도슨트가 말하는 중
+    h.ended("mc", "c1")  # 이제 도슨트가 말하는 중
     h.clear()
     h.warnings.clear()
     h.clock.t = len("[첫 지시 로 만든 대사]") / CHARS_PER_SEC + TIMEOUT_MARGIN_S + 0.1
@@ -436,7 +451,7 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     handoff_done = threading.Event()
 
     def do_handoff():
-        d.on_speaking_ended("mc", "c1")
+        d.on_speaking_ended("mc", "c1", d._machine.seq)
         handoff_done.set()
 
     handoff = threading.Thread(target=do_handoff, daemon=True)
@@ -470,7 +485,7 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     # 강제 복구 이후 도슨트의 진짜 speaking_ended 가 뒤늦게 와도 시스템이
     # 죽거나 예외를 내지 않는다 — 유령으로 처리되든 정상 처리되든, 조용히
     # 삼켜서 다음 큐 진행이 막히지는 않았는지 상태로 확인한다.
-    d.on_speaking_ended("docent", "c1")
+    d.on_speaking_ended("docent", "c1", d._machine.seq)
     assert d.state in (State.LISTENING, State.DOCENT_SPEAKING)
 
 
@@ -488,7 +503,7 @@ def test_도슨트가_끊기면_사회자가_양쪽을_읽는다():
     h.d.start()
     h.d.on_disconnect("docent")
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     said = h.says()
     assert len(said) == 1
     assert said[0][0] == "mc"                      # 도슨트 대사를 사회자가 읽는다
@@ -524,7 +539,7 @@ def test_1인_모드에서도_불변식은_지켜진다():
     h.d.on_disconnect("docent")
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("mc", "c1")
+    h.ended("mc", "c1")
     assert h.d.state is State.MC_SPEAKING       # 두 번째 대사를 말하는 중
     assert all(open_ is False for _, open_ in h.mics())
 
@@ -538,9 +553,9 @@ def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달�
     h.d.on_connect("mc")
     h.d.on_disconnect("docent")
     h.d.start()
-    h.d.on_speaking_ended("mc", "c1")           # 사회자 몫 종료 → 도슨트 몫 시작
+    h.ended("mc", "c1")           # 사회자 몫 종료 → 도슨트 몫 시작
     h.clear()
-    h.d.on_speaking_ended("mc", "c1:docent")    # 도슨트 몫 종료(로봇이 받은 cue_id 그대로 에코)
+    h.ended("mc", "c1:docent")    # 도슨트 몫 종료(로봇이 받은 cue_id 그대로 에코)
     assert h.d.state is State.LISTENING
     assert h.says() == []
     assert h.mics() == [("mc", True)]
@@ -558,9 +573,9 @@ def test_1인_모드에서_두_번째_발화_종료로_듣기_상태에_도달�
     h.d.on_connect("docent")
     h.d.on_disconnect("mc")
     h.d.start()                                  # 도슨트가 사회자 몫을 대신 읽는다
-    h.d.on_speaking_ended("docent", "c1")         # 사회자 몫 종료 → 도슨트 몫 시작
+    h.ended("docent", "c1")         # 사회자 몫 종료 → 도슨트 몫 시작
     h.clear()
-    h.d.on_speaking_ended("docent", "c1:docent")  # 도슨트 몫 종료
+    h.ended("docent", "c1:docent")  # 도슨트 몫 종료
     assert h.d.state is State.LISTENING
     assert h.says() == []
     assert h.mics() == [("docent", True)]
@@ -580,7 +595,7 @@ def test_발화_시작_보고가_데드라인을_다시_건다():
     budget = h.d._deadline - h.clock.t
 
     h.clock.t += budget - 0.5          # 거의 다 썼다 (아직 말을 시작 못 했다)
-    h.d.on_speaking_started("mc", "c1")
+    h.started("mc", "c1")
     assert h.d._deadline == pytest.approx(h.clock.t + budget)
 
     # 예전에는 여기서 이미 타임아웃이었다.
@@ -596,7 +611,7 @@ def test_유령_발화_시작_보고는_데드라인을_건드리지_않고_경�
     h.d.start()
     before = h.d._deadline
     h.clock.t += 1.0
-    h.d.on_speaking_started("docent", "없는-큐")
+    h.d.on_speaking_started("docent", "없는-큐", 999)
     assert h.d._deadline == before
     assert any("유령 speaking_started" in w for w in h.warnings)
 
@@ -608,7 +623,7 @@ def test_유령_발화_종료는_버리되_소리_내서_버린다():
     h = Harness()
     h.d.start()
     h.clear()
-    h.d.on_speaking_ended("docent", "없는-큐")
+    h.d.on_speaking_ended("docent", "없는-큐", 999)
     assert h.sent == []
     assert any("유령 speaking_ended" in w for w in h.warnings)
     assert h.d.state is State.MC_SPEAKING

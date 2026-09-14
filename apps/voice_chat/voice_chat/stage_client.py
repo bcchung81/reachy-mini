@@ -31,9 +31,16 @@ POLL_S = 0.5
 
 @dataclass
 class Handlers:
-    """감독의 지시를 받는 곳. 전부 채워야 한다."""
+    """감독의 지시를 받는 곳. 전부 채워야 한다.
 
-    on_say: Callable[[str, str, str | None], None]
+    `on_say(cue_id, text, seq)` — `seq` 는 감독이 발화마다 매기는 번호다.
+    `speaking_started`/`speaking_ended` 에 **그대로 되돌려 준다.** 그래야 감독이
+    콘솔 `r` 로 같은 큐를 다시 발행했을 때 중단된 발화의 늦은 종료 보고를
+    가릴 수 있다(설계 §4, 리뷰 A2). `gaze` 는 `say` 에 실려 온 적이 없다 —
+    감독은 별도 `gaze` 지시를 보낸다.
+    """
+
+    on_say: Callable[[str, str, int | None], None]
     on_mic: Callable[[bool], None]
     on_gaze: Callable[[str], None]
     on_abort: Callable[[], None]
@@ -61,11 +68,11 @@ class StageClient:
     def heard(self, text: str) -> None:
         self._send("heard", text=text)
 
-    def speaking_started(self, cue_id: str) -> None:
-        self._send("speaking_started", cue_id=cue_id)
+    def speaking_started(self, cue_id: str, seq: int | None) -> None:
+        self._send("speaking_started", cue_id=cue_id, seq=seq)
 
-    def speaking_ended(self, cue_id: str) -> None:
-        self._send("speaking_ended", cue_id=cue_id)
+    def speaking_ended(self, cue_id: str, seq: int | None) -> None:
+        self._send("speaking_ended", cue_id=cue_id, seq=seq)
 
     def error(self, where: str, detail: str) -> None:
         self._send("error", where=where, detail=detail)
@@ -149,7 +156,7 @@ class StageClient:
             self._warn(f"감독이 보낼 수 없는 메시지다: {t!r}")
             return
         if t == "say":
-            self._h.on_say(msg.get("cue_id", ""), msg.get("text", ""), msg.get("gaze"))
+            self._h.on_say(msg.get("cue_id", ""), msg.get("text", ""), msg.get("seq"))
         elif t == "mic":
             self._h.on_mic(bool(msg.get("open")))
         elif t == "gaze":

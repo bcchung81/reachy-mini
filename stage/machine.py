@@ -49,6 +49,8 @@ class TurnMachine:
         self.state = State.IDLE
         self.speaking_role: str | None = None
         self.cue_id: str | None = None
+        # 마지막 `speak()` 의 발화 번호. 종료 보고는 이 번호까지 맞아야 진짜다.
+        self.seq = 0
 
     def speak(
         self, role: str, cue_id: str, text: str, gaze: str | None = None
@@ -65,6 +67,12 @@ class TurnMachine:
         self.state = _SPEAKING_STATE[role]
         self.speaking_role = role
         self.cue_id = cue_id
+        # 발화마다 번호를 매긴다. 콘솔 `r`(abort→start)은 **같은 cue_id** 를
+        # 다시 발행하므로 (role, cue_id) 만으로는 중단된 발화의 늦은 종료 보고와
+        # 새 발화의 종료 보고를 못 가른다 — 그 유령이 통과하면 사회자가 다시
+        # 말하는 중에 도슨트가 시작한다(리뷰 A2, 불변식 ② 위반). 로봇은 `say` 에
+        # 실려 온 seq 를 `speaking_started`/`speaking_ended` 에 그대로 되돌려준다.
+        self.seq += 1
 
         # 마이크부터 닫는다. say 보다 먼저 나가야 발화 첫머리가 새지 않는다.
         cmds = [
@@ -74,19 +82,32 @@ class TurnMachine:
         if gaze is not None:
             cmds.append(Command(to=role, type="gaze", fields={"target": gaze}))
         cmds.append(
-            Command(to=role, type="say", fields={"cue_id": cue_id, "text": text})
+            Command(
+                to=role, type="say",
+                fields={"cue_id": cue_id, "seq": self.seq, "text": text},
+            )
         )
         return cmds
 
+    def is_current(self, role: str, cue_id: str, seq: int | None) -> bool:
+        """이 (role, cue_id, seq) 가 지금 말하는 발화인가 — 유령 판정의 유일한 규칙.
+
+        감독의 `on_speaking_started` 와 여기의 `on_speaking_ended` 가 같은 규칙을
+        써야 한다. 두 파일에 두 번 적으면 cue id 체계가 바뀔 때 한쪽만 고쳐진다.
+        """
+        return role == self.speaking_role and cue_id == self.cue_id and seq == self.seq
+
     def on_speaking_ended(
-        self, role: str, cue_id: str, listener: str = "mc"
+        self, role: str, cue_id: str, listener: str = "mc", seq: int | None = None
     ) -> list[Command]:
-        """발화 종료 보고. 지금 말하는 로봇·큐가 아니면 무시한다.
+        """발화 종료 보고. 지금 말하는 로봇·큐·발화 번호가 아니면 무시한다.
 
         `listener` 는 관람객 창구를 열어 줄 로봇이다 — 보통 사회자지만,
         1인 모드에서는 남은 한 대가 그 역할도 겸한다(`Director._who()`).
+        `seq` 가 없으면(옛 규약) 유령으로 본다 — 같은 큐가 재발행되는
+        콘솔 `r` 경로에서 seq 없이는 진짜와 유령을 가를 수 없기 때문이다.
         """
-        if role != self.speaking_role or cue_id != self.cue_id:
+        if not self.is_current(role, cue_id, seq):
             return []  # 늦게 도착한 유령 메시지 — 상태를 건드리지 않는다
         return self._to_listening(listener)
 

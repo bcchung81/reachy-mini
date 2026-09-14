@@ -202,7 +202,7 @@ class SayRunner:
         self._warn = warn
         self._thread: threading.Thread | None = None
 
-    def on_say(self, cue_id: str, text: str, gaze: str | None = None) -> None:
+    def on_say(self, cue_id: str, text: str, seq: int | None = None) -> None:
         prev = self._thread
         if prev is not None and prev.is_alive():
             self._warn(
@@ -214,7 +214,7 @@ class SayRunner:
                 self._warn("  [경고] 이전 발화가 멈추지 않았다 — 겹쳐 말할 수 있다")
         t = threading.Thread(
             target=self._speak_one,
-            args=(cue_id, text, gaze),
+            args=(cue_id, text, seq),
             daemon=True,
             name="stage-say",
         )
@@ -250,8 +250,12 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         client: StageClient | None = None
         voice_thread: threading.Thread | None = None
 
-        def speak_one(cue_id: str, text: str, gaze: str | None) -> None:
-            """발화 하나. **워커 스레드에서 돈다**(SayRunner 참고)."""
+        def speak_one(cue_id: str, text: str, seq: int | None) -> None:
+            """발화 하나. **워커 스레드에서 돈다**(SayRunner 참고).
+
+            `seq` 는 감독이 `say` 에 실어 준 발화 번호 — 발성 경계 보고에
+            그대로 되돌려 준다. 이것이 없으면 콘솔 `r` 뒤 중단된 발화의 늦은
+            종료 보고를 감독이 새 발화의 것으로 오인한다(리뷰 A2)."""
             try:
                 speak(text, speaker, player)
             except Exception as exc:
@@ -265,9 +269,9 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
                 # **발성 경계는 여기서만 보고한다.** 감독의 게이팅이 이 값을
                 # 믿는다 — 빠뜨리면 감독이 타임아웃까지 멈춰 있는다.
                 if client:
-                    client.speaking_started(cue_id)
+                    client.speaking_started(cue_id, seq)
                     speaker.wait_idle()
-                    client.speaking_ended(cue_id)
+                    client.speaking_ended(cue_id, seq)
 
         say_runner = SayRunner(speak_one)
 

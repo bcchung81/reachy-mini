@@ -199,7 +199,7 @@ class Director:
                 return
             self._answer(text)
 
-    def on_speaking_started(self, role: str, cue_id: str) -> None:
+    def on_speaking_started(self, role: str, cue_id: str, seq: int | None) -> None:
         """발화 시작 보고. **데드라인을 여기서 다시 건다.**
 
         예전에는 `say` 를 보낸 순간부터 시간을 셌다. 그 사이에 든 시간
@@ -216,32 +216,35 @@ class Director:
         (`docs/real-robot-deployment.md` 의 2대 구성 잔여 위험)
         """
         with self._lock:
-            if role != self._machine.speaking_role or cue_id != self._machine.cue_id:
-                self._warn(
-                    f"[{role}] 유령 speaking_started({cue_id!r}) — 지금 말하는 것은 "
-                    f"{self._machine.speaking_role}/{self._machine.cue_id!r} 다. 버린다"
-                )
+            if not self._machine.is_current(role, cue_id, seq):
+                self._warn_ghost("speaking_started", role, cue_id, seq)
                 return
             self._deadline = self._now() + self._speak_budget
 
-    def on_speaking_ended(self, role: str, cue_id: str) -> None:
+    def _warn_ghost(self, kind: str, role: str, cue_id: str, seq: int | None) -> None:
+        """유령 보고를 **소리 내서** 버린다 — 두 종류의 경고문이 따로 놀지 않게 한 곳에."""
+        self._warn(
+            f"[{role}] 유령 {kind}({cue_id!r}, seq={seq}) — 지금 말하는 것은 "
+            f"{self._machine.speaking_role}/{self._machine.cue_id!r}/seq={self._machine.seq} 다. 버린다"
+        )
+
+    def on_speaking_ended(self, role: str, cue_id: str, seq: int | None) -> None:
         with self._lock:
             # 관람객 창구를 열어줄 로봇도 `_who()` 로 정한다 — 1인 모드에서
             # 리스닝으로 넘어갈 때 마이크를 열어야 할 대상은 "사회자" 가
             # 아니라 "남은 한 대" 다. 여기서 고정값을 쓰면(review finding
             # 1인 모드 두 번째 라운드) 사회자가 끊긴 도슨트 1인 모드에서
             # 어느 로봇의 마이크도 열리지 않아 관람객 창구가 아예 없어진다.
-            cmds = self._machine.on_speaking_ended(role, cue_id, self._who("mc"))
+            cmds = self._machine.on_speaking_ended(role, cue_id, self._who("mc"), seq=seq)
             if not cmds:
                 # 유령 메시지 — 상태를 건드리지 않는다. 하지만 **조용히
                 # 버리지도 않는다**: 여기에 걸리는 진짜 종료 보고가 있다면
                 # (타임아웃이 먼저 터져 `speaking_role` 을 리셋해 버린 경우가
                 # 대표적이다) 그 로봇의 발화가 통째로 타임아웃 보호를 잃은
                 # 것이고, 그 사실이 로그에 없으면 추적할 수 없다.
-                self._warn(
-                    f"[{role}] 유령 speaking_ended({cue_id!r}) — 지금 말하는 것은 "
-                    f"{self._machine.speaking_role}/{self._machine.cue_id!r} 다. 버린다"
-                )
+                # seq 불일치도 여기로 온다 — 콘솔 `r` 뒤 중단된 발화의 늦은
+                # 보고가 그것이다(리뷰 A2). 그것은 버려지는 것이 맞다.
+                self._warn_ghost("speaking_ended", role, cue_id, seq)
                 return
             self._deadline = None
 

@@ -53,8 +53,15 @@ def hello(ws, role, unit_id=None):
                         "version": "1.9.0"}))
 
 
+# 연결마다 마지막으로 받은 `say` 의 seq — 로봇이 되돌려 줘야 하는 값이다.
+_LAST_SAY_SEQ: dict = {}
+
+
 def recv(ws, timeout=3.0):
-    return json.loads(ws.recv(timeout=timeout))
+    msg = json.loads(ws.recv(timeout=timeout))
+    if msg.get("type") == "say":
+        _LAST_SAY_SEQ[id(ws)] = msg["seq"]
+    return msg
 
 
 def drain(ws, n, timeout=3.0):
@@ -62,8 +69,12 @@ def drain(ws, n, timeout=3.0):
     return [recv(ws, timeout) for _ in range(n)]
 
 
-def ended(ws, cue_id="c1"):
-    ws.send(json.dumps({"type": "speaking_ended", "cue_id": cue_id}))
+def ended(ws, cue_id="c1", seq=None):
+    """발화 종료 보고. seq 를 안 주면 이 연결이 마지막으로 받은 say 의 것을 쓴다
+    — 로봇이 실제로 하는 일과 같다."""
+    if seq is None:
+        seq = _LAST_SAY_SEQ[id(ws)]
+    ws.send(json.dumps({"type": "speaking_ended", "cue_id": cue_id, "seq": seq}))
 
 
 def start_and_drain(server_, mc, docent):
@@ -248,7 +259,8 @@ def test_발화_시작_보고가_감독까지_닿는다(server):
     with connect(url_of(server)) as mc, connect(url_of(server)) as docent:
         start_and_drain(server, mc, docent)
         before = server.director._deadline
-        mc.send(json.dumps({"type": "speaking_started", "cue_id": "c1"}))
+        mc.send(json.dumps({"type": "speaking_started", "cue_id": "c1",
+                            "seq": _LAST_SAY_SEQ[id(mc)]}))
         for _ in range(60):              # 서버 스레드가 처리할 때까지
             if server.director._deadline != before:
                 break

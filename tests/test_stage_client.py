@@ -76,7 +76,7 @@ class FakeWS:
 def collector():
     got = []
     return got, Handlers(
-        on_say=lambda cue_id, text, gaze: got.append(("say", cue_id, text, gaze)),
+        on_say=lambda cue_id, text, seq: got.append(("say", cue_id, text, seq)),
         on_mic=lambda open_: got.append(("mic", open_)),
         on_gaze=lambda target: got.append(("gaze", target)),
         on_abort=lambda: got.append(("abort",)),
@@ -104,16 +104,28 @@ def test_붙으면_hello_를_먼저_보낸다():
                           "unit_id": "abc", "version": "1.9.0"}
 
 
-def test_say_를_받으면_핸들러로_넘긴다():
-    ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕", "gaze": "partner"}])
+def test_say_를_받으면_seq_와_함께_핸들러로_넘긴다():
+    ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕", "seq": 7}])
     _, got, _ = run_once(ws)
-    assert ("say", "c1", "안녕", "partner") in got
+    assert ("say", "c1", "안녕", 7) in got
 
 
-def test_gaze_가_없는_say_도_받는다():
+def test_seq_가_없는_say_도_받는다():
     ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕"}])
     _, got, _ = run_once(ws)
     assert ("say", "c1", "안녕", None) in got
+
+
+def test_발성_경계_보고에_seq_를_되돌려준다():
+    ws = FakeWS(close_when_empty=False)
+    c = StageClient("ws://x", "mc", collector()[1], warn=lambda m: None)
+    c._ws = ws
+    c.speaking_started("c1", 7)
+    c.speaking_ended("c1", 7)
+    assert ws.sent[-2:] == [
+        {"type": "speaking_started", "cue_id": "c1", "seq": 7},
+        {"type": "speaking_ended", "cue_id": "c1", "seq": 7},
+    ]
 
 
 def test_mic_과_gaze_와_abort_를_넘긴다():
@@ -133,8 +145,8 @@ def test_로봇이_보낼_수_있는_메시지를_보낸다():
     c, _, _ = run_once(ws)
     c._ws = ws                     # run 이 끝난 뒤에도 직접 확인한다
     c.heard("다음")
-    c.speaking_started("c1")
-    c.speaking_ended("c1")
+    c.speaking_started("c1", 1)
+    c.speaking_ended("c1", 1)
     c.error("tts", "합성 실패")
     types = [m["type"] for m in ws.sent[1:]]
     assert types == ["heard", "speaking_started", "speaking_ended", "error"]

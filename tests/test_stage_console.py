@@ -20,6 +20,7 @@ from stage.machine import State, TurnError
 class Harness:
     def __init__(self):
         self.sent: list[tuple[str, str, dict]] = []
+        self.all_sent: list[tuple[str, str, dict]] = []
         self.warnings: list[str] = []
         self.out: list[str] = []
         sheet = CueSheet([
@@ -29,9 +30,18 @@ class Harness:
         self.d = Director(
             sheet,
             generate=lambda brief, history: "도슨트 대사",
-            send=lambda role, cmd: self.sent.append((role, cmd.type, cmd.fields)),
+            send=lambda role, cmd: (
+                self.sent.append((role, cmd.type, cmd.fields)),
+                self.all_sent.append((role, cmd.type, cmd.fields)),
+            ),
             warn=self.warnings.append,
         )
+
+    def seq_of(self, cue_id):
+        return [f["seq"] for _, t, f in self.all_sent if t == "say" and f["cue_id"] == cue_id][-1]
+
+    def ended(self, role, cue_id):
+        self.d.on_speaking_ended(role, cue_id, self.seq_of(cue_id))
 
     def run(self, keys, block=lambda: None):
         """키를 순서대로 먹인다. 다 먹으면 EOFError — 실제 파이프 입력과 같다."""
@@ -153,8 +163,8 @@ def test_TurnError_가_여전히_불변식을_지킨다():
 
 def _한_큐를_끝낸다(h, cue_id="c1"):
     """사회자 → 도슨트 → 듣기. `n` 은 LISTENING 에서만 먹는다."""
-    h.d.on_speaking_ended("mc", cue_id)
-    h.d.on_speaking_ended("docent", f"{cue_id}:docent")
+    h.ended("mc", cue_id)
+    h.ended("docent", f"{cue_id}:docent")
 
 
 def test_p_는_이전_큐로_되돌린다():
@@ -182,3 +192,16 @@ def test_도움말에_p_가_있다():
     h.run(["?", "q"])
     assert any("이전 큐로" in m for m in h.out)
 
+
+
+def test_r_로_다시_시작한_뒤_중단된_발화의_늦은_종료_보고는_도슨트를_깨우지_않는다():
+    """리뷰 A2 — 예전에는 여기서 도슨트 say 가 나가 두 로봇이 동시에 말했다."""
+    h = Harness()
+    h.run(["s", "r", "q"])
+    old_seq = [f["seq"] for _, t, f in h.all_sent if t == "say"][0]
+    n_before = len(h.says())
+    h.d.on_speaking_ended("mc", "c1", old_seq)     # 중단된 발화의 늦은 보고
+    assert len(h.says()) == n_before, "유령 종료로 도슨트가 시작됐다"
+    assert any("유령" in w for w in h.warnings)
+    h.ended("mc", "c1")                              # 진짜 보고
+    assert h.says()[-1][0] == "docent"

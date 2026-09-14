@@ -170,7 +170,7 @@ def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
 
     m = TurnMachine()
     cmds = m.speak("mc", "c1", "사회자 대사", gaze="partner")
-    cmds += m.on_speaking_ended("mc", "c1")
+    cmds += m.on_speaking_ended("mc", "c1", seq=m.seq)
     cmds += m.abort()
 
     got: list[tuple] = []
@@ -178,7 +178,7 @@ def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
         "ws://x",
         "mc",
         stage_client.Handlers(
-            on_say=lambda cue_id, text, gaze: got.append(("say", cue_id, text, gaze)),
+            on_say=lambda cue_id, text, seq: got.append(("say", cue_id, text, seq)),
             on_mic=lambda open_: got.append(("mic", open_)),
             on_gaze=lambda target: got.append(("gaze", target)),
             on_abort=lambda: got.append(("abort",)),
@@ -192,11 +192,10 @@ def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
         ("mic", False),                        # 마이크부터 닫는다 (양쪽)
         ("mic", False),
         ("gaze", "partner"),                   # 시선은 **독립 메시지**로 간다
-        # 규약 §4 의 `say` 는 `gaze?` 를 허용하지만 `TurnMachine` 은 그 자리를
-        # 안 쓴다 — 그래서 로봇의 `on_say` 가 받는 gaze 는 언제나 None 이다.
-        # 한쪽이 나중에 `say.gaze` 로 옮기고 다른 쪽을 안 고치면 시선이 조용히
-        # 사라진다. 지금의 진실을 여기 박아 둔다.
-        ("say", "c1", "사회자 대사", None),
+        # `say` 는 발화 번호 `seq` 를 싣는다 — 로봇이 `speaking_started/ended`
+        # 에 그대로 되돌려 줘야 감독이 유령 보고를 가른다(리뷰 A2). 한쪽만
+        # 이름을 바꾸면 모든 종료 보고가 유령이 되어 시연이 첫 큐에서 멈춘다.
+        ("say", "c1", "사회자 대사", 1),
         ("mic", True),                         # 듣기로 넘어가며 리스너만 연다
         ("abort",),
         ("abort",),
@@ -234,8 +233,9 @@ def test_로봇이_보낸_보고가_감독의_상태를_실제로_옮긴다():
     ws = _CaptureWS()
     client = stage_client.StageClient("ws://x", "mc", None, warn=lambda m: None)
     client._ws = ws
-    client.speaking_started("c1")
-    client.speaking_ended("c1")
+    seq = server.director._machine.seq        # 로봇이 say 에서 받은 그 번호
+    client.speaking_started("c1", seq)
+    client.speaking_ended("c1", seq)
 
     for raw in ws.sent:
         server._dispatch("mc", protocol.decode(raw))   # 감독이 읽는 그 경로
