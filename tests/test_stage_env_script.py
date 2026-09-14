@@ -67,3 +67,25 @@ def test_기본_주소들이_고정_IP_로_채워진다():
     assert env["REACHY_STT_URL"] == "http://192.168.0.10:8090/v1/audio/transcriptions"
     assert env["TTS_QWEN_URL"] == "http://192.168.0.10:8099/v1/audio/speech"
     assert env["REACHY_AEC"] == "0"
+
+
+def test_source_해도_셸_옵션이_바뀌지_않는다():
+    """리뷰 A7c — `set -eu` 가 source 한 운영자 셸에 남아, 다음 실패 명령에서
+    SSH 세션이 죽었다."""
+    result = subprocess.run(
+        ["bash", "-c",
+         f"source {SCRIPT} mc >/dev/null; case $- in *e*) echo ERREXIT;; esac; "
+         f"case $- in *u*) echo NOUNSET;; esac; false; echo alive"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert "alive" in result.stdout, result.stderr
+    assert "ERREXIT" not in result.stdout and "NOUNSET" not in result.stdout
+
+
+def test_source_에서_인자가_없으면_셸을_죽이지_않고_실패를_알린다():
+    result = subprocess.run(
+        ["bash", "-c", f"source {SCRIPT}; echo alive"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert "alive" in result.stdout
+    assert "stage-env.sh" in result.stderr

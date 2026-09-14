@@ -6,14 +6,17 @@
 #
 # 주소는 **고정 IP** 를 쓴다. 두 로봇 모두 hostname 이 reachy-mini 라
 # reachy-mini.local 이 어느 쪽을 가리키는지 보장되지 않는다(설계 §6.1).
-set -eu
-
 #
-# 주의: 이 기본 메시지 텍스트에 `{`/`}` 를 넣지 않는다. bash 의 `${1:?...}` 는
-# 인용되지 않은 중괄호를 중첩으로 세므로, 메시지 안에 `{mc|docent}` 처럼 쓰면
-# 첫 `}` 에서 확장이 조기 종료되고 남은 `}` 가 대입값 뒤에 그대로 붙는다
-# (실측: 인자를 "mc" 로 줘도 REACHY_ROLE 이 "mc}" 가 됐다 — tests/test_stage_env_script.py).
-ROLE="${1:?사용법: source scripts/stage-env.sh mc 또는 docent}"
+# `set -eu` 를 쓰지 않는다. 이 파일은 **source** 되므로 셸 옵션이 운영자의 세션에
+# 그대로 남고, 그 뒤 실패하는 명령 하나(`grep` 불일치, 오타)에 SSH 세션이 끊긴다
+# (리뷰 A7c, 실측). 인자 검사는 return/exit 로 한다 — `${1:?}` 도 쓰지 않는다:
+# errexit 아래서는 그것도 셸을 끝내고, 메시지에 `{`/`}` 를 넣으면 bash 가 중첩
+# 중괄호로 세어 값 뒤에 `}` 가 붙는 함정도 있었다(REACHY_ROLE="mc}", 옛 테스트).
+if [ -z "${1:-}" ]; then
+  echo "사용법: source scripts/stage-env.sh mc 또는 docent" >&2
+  return 1 2>/dev/null || exit 1
+fi
+ROLE="$1"
 PC_IP="${PC_IP:-192.168.0.10}"
 
 export REACHY_ROLE="$ROLE"

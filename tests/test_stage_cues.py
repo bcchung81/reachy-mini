@@ -203,3 +203,36 @@ def test_첫_큐에서_되돌리면_None_이고_커서는_머문다():
     s = sheet()
     assert s.back() is None
     assert s.index == 0
+
+
+# ── 필드 타입 (리뷰 A8a) ─────────────────────────────────────────────
+
+
+def test_숫자인_mc_는_거절한다(tmp_path):
+    """`mc: 123` 이 통과해 `_estimate` 의 len() 에서 TypeError 가 났고,
+    감독은 MC_SPEAKING 에 데드라인 없이 굳었다(리뷰 A8a)."""
+    p = write(tmp_path, """
+- {id: "a", title: "t", mc: 123, docent_brief: "b", gaze: partner}
+""")
+    with pytest.raises(CueError, match="문자열"):
+        load_cues(p)
+
+
+def test_값이_없는_mc_는_거절한다(tmp_path):
+    p = write(tmp_path, """
+- id: "a"
+  title: "t"
+  mc:
+  docent_brief: "b"
+  gaze: partner
+""")
+    with pytest.raises(CueError, match="mc"):
+        load_cues(p)
+
+
+def test_숫자인_id_는_거절한다(tmp_path):
+    p = write(tmp_path, """
+- {id: 07, title: "t", mc: "m", docent_brief: "b", gaze: partner}
+""")
+    with pytest.raises(CueError, match="문자열"):
+        load_cues(p)

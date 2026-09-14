@@ -65,8 +65,15 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
         if not isinstance(item, dict):
             raise CueError(f"{p} {i}번째 항목이 매핑이 아니다")
         for key in _REQUIRED:
-            if not str(item.get(key, "")).strip():
-                raise CueError(f"{p} {i}번째 항목에 {key} 가 비어 있다")
+            v = item.get(key)
+            # `str()` 로 감싸면 `mc: 123`·`mc:`(None) 이 통과한다 — 그 값이
+            # `_estimate` 의 len() 에서 터져 감독이 데드라인 없이 굳는다(리뷰 A8a).
+            # 타입을 요구하는 자리는 강제 변환이 아니라 거절이다.
+            if not isinstance(v, str) or not v.strip():
+                raise CueError(
+                    f"{p} {i}번째 항목의 {key} 가 비어 있거나 문자열이 아니다"
+                    f"({type(v).__name__})"
+                )
         if item["gaze"] not in GAZE_TARGETS:
             raise CueError(
                 f"{p} {item['id']}: 모르는 gaze {item['gaze']!r} "
