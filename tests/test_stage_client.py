@@ -235,3 +235,43 @@ def test_조용한_연결에서도_should_stop_이_바뀌면_run_이_돌아온�
         "run() 이 조용한 연결(recv 가 절대 안 끝나는 실제 소켓과 같다)에서 "
         "should_stop 을 못 보고 블록됐다"
     )
+
+
+# ── 핸들러 예외는 연결 문제가 아니다 (리뷰 A9) ───────────────────────
+
+
+def test_핸들러_예외는_연결을_끊지_않는다():
+    """리뷰 A9 — 핸들러 안의 버그 하나가 재접속을 일으키고, 감독은 그것을
+    끊김으로 봐 1인 모드로 내려갔다가 2초 뒤 돌아왔다."""
+    warns: list[str] = []
+    ws = FakeWS([{"type": "abort"}, {"type": "mic", "open": True}])
+    got: list = []
+
+    def boom():
+        raise RuntimeError("speaker.stop() 가 터졌다")
+
+    handlers = Handlers(
+        on_say=lambda c, t, s: None,
+        on_mic=lambda o: got.append(("mic", o)),
+        on_gaze=lambda t: None,
+        on_abort=boom,
+    )
+    c = StageClient("ws://x", "mc", handlers, warn=warns.append)
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    c.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert calls["n"] == 1, "핸들러 예외로 재접속했다"
+    assert ("mic", True) in got, "예외 뒤의 지시가 처리되지 않았다"
+    assert any("지시 처리" in w for w in warns)
+    assert not any("끊어졌다" in w and "RuntimeError" in w for w in warns)
+
+
+def test_객체가_아닌_JSON_은_경고하고_넘어간다():
+    warns: list[str] = []
+    c = StageClient("ws://x", "mc", collector()[1], warn=warns.append)
+    c._on_raw("[1, 2]")
+    assert any("객체" in w for w in warns)

@@ -95,6 +95,20 @@ def make_mic_sink(mic_open: threading.Event, has_listener, log=print):
     return on_mic
 
 
+def make_abort(speaker, player, log=print):
+    """감독의 `abort`. **소리와 몸을 같이 끊는다** — 끼어들기와 같은 규칙이다
+    (`voice_loop` 의 두 stop 자리가 `player.cancel()` 을 짝으로 부른다). 소리만
+    끊고 몸이 계속 추면 끊긴 게 아니다(리뷰 A10, lessons.md 게이팅 항목)."""
+
+    def on_abort() -> None:
+        speaker.stop()
+        if player is not None:
+            player.cancel()
+        log("  [감독 abort — 발화·모션 중단]")
+
+    return on_abort
+
+
 def role_of_env() -> str | None:
     """`REACHY_ROLE` 을 **설정 사다리**로 읽는다. 없으면 1대 모드.
 
@@ -284,7 +298,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
                 on_say=say_runner.on_say,
                 on_mic=on_mic,
                 on_gaze=lambda target: print(f"  [시선 {target}]"),
-                on_abort=lambda: speaker.stop(),
+                on_abort=make_abort(speaker, player),
             ),
             unit_id=_unit_id(reachy_mini),
             version=_sdk_version(),

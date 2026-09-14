@@ -458,3 +458,25 @@ def test_배속이_숫자가_아니면_소리_내서_기본값으로_간다(monk
 
     tts._warned.discard("speed")
     assert tts.qwen_speed() == 1.2
+
+
+# ── abort 는 소리와 몸을 같이 끊는다 (리뷰 A10) ──────────────────────
+
+
+def test_abort_는_소리와_모션을_함께_끊는다():
+    """소리만 끊고 몸은 계속 추면 끊긴 게 아니다(lessons.md 게이팅 항목)."""
+    calls: list[str] = []
+
+    class Sp:
+        def stop(self):
+            calls.append("stop")
+
+    class Pl:
+        def cancel(self):
+            calls.append("cancel")
+
+    main_mod.make_abort(Sp(), Pl(), log=lambda m: None)()
+    assert calls == ["stop", "cancel"]
+    calls.clear()
+    main_mod.make_abort(Sp(), None, log=lambda m: None)()
+    assert calls == ["stop"]

@@ -151,15 +151,27 @@ class StageClient:
         except (json.JSONDecodeError, TypeError) as exc:
             self._warn(f"무대감독 메시지가 JSON 이 아니다: {exc}")
             return
+        if not isinstance(msg, dict):
+            self._warn(f"무대감독 메시지가 객체가 아니다 — 규약 위반: {raw[:80]!r}")
+            return
         t = msg.get("type")
         if t not in _DIRECTOR_MSGS:
             self._warn(f"감독이 보낼 수 없는 메시지다: {t!r}")
             return
-        if t == "say":
-            self._h.on_say(msg.get("cue_id", ""), msg.get("text", ""), msg.get("seq"))
-        elif t == "mic":
-            self._h.on_mic(bool(msg.get("open")))
-        elif t == "gaze":
-            self._h.on_gaze(msg.get("target", "audience"))
-        elif t == "abort":
-            self._h.on_abort()
+        try:
+            if t == "say":
+                self._h.on_say(msg.get("cue_id", ""), msg.get("text", ""), msg.get("seq"))
+            elif t == "mic":
+                self._h.on_mic(bool(msg.get("open")))
+            elif t == "gaze":
+                self._h.on_gaze(msg.get("target", "audience"))
+            elif t == "abort":
+                self._h.on_abort()
+        except Exception as exc:  # noqa: BLE001
+            # **핸들러의 예외는 연결 문제가 아니다.** 여기서 새면 run() 의 바깥
+            # except 가 "연결이 끊어졌다" 로 오판해 소켓을 닫고 재접속하고, 감독은
+            # 그것을 끊김으로 봐 1인 모드로 내려갔다가 2초 뒤 돌아온다 — 그 창에
+            # 다른 로봇이 이쪽 대사를 읽기 시작할 수 있다(리뷰 A9). 알리고 계속 받는다.
+            self._warn(
+                f"감독 지시 처리 중 오류({t}: {type(exc).__name__}: {exc}) — 연결은 유지한다"
+            )
