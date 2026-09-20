@@ -29,7 +29,7 @@ class Harness:
         ])
         self.d = Director(
             sheet,
-            generate=lambda brief, history: "도슨트 대사",
+            generate=lambda role, brief, history: "도슨트 대사",
             send=lambda role, cmd: (
                 self.sent.append((role, cmd.type, cmd.fields)),
                 self.all_sent.append((role, cmd.type, cmd.fields)),

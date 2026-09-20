@@ -78,7 +78,7 @@ class Director:
     def __init__(
         self,
         sheet: CueSheet,
-        generate: Callable[[str, list[dict]], str],
+        generate: Callable[[str, str, list[dict]], str],
         send: Callable[[str, Command], None],
         now: Callable[[], float] = time.monotonic,
         expect_units: dict[str, str] | None = None,
@@ -486,12 +486,16 @@ class Director:
 
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        self._spawn_generate("docent", cue.docent_brief, cue.docent_brief, cue.id)
+        # role="docent" — 이 슬롯은 도슨트 해설 전용이다. 사회자 받아치기용
+        # 슬롯(role="mc")은 이 태스크에서 만들지 않는다(뒤 태스크 몫).
+        self._spawn_generate("docent", "docent", cue.docent_brief, cue.docent_brief, cue.id)
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, cue.mc, gaze=cue.gaze)
         )
 
-    def _spawn_generate(self, slot: str, brief: str, fallback: str, label: str) -> None:
+    def _spawn_generate(
+        self, slot: str, role: str, brief: str, fallback: str, label: str
+    ) -> None:
         """슬롯 **하나**를 비우고 스레드를 띄운다. 이력은 **이 시점의 사본**이다.
 
         다른 이름의 슬롯은 건드리지 않는다 — 받아치기 생성이 도슨트 해설 슬롯을
@@ -501,6 +505,11 @@ class Director:
         같은 슬롯 안에서는 여전히 "마지막 하나만 산다". 도슨트 해설(큐 시작 때)과
         질문 응답(확인 멘트 때)은 둘 다 도슨트가 이어서 말할 자리라 같은 슬롯을
         쓰고, 늦게 끝난 쪽은 세대 검사에 걸려 버려진다.
+
+        `role` 은 **슬롯과 다른 축이다** — 슬롯은 "어느 자리의 생성인가"(밀어내기
+        방지), `role` 은 "어느 페르소나로 말할 것인가"(`stage/prompts.py`).
+        지금은 도슨트 해설·질문 응답 모두 `role="docent"` 다. 사회자 받아치기용
+        슬롯이 생기면 그때 `role="mc"` 를 쓴다.
         """
         with self._gen_lock:
             s = self._slots.setdefault(
@@ -522,7 +531,8 @@ class Director:
             s["token"] += 1
             token = s["token"]
         threading.Thread(
-            target=self._generate_pending, args=(slot, brief, token, fallback, label),
+            target=self._generate_pending,
+            args=(slot, role, brief, token, fallback, label),
             daemon=True,
         ).start()
 
@@ -539,11 +549,11 @@ class Director:
             return s["ready"], s["token"]
 
     def _generate_pending(
-        self, slot: str, brief: str, token: int, fallback: str, label: str
+        self, slot: str, role: str, brief: str, token: int, fallback: str, label: str
     ) -> None:
         is_fallback = False
         try:
-            text = self._generate(brief, list(self.history))
+            text = self._generate(role, brief, list(self.history))
             if not text:
                 # 빈 문자열도 "아무 말도 안 하는 것"과 같다 — 조용히 넘기지 않는다.
                 self._warn(f"[{label}] 대사 생성이 빈 문자열을 내놓았다 — 폴백")
@@ -623,7 +633,7 @@ class Director:
         # 콘솔 `a` 와 tick() 이 그동안 멈췄다(리뷰 C1). 사회자의 확인 멘트가 흐르는
         # 동안 스레드에서 만든다 — 관람객에게도 정적 대신 반응이 먼저 간다(B3).
         # 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
-        self._spawn_generate("docent", brief, QA_FALLBACK, f"{cue.id}:qa")
+        self._spawn_generate("docent", "docent", brief, QA_FALLBACK, f"{cue.id}:qa")
         ack = QA_ACK_LINES[self._ack_i % len(QA_ACK_LINES)]
         self._ack_i += 1
         self._remember(f"사회자: {ack}")

@@ -27,55 +27,44 @@ sys.path.insert(
 from llm import LLMClient  # noqa: E402
 
 
-def build_generate() -> "callable":
+def build_generate(level) -> "callable":
     """LLM 호출 하나. **직렬화한다.**
 
-    `client` 하나를 공유하면서 호출마다 `client.history` 를 통째로 갈아끼운다.
-    감독은 이 함수를 두 갈래에서 부른다: 큐를 시작할 때 띄우는 생성 스레드
-    (`_generate_docent`)와 관람객 질문 응답(`_answer`). 늦게 끝난 생성 스레드와
-    질문이 겹치면 **한쪽이 다른 쪽의 이력으로 답한다** — 지난 섹션의 맥락으로
-    질문에 답하거나 그 반대다. 락 하나로 막는다. LLM 왕복은 원래 한 번에 하나만
-    도는 것이 맞다(PC 추론 서버도 하나다).
+    두 화자가 **하나의 대화 이력**을 봐야 말이 이어진다 — B 의 대사는 A 가
+    정해진 뒤에야 만들 수 있으므로 병렬이 아니라 파이프라인이다. 그래서
+    클라이언트를 역할별로 둬도 락은 하나다.
+
+    페르소나는 이제 역할·수준의 함수다(`stage/prompts.py`) — 도슨트만
+    기술하던 문자열 하나(`_system_prompt`, 이 함수가 지웠다) 대신
+    [공통 규약 + 역할 + 수준] 세 조각을 역할별로 조립한다.
     """
-    client = LLMClient(system_prompt=_system_prompt())
+    from stage.prompts import ROLES, build_system_prompt
+
+    clients = {
+        r: LLMClient(system_prompt=build_system_prompt(r, level),
+                     max_tokens=level.max_tokens)
+        for r in ROLES
+    }
     lock = threading.Lock()
 
-    def generate(brief: str, history: list[dict]) -> str:
+    def generate(role: str, brief: str, history: list[dict]) -> str:
         with lock:
-            client.history = list(history)
-            return "".join(client.chat_stream(brief, None))
+            c = clients[role]
+            c.history = list(history)
+            return "".join(c.chat_stream(brief, None))
 
     return generate
 
 
-def _system_prompt() -> str:
-    return (
-        "너는 전파체험관의 도슨트다. 지시를 받으면 관람객에게 들려줄 해설을 "
-        "말한다. 지시문을 따라 읽지 말고 해설로 바꿔 말한다. "
-        "상대연도('몇 년 전')를 쓰지 않고 절대연도로만 말한다. "
-        "모르는 것은 지어내지 않는다. "
-        # 답은 TTS 가 읽는다 — 목록 기호·이모지가 나오면 그 기호를 소리 내 읽는다(리뷰 B5).
-        "네 말은 음성으로 읽힌다. 목록·이모지·특수문자·마크다운을 쓰지 않고 "
-        "문장은 마침표로 끝낸다. "
-        # **분량은 상한만 주면 안 된다.** 큐시트 지시문이 "N문장 이내" 로만 적혀
-        # 있어 모델이 한 문장으로 답해도 지시 위반이 아니었다 — 하한을 준다.
-        "지시문이 문장 수를 정해 주면 그 수를 **채워서** 말한다. "
-        "'N문장 이내' 는 N문장에 가깝게, 최소 두 문장 이상 채워서 쓰라는 뜻이지 "
-        "한 문장으로 끝내라는 뜻이 아니다. "
-        "한 문장짜리 답은 해설이 아니다. "
-    )
-
-
-def announce_level() -> None:
+def announce_level(lv) -> None:
     """어느 수준으로 도는지 기동 때 밝힌다.
 
-    `level_of_env` 가 오타를 예외로 던지므로 이 함수를 서버 생성 **전에**
-    불러야 한다 — 수준이 잘못됐으면 서버를 띄우기 전에 죽는 편이,
-    콘솔까지 뜬 뒤에 엉뚱한 수준으로 시연이 도는 것보다 낫다.
+    `lv` 는 `main()` 이 **한 번만** 읽어 이 함수와 `build_generate()` 양쪽에
+    넘긴다. 예전에는 이 함수가 안에서 직접 `level_of_env(load_levels())` 를
+    했는데, `build_generate(level)` 이 생기면서 그대로 두면 같은 파일을 두
+    번 읽게 된다 — 파일을 두 번 여는 것 자체보다, 그사이 값이 갈릴 여지를
+    만드는 것이 문제다(로딩을 한 곳으로 모으면 그 여지가 아예 없다).
     """
-    from stage.levels import level_of_env, load_levels
-
-    lv = level_of_env(load_levels())
     src = "환경변수" if os.environ.get("REACHY_AUDIENCE_LEVEL") else "기본값"
     print(
         f"관람객 수준: {lv.name} ({src}) — "
@@ -85,7 +74,13 @@ def announce_level() -> None:
 
 
 def main() -> None:
-    announce_level()  # 수준이 잘못됐으면 서버를 만들기 전에 여기서 죽는다.
+    from stage.levels import level_of_env, load_levels
+
+    # **여기서 한 번만 읽는다.** `level_of_env` 가 오타를 예외로 던지므로 이
+    # 줄을 서버 생성 **전에** 둬야 한다 — 수준이 잘못됐으면 서버를 띄우기
+    # 전에 죽는 편이, 콘솔까지 뜬 뒤에 엉뚱한 수준으로 시연이 도는 것보다 낫다.
+    level = level_of_env(load_levels())
+    announce_level(level)  # 수준이 잘못됐으면 이미 위에서 죽었다.
     host = os.environ.get("REACHY_DIRECTOR_HOST", "0.0.0.0")
     port = int(os.environ.get("REACHY_DIRECTOR_PORT", "8777"))
     expect = {
@@ -99,7 +94,7 @@ def main() -> None:
     if not expect:
         print("⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다")
 
-    server = StageServer(CueSheet(load_cues()), build_generate(), expect_units=expect)
+    server = StageServer(CueSheet(load_cues()), build_generate(level), expect_units=expect)
     stop = threading.Event()
     threading.Thread(
         target=server.tick_forever, args=(0.5, stop.is_set), daemon=True

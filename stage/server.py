@@ -21,7 +21,7 @@ class StageServer:
     def __init__(
         self,
         sheet: CueSheet,
-        generate: Callable[[str, list[dict]], str],
+        generate: Callable[[str, str, list[dict]], str],
         expect_units: dict[str, str] | None = None,
         warn: Callable[[str], None] = print,
     ) -> None:

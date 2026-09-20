@@ -39,10 +39,16 @@ class Harness:
             Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
         ])
 
-        def _gen(brief, history):
+        # `Director` 가 부르는 `generate` 는 이제 `(role, brief, history)` 다 —
+        # 역할별로 다른 프롬프트를 조립해 쓰기 때문이다(`stage/prompts.py`).
+        # `gen_calls` 모양은 그대로 `(brief, len(history))` 로 둔다 — 이걸 보는
+        # 유일한 단언(`len(h.gen_calls) == 1`)이 개수만 보므로 굳이 넓힐 이유가
+        # 없고, 넓히면 이 파일의 커스텀 `generate=` 콜백을 쓰는 테스트들이 전부
+        # role 인자까지 신경 써야 해서 변경 범위만 늘어난다.
+        def _gen(role, brief, history):
             self.gen_calls.append((brief, len(history)))
             if generate is not None:
-                return generate(brief, history)
+                return generate(role, brief, history)
             return f"[{brief} 로 만든 대사]"
 
         self.d = Director(
@@ -105,7 +111,7 @@ def test_사회자가_말하는_동안_도슨트_대사를_미리_만든다():
     started = _t.Event()
     seen: list[str] = []
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         seen.append(brief)
         started.set()
         return "미리 만든 대사"
@@ -181,7 +187,7 @@ def test_질문_응답_생성은_on_heard_를_막지_않는다():
     gate = threading.Event()
     seen = threading.Event()
 
-    def slow(brief, history):
+    def slow(role, brief, history):
         if brief.startswith("관람객이"):
             seen.set()
             gate.wait(5)
@@ -223,7 +229,7 @@ def test_도슨트_생성_대기가_abort_를_막지_않는다():
     """
     gate = threading.Event()
 
-    def slow(brief, history):
+    def slow(role, brief, history):
         gate.wait(3.0)
         return "도슨트 대사"
 
@@ -251,7 +257,7 @@ def test_대기_중_abort_가_나면_도슨트가_뒤늦게_말하지_않는다(
     """
     gate = threading.Event()
 
-    def slow(brief, history):
+    def slow(role, brief, history):
         gate.wait(3.0)
         return "도슨트 대사"
 
@@ -279,7 +285,7 @@ def test_대기_중_다음_큐가_돌아_LISTENING_이_돼도_옛_대사는_안_
     """
     gates = {"첫 지시": threading.Event(), "둘째 지시": threading.Event()}
 
-    def slow(brief, history):
+    def slow(role, brief, history):
         gates[brief].wait(3.0)
         return f"[{brief} 해설]"
 
@@ -324,7 +330,7 @@ def test_대기_중_도슨트가_끊기면_남은_사회자가_그_대사를_읽
     """
     gate = threading.Event()
 
-    def slow(brief, history):
+    def slow(role, brief, history):
         gate.wait(3.0)
         return "도슨트 대사"
 
@@ -422,7 +428,7 @@ def test_타임아웃_전에는_복구하지_않는다():
 
 
 def test_LLM_이_실패하면_지시문을_읽고_경고한다():
-    def boom(brief, history):
+    def boom(role, brief, history):
         raise RuntimeError("추론 서버가 죽었다")
 
     h = Harness(generate=boom)
@@ -488,7 +494,7 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     c1_entered = threading.Event()
     c1_box: dict[str, threading.Thread] = {}
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         if brief == "첫 지시":
             # **생성 스레드 자신을 여기서 집는다.** 예전에는 `h.d._gen_thread` 를
             # 봤는데, 슬롯이 이름별로 갈리면서 "마지막에 띄운 스레드" 하나를
@@ -529,7 +535,7 @@ def test_정상_생성은_폐기_로직을_넣어도_그대로_말해진다():
     늦지 않게 끝나는 경우)는 그대로 도슨트 대사를 말한다."""
     ready = threading.Event()
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         text = f"[{brief} 로 만든 대사]"
         ready.set()
         return text
@@ -544,7 +550,7 @@ def test_정상_생성은_폐기_로직을_넣어도_그대로_말해진다():
 
 def test_도슨트_생성이_빈_문자열이면_경고하고_지시문으로_폴백한다():
     """review finding 2 — 빈 문자열도 벙어리가 되는 것과 같다."""
-    h = Harness(generate=lambda brief, history: "")
+    h = Harness(generate=lambda role, brief, history: "")
     h.d.start()
     h.clear()
     h.ended("mc", "c1")
@@ -556,7 +562,7 @@ def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
     """review finding 2 — `_answer` 쪽 폴백도 같은 이유로 조용히 넘기지 않는다."""
     calls = {"n": 0}
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         calls["n"] += 1
         if calls["n"] == 1:
             return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
@@ -627,7 +633,7 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     gen_started = threading.Event()
     gen_release = threading.Event()
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         gen_started.set()
         gen_release.wait(timeout=5.0)
         return "도슨트 대사"
@@ -858,7 +864,7 @@ def test_사회자_대사가_도슨트_생성에_실제로_넘어간다():
     스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다."""
     본것: list[list[dict]] = []
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         본것.append(list(history))
         return "도슨트 대사"
 
@@ -1059,7 +1065,7 @@ def test_받아치기도_이력에_남는다():
 
 def test_생성_결과가_너무_짧으면_경고한다():
     """조용히 짧게 나오는 것이 지금 문제의 본질이다 — 최소한 로그에는 드러나야 한다."""
-    h = Harness(generate=lambda brief, hist: "네.")
+    h = Harness(generate=lambda role, brief, hist: "네.")
     h.d.start()
     h.ended("mc", "c1")
     assert any("짧다" in w for w in h.warnings), h.warnings
@@ -1073,7 +1079,7 @@ def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는�
     """
     calls = {"n": 0}
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         calls["n"] += 1
         if calls["n"] == 1:
             return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
@@ -1111,7 +1117,7 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
     gate = threading.Event()
     calls = {"n": 0}
 
-    def gen(brief, history):
+    def gen(role, brief, history):
         calls["n"] += 1
         if calls["n"] == 1:
             return ""        # 1세대: 빈 문자열 → 폴백으로 갈린다(표시가 True 가 된다)
@@ -1142,10 +1148,15 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
 
 
 def test_슬롯이_다르면_서로를_지우지_않는다():
-    """도슨트 해설 생성이 받아치기 슬롯을 밀어내면 받아치기가 통째로 사라진다."""
+    """도슨트 해설 생성이 받아치기 슬롯을 밀어내면 받아치기가 통째로 사라진다.
+
+    `_spawn_generate(slot, role, brief, fallback, label)` — 슬롯은 "밀어내지
+    않을 자리", `role` 은 "어느 페르소나로 말할지" 다. 이 태스크가 role 을
+    시그니처에 더했다(이후 태스크가 전부 이 5-인자 형태를 쓴다).
+    """
     h = Harness()
-    h.d._spawn_generate("docent", "해설 지시", "해설 폴백", "c1")
-    h.d._spawn_generate("after", "받아치기 지시", "받아치기 폴백", "c1:after")
+    h.d._spawn_generate("docent", "docent", "해설 지시", "해설 폴백", "c1")
+    h.d._spawn_generate("after", "mc", "받아치기 지시", "받아치기 폴백", "c1:after")
     ready_d, tok_d = h.d._snapshot_slot("docent")
     ready_a, tok_a = h.d._snapshot_slot("after")
     assert ready_d is not ready_a, "두 슬롯이 같은 Event 를 쓴다"

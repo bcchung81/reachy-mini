@@ -28,7 +28,7 @@ def server():
     warnings: list[str] = []
     s = StageServer(
         sheet,
-        generate=lambda brief, history: "도슨트 대사",
+        generate=lambda role, brief, history: "도슨트 대사",
         warn=warnings.append,
     )
     s.warnings = warnings
@@ -233,7 +233,7 @@ def test_빠른_재연결에서_새_연결을_끊긴_것으로_보고하지_않�
     warnings: list[str] = []
     s = StageServer(
         sheet,
-        generate=lambda brief, history: "도슨트 대사",
+        generate=lambda role, brief, history: "도슨트 대사",
         warn=warnings.append,
     )
     s.director.on_connect("docent")  # 도슨트는 시종일관 붙어 있다고 가정한다
@@ -358,7 +358,7 @@ def test_같은_역할로_다시_붙으면_옛_연결을_닫고_경고한다(ser
 def strict_server():
     sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
     warnings: list[str] = []
-    s = StageServer(sheet, generate=lambda b, h: "도슨트 대사",
+    s = StageServer(sheet, generate=lambda r, b, h: "도슨트 대사",
                     expect_units={"mc": "AAA"}, warn=warnings.append)
     s.warnings = warnings
     from websockets.sync.server import serve as ws_serve

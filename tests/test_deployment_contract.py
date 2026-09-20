@@ -215,7 +215,7 @@ def test_로봇이_보낸_보고가_감독의_상태를_실제로_옮긴다():
 
     server = StageServer(
         CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
-        generate=lambda brief, history: "도슨트 대사",
+        generate=lambda role, brief, history: "도슨트 대사",
         warn=lambda m: None,
     )
     server.director.on_connect("mc")
