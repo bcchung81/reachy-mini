@@ -1,0 +1,163 @@
+# 조사 산출물 — 17-rover (원격 무선조종 차량: 행성 탐사).  조사일 2026-09-20
+# 스키마 설명은 `01-intro.yaml` 머리말에 있다.
+#
+# `unverifiable` 는 "웹에서 확인할 수 없어 비워 둔 것" 목록이다.
+#
+# ⚠️ 이 섹션은 기존 큐시트에서 **사실 오류 둘과 용어 어긋남 하나**가 나왔다.
+#    corrections 를 먼저 읽는다. 특히 '초저지연 원격조종' 은 행성 간 거리에서는
+#    **물리적으로 불가능**한 이야기다.
+#
+# 통신 지연은 거리에 따라 변하므로 **반드시 범위로** 말한다.
+
+id: "17-rover"
+title: "원격 무선조종 차량 — 행성 탐사"
+gaze: audience
+topic: "전파로 다른 천체의 차량을 움직인다는 것 — 그리고 빛의 속도라는 한계"
+
+facts:
+  # ── 화성: 지연 ────────────────────────────────────────
+  - claim: "지구와 화성의 거리는 3,390만 마일(5,460만 km, 빛으로 약 3분)에서
+      2억4,870만 마일(4억 20만 km, 약 22.4분)까지 변한다. 즉 전파의 **편도** 이동시간은
+      궤도 위치에 따라 약 3분에서 약 22.4분 사이다."
+    source: "NASA Science — Mars Relay Network https://science.nasa.gov/mars/mars-relay-network/
+      (원문: The distance between Earth and Mars varies between 33.9 million miles
+      (54.6 million kilometers, or about 3 minutes light time) to 248.7 million miles
+      (400.2 million kilometers), or about 22.4 minutes)"
+    grade: A
+    note: "**단일 수치로 말하지 않는다.** 거리에 따라 변하므로 '약 3분에서 22분대' 라는
+      범위로 말한다. 왕복은 그 두 배다."
+  - claim: "이 지연 때문에 지구에서 조이스틱으로 로버를 실시간 조종할 수 없다. 관제팀은 미리
+      계획한 명령을 보내고 로버는 그것을 다음 날 실행한다."
+    source: "NASA JPL — NASA's Self-Driving Perseverance Mars Rover 'Takes the Wheel'
+      https://www.jpl.nasa.gov/news/nasas-self-driving-perseverance-mars-rover-takes-the-wheel/
+      (원문: Because of the radio signal delay between Earth and Mars, they can't simply move
+      the rover forward with a joystick)"
+    grade: A
+
+  # ── 화성: 자율주행 ────────────────────────────────────
+  - claim: "그래서 퍼서비어런스는 AutoNav 라는 자율주행 기능을 쓴다. 전방 지형의 3D 지도를
+      만들어 위험을 식별하고, 지구 관제사의 추가 지시 없이 장애물을 피하는 경로를 스스로 짠다."
+    source: "NASA JPL — 'Takes the Wheel' (원문: Called AutoNav, this enhanced system makes 3D
+      maps of the terrain ahead, identifies hazards, and plans a route around any obstacles
+      without additional direction from controllers back on Earth)"
+    grade: A
+  - claim: "AutoNav 를 쓸 때 퍼서비어런스의 잠재 최고 속도는 시속 120 m(393 ft)이고,
+      이전 세대 AutoNav 를 쓴 큐리오시티는 시속 약 20 m(66 ft)였다."
+    source: "NASA JPL — 'Takes the Wheel'"
+    grade: A
+    note: "사람 걸음의 수백 분의 1이다. 이 느림이 '지연을 견디는 자율성' 의 대가라는 점이 훅이다."
+
+  # ── 화성: 중계와 단절 ─────────────────────────────────
+  - claim: "화성 로버는 지구로 직접 보내는 대신 상공을 지나는 궤도선에 최대 2 Mbps 로 데이터를
+      보낸다. 궤도선은 더 큰 무선장비와 더 많은 태양 전력, 더 규칙적인 지구 교신 기회를 갖는다.
+      또 화성의 자전 때문에 로버는 하루 약 12시간 지구를 직접 볼 수 없다."
+    source: "NASA Science — Mars Relay Network"
+    grade: A
+  - claim: "2년마다 약 2주간 지구와 화성이 태양을 사이에 두고 반대편에 놓이는 '화성 태양합
+      (solar conjunction)' 이 오면 NASA 는 명령 송신을 중단한다. 태양 코로나의 뜨거운 이온화
+      가스가 전파를 교란하기 때문이다. 관제팀은 2주치 명령을 미리 보내 놓고 기다린다."
+    source: "NASA JPL — What's Mars Solar Conjunction, and Why Does It Matter?
+      https://www.jpl.nasa.gov/news/whats-mars-solar-conjunction-and-why-does-it-matter/"
+    grade: A
+
+  # ── 달: 아폴로 월면차는 원격조종이 아니다 ─────────────
+  - claim: "아폴로 월면차(Lunar Roving Vehicle, LRV)는 **우주비행사가 직접 타고 운전**한
+      차량이다. 아폴로 15호는 데이비드 스콧과 짐 어윈, 16호는 존 영과 찰스 듀크,
+      17호는 진 서넌과 해리슨 슈미트가 몰았다. 두 좌석 사이의 T자형 핸드컨트롤러로 구동모터 4개,
+      조향모터 2개, 브레이크를 조작했다."
+    source: "NASA NSSDCA — The Apollo Lunar Roving Vehicle
+      https://nssdc.gsfc.nasa.gov/planetary/lunar/apollo_lrv.html"
+    grade: A
+  - claim: "아폴로 월면차 주행거리는 15호 27.8 km(주행시간 3시간 2분), 16호 26.7 km(3시간 26분),
+      17호 35.9 km(4시간 26분)다."
+    source: "NASA NSSDCA — The Apollo Lunar Roving Vehicle"
+    grade: A
+
+  # ── 달: 진짜 원격조종 로버 ────────────────────────────
+  - claim: "지구에서 원격조종한 최초의 월면 로버는 소련의 루노호트 1호다. 1970년 11월 10일
+      발사돼 11월 17일 비의 바다(Sea of Rains)에 연착륙했고, 총 10,540 m 를 주행했다.
+      세 번의 태음일 동안 작동할 계획이었으나 열한 번의 태음일 동안 작동했고, 운용은
+      1971년 10월 4일 공식 종료됐다. 2만 장이 넘는 TV 영상과 200장이 넘는 파노라마를 보냈다."
+    source: "NASA NSSDCA — Luna 17 / Lunokhod 1
+      https://nssdc.gsfc.nasa.gov/nmc/spacecraft/display.action?id=1970-095A"
+    grade: A
+  - claim: "루노호트 1호는 '다른 천체에 착륙한 최초의 원격조종 주행 로봇' 이었고, 지구의
+      5인 관제팀이 로버가 보낸 영상을 보며 주행 명령을 보냈다."
+    source: "Wikipedia — Lunokhod programme (원문: the five-man team of controllers on Earth who
+      sent driving commands to the rover in real time / Lunokhod 1 was the first roving
+      remote-controlled robot to land on another world)"
+    grade: B
+
+  # ── 왜 달은 되고 화성은 안 되는가 ─────────────────────
+  - claim: "달까지의 평균 거리는 384,400 km(근지점 363,300 km, 원지점 405,500 km)다.
+      이 거리를 빛의 속도로 나누면 편도 약 1.3초, 왕복 약 2.6초다. 화성의 편도 3~22분대와
+      비교하면 달은 사람이 보면서 조종할 수 있는 범위, 화성은 아니다."
+    source: "NASA NSSDCA Moon Fact Sheet https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+      (거리) + 빛의 속도 299,792,458 m/s(국제단위계 정의값)로 나눈 계산값"
+    grade: A
+    note: "광행시간 자체는 NASA 페이지에 적힌 값이 아니라 거리를 광속으로 나눈 **계산값**이다.
+      전문가 수준에서 이 점을 밝히고 말한다."
+
+unverifiable:
+  - "체험관에 어떤 로버 모형과 달 표면 조형이 있는지, 모형이 아폴로 LRV 를 본뜬 것인지
+    루노호트를 본뜬 것인지 — 체험관 고유 정보, 현장 확인 필요.
+    **아래 corrections 의 첫 항목이 적용되는지가 여기에 달려 있다.**"
+  - "증강현실 체험의 미션 내용(물·생명체·광물자원의 흔적 찾기)과 조작 방식 —
+    체험관 고유 정보, 현장 확인 필요."
+  - "체험이 상정한 천체가 달인지 화성인지 '미지의 행성' 인지 — 체험관 고유 정보, 현장 확인 필요."
+
+corrections:
+  - "⚠️ 현재 `data/cues.yaml` 의 '아폴로호의 월면차 … 지구에서 탐사로봇을 조종해' 는
+    **두 가지를 섞은 사실 오류다.** 아폴로 월면차(LRV)는 원격조종 차량이 아니라 우주비행사가
+    직접 타고 핸드컨트롤러로 운전한 차량이다(NASA NSSDCA). 지구에서 원격조종한 월면차는
+    소련의 루노호트 1호(1970)다. → 전시 모형이 아폴로 월면차라면 '원격조종' 과 묶어 말하지
+    않는다. 원격조종 이야기를 하려면 루노호트를 든다."
+  - "⚠️ 현재 큐시트의 '미래의 초저지연 전파응용 원격조종' 은 **행성 간 거리에서 물리적으로
+    불가능한 이야기다.** 전파는 빛의 속도로만 가므로 지구-화성 편도 지연은 약 3분~22.4분이고
+    (NASA Mars Relay Network) 기술이 발전해도 줄지 않는다. 실제 화성 로버가 AutoNav 자율주행을
+    쓰는 이유가 바로 이것이다(NASA JPL). → '초저지연 원격조종' 은 지상 5G 응용의 이야기이고,
+    행성 탐사는 정반대로 **'지연을 견디는 자율성'** 의 이야기다. 이 대비를 훅으로 삼는다."
+  - "현재 큐시트는 '미지의 **행성** 탐사' 와 '**월면**차' 를 한 문장 안에서 함께 쓴다.
+    달은 행성이 아니라 지구의 위성이므로 용어가 어긋난다. 전시 콘셉트가 확인되기 전까지는
+    '달' 인지 '행성' 인지를 단정하지 말고 '다른 천체' 로 말한다."
+
+briefs:
+  초등:
+    mc_brief: "여기서 우주 자동차를 몰아볼 수 있다는 것으로 기대를 열고 도슨트에게 넘긴다."
+    docent_brief: "아주 멀리 있는 자동차를 전파로 움직인다는 것, 그런데 너무 멀면 '가!' 라고
+      말해도 그 말이 도착하는 데 한참 걸려서 차가 스스로 조심하며 가야 한다는 것.
+      비유 중심 — 소리를 질러도 한참 뒤에야 들리는 아주 먼 친구. **숫자·연도·이름은 하나도
+      말하지 않는다.** '아폴로 월면차를 지구에서 조종했다' 고 말하지 않는다."
+  중고등:
+    mc_brief: "지구에서 다른 천체의 차를 조종한다는 게 정말 가능한지 도슨트에게 묻는다."
+    docent_brief: "핵심 훅은 '전파는 빛의 속도라서 빠르지만, 우주에서는 그것도 느리다' 는 대비.
+      달은 왕복 2~3초라 사람이 화면을 보며 조종할 수 있어서 1970년 소련의 루노호트가 실제로
+      그렇게 움직였다는 것, 화성은 편도로도 몇 분에서 20분대가 걸려 실시간 조종이 불가능하고
+      그래서 로버가 스스로 길을 찾는다는 것. **아폴로 월면차는 우주비행사가 직접 탄 차이지
+      원격조종이 아니라는 구분**을 짚는다. 연도만 말하고 정확한 수치는 말하지 않는다."
+  일반:
+    mc_brief: "원격조종 차량 코너가 무엇을 하는 곳인지 묻고, 실시간 조종이 되는지 되짚어 묻는다."
+    docent_brief: "전파가 빛의 속도로 가도 지구와 화성 사이는 거리에 따라 편도로 약 3분에서
+      20분대가 걸린다는 것(**반드시 범위로 말한다**), 그래서 화성 로버는 조이스틱으로 몰 수
+      없고 미리 보낸 계획을 다음 날 실행하며 스스로 장애물을 피해 간다는 것, 달은 왕복 2~3초
+      수준이라 사정이 달라서 1970년 루노호트 1호는 지구의 관제팀이 화면을 보며 실제로 몰았다는 것,
+      **아폴로 월면차는 그와 달리 우주비행사가 직접 타고 운전한 차**라는 것.
+      개략 수치까지만 쓰고 정확한 값은 전문가 수준에 남긴다."
+  전문가:
+    mc_brief: "빛의 속도가 만드는 지연 예산을 전제로 깔고, 원격조종과 자율성의 경계가
+      어디서 갈리는지 도슨트에게 묻는다."
+    docent_brief: "지구-화성 거리 5,460만 km(약 3분 광행시간)~4억 20만 km(약 22.4분)라는
+      NASA 수치를 그대로 말하고, 편도·왕복을 구분한다. 화성 로버는 이 지연 때문에 실시간
+      조종이 불가능해 AutoNav 로 전방 3D 지형도를 만들어 경로를 스스로 계획하며,
+      그 대가로 퍼서비어런스 잠재 최고속도가 시속 120 m(큐리오시티는 시속 약 20 m)에 그친다는 것.
+      직접 송신 대신 궤도선 중계를 쓰며 최대 2 Mbps, 자전 때문에 하루 약 12시간 지구 가시선이
+      없다는 것, 2년마다 약 2주간 태양합으로 명령 송신을 중단한다는 것까지.
+      달은 평균 384,400 km 로 광행시간 편도 약 1.3초·왕복 약 2.6초(거리를 광속으로 나눈 계산값)라
+      원격조종이 성립했고, 루노호트 1호는 1970년 11월 17일 착륙해 10,540 m 를 주행했으며
+      지구의 5인 관제팀이 몰았다는 것. **아폴로 LRV 는 승무원 탑승 조종 차량**(15호 27.8 km,
+      16호 26.7 km, 17호 35.9 km)이라는 구분을 분명히 한다.
+      마지막으로 '초저지연 원격조종' 은 지상 응용의 개념이고 행성 탐사의 설계 목표는 정반대로
+      지연을 견디는 자율성이라는 점을 정리한다."
+
+mc: "체험관에는 행성 탐사 체험도 있다고 들었어요. 도슨트, 원격 무선조종 차량 코너는 무엇을 하는 곳인가요?"
+mc_after: "지연 때문에 로봇이 스스로 판단해야 한다는 게 인상적이네요. 궁금한 점 있으실까요?"
