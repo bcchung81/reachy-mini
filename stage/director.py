@@ -11,7 +11,14 @@ import threading
 import time
 from typing import Callable
 
-from stage.cues import QA_ACK_LINES, Cue, CueSheet, is_advance
+from stage.cues import (
+    ADVANCE_HINT,
+    QA_ACK_LINES,
+    QUESTION_PROMPTS,
+    Cue,
+    CueSheet,
+    is_advance,
+)
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.mc_cache import cache_key
 
@@ -68,7 +75,18 @@ QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음�
 
 # 이보다 짧은 생성 결과는 해설이 아니다. 경고만 하고 그대로 쓴다 — 버리면
 # 정적이 되는데 그게 더 나쁘다. 목표 분량은 Task 3 에서 수준 프로필로 올라간다.
+#
+# 받아치기(`role="mc"`)에도 같은 값이 걸린다 — 우연이 아니라 같은 수치다.
+# `stage/prompts.py::_MC_MIN_CHARS` 가 사회자에게 "40~120자" 를 **수준과 무관하게**
+# 주므로(해설하지 않는 역할이라 분량이 수준을 따르지 않는다), 40자 미만은 사회자
+# 프롬프트를 모델이 안 지켰다는 뜻이다. 받아치기에 도슨트 분량을 따로 얹을 필요가
+# 없는 이유이기도 하다 — 역할별 분량은 프롬프트 쪽에 이미 갈려 있다.
 MIN_CHARS = 40
+
+# 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
+# `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
+# 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
+SPEAKER_LABEL = {"mc": "사회자", "docent": "도슨트"}
 
 
 class UnitMismatch(RuntimeError):
@@ -129,8 +147,18 @@ class Director:
         #   token       — 세대 번호. 슬롯마다 따로 센다. 하나로 뭉쳐 두면 한
         #                 슬롯을 가는 것만으로 다른 슬롯의 진행 중인 생성까지
         #                 세대가 어긋나 버려진다.
+        #
+        # 지금 쓰는 슬롯은 셋이다:
+        #   "docent"      — 도슨트 해설과 질문 응답(둘 다 도슨트가 이어서 말할 자리)
+        #   "after_spare" — 받아치기 **예비**. 섹션 시작에 도슨트 *지시문*만 보고 만든다.
+        #   "after"       — 받아치기 **실제**. 도슨트가 *실제로 한 말*을 보고 만든다.
+        # 예비와 실제를 **다른 슬롯**에 둔 이유: 같은 슬롯 안에서는 "마지막 하나만
+        # 산다"(`_spawn_generate` 가 `text` 를 비우고 세대를 올린다). 한 칸에 담으면
+        # 실제를 띄우는 순간 예비가 지워져, 실제가 늦을 때 쓰려던 여유분이 사라진다
+        # — 예비 생성이 통째로 죽은 LLM 호출이 된다.
         self._slots: dict[str, dict] = {}
         self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
+        self._q_i = 0     # 생성된 받아치기에 붙일 질문 유도를 돌아가며 쓰는 커서
         # 슬롯을 읽고 쓰는 락. "세대 확인 + 결과 반영"을 한 번에 묶어 그 사이에
         # `_spawn_generate` 가 끼어드는 경합을 막는다. 슬롯이 여럿이어도 락은
         # **하나로 둔다** — 쥐는 구간이 딕셔너리 한 칸을 읽고 쓰는 정도라 쪼갤
@@ -335,41 +363,59 @@ class Director:
             # 끝난 뒤에도 다시 도슨트 몫을 트리거해 자기 대사를 무한 반복하는
             # 버그가 났었다.
             cue = self._sheet.current()
+            # 도슨트 해설을 내보낼 때 **실제 반응**(받아치기) 생성을 띄울 큐.
+            # 해설 갈래에서만 세운다 — `:qa`(질문 응답) 뒤에는 받아치지 않으므로
+            # 그 자리에서 생성을 띄우면 아무도 안 읽는 LLM 호출만 남는다.
+            after_of: Cue | None = None
             if cue_id == cue.id:
                 # 수준별 브리프를 쓴다(계획 보완 Step 5b) — 옛 `cue.docent_brief`
                 # 를 그대로 두면 여기 폴백만 수준을 안 따라, 사전 생성이 늦어
                 # 유예시간을 넘길 때마다 초등이든 전문가든 같은 문장이 나간다.
-                pending = ("docent", f"{cue.id}:docent", cue.brief_for(self._level_name)[1], cue.id)
+                pending = ("docent", "docent", f"{cue.id}:docent",
+                           cue.brief_for(self._level_name)[1], cue.id)
+                if cue.mc_after:
+                    after_of = cue
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
                 # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
-                pending = ("docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa")
+                pending = ("docent", "docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa")
+            elif cue_id == f"{cue.id}:docent" and cue.mc_after:
+                # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
+                # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
+                # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
+                # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
+                #
+                # 이 갈래도 **해설과 같은 길**(락을 놓고 기다렸다가 다시 본다)을
+                # 탄다. 고정 대사를 그 자리에서 읽던 예전과 달리, 도슨트가 실제로
+                # 한 말을 보고 만든 반응을 기다려야 하기 때문이다.
+                #
+                # 폴백 사다리는 셋이다: 실제 → 예비 → 큐시트. 예비(`after_spare`)는
+                # 섹션 시작에 띄워 뒀으므로 지금쯤 대개 준비돼 있다 — 준비된 것만
+                # 가져온다(`_slot_text` 는 기다리지 않는다). 없으면 큐시트 원문이다.
+                pending = ("after", "mc", f"{cue.id}:after",
+                           self._slot_text("after_spare") or cue.mc_after,
+                           f"{cue.id}:after")
             else:
-                if cue_id == f"{cue.id}:docent" and cue.mc_after:
-                    # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
-                    # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
-                    # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
-                    # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
-                    self._remember(f"사회자: {cue.mc_after}")
-                    cmds = cmds + self._machine.speak(
-                        self._who("mc"), f"{cue.id}:after", cue.mc_after, gaze="audience"
-                    )
                 # 기다릴 것이 없는 갈래는 여기서 끝난다 — 락을 놓지 않는다.
                 self._emit(cmds)
                 return
 
+            slot, role_pref, speak_cue_id, fallback, label = pending
             # 기다릴 이벤트와 세대를 **락 안에서** 찍어 둔다. 대기 중
             # `_spawn_generate` 가 슬롯을 갈아끼워도 우리는 우리 세대의 결과를
             # 기다린 뒤 아래 검사에서 물러난다. 겹쳐 잡는 순서는 언제나
             # `self._lock` → `_gen_lock` 이다.
-            ready, token = self._snapshot_slot("docent")
+            ready, token = self._snapshot_slot(slot)
+            # 마지막 큐인지도 **여기서** 찍는다 — 아래 관람객 창구 안내가 '다음'
+            # 을 붙일지 정할 때 쓴다. 대기 중에 커서가 움직일 수 있으므로 판단
+            # 근거는 이 순간의 것이어야 한다.
+            is_last = self._sheet.done
             # **여기서는 아무것도 내보내지 않는다.** `cmds` 의 마이크 열기 지시는
             # 2구간에서 도슨트의 닫기와 한 번에 나가 coalesce 가 덮는다 — 그래야
             # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
             # (끼어든 쪽이 이미 제 지시를 내보냈다).
 
-        role_pref, speak_cue_id, fallback, label = pending
-        text = self._await_pending("docent", ready, token, fallback, label)
+        text = self._await_pending(slot, ready, token, fallback, label)
 
         with self._lock:
             if self._machine.state is not State.LISTENING:
@@ -382,7 +428,10 @@ class Director:
                 return
             # 세대 재확인도 **찍었던 그 슬롯**을 본다. 다른 슬롯의 세대가 올라간
             # 것은 이 대사와 무관하다 — 뭉뚱그려 보면 멀쩡한 해설이 버려진다.
-            _, current_token = self._snapshot_slot("docent")
+            # 슬롯 이름을 `pending` 에 실어 온 이유가 이것이다: 여기에 "docent" 를
+            # 박아 두면 받아치기 갈래가 **남의 슬롯 세대**와 자기 토큰을 비교해,
+            # 멀쩡한 받아치기가 매번 "다음 턴으로 넘어갔다" 며 버려진다.
+            _, current_token = self._snapshot_slot(slot)
             if token != current_token:
                 # 상태만으로는 못 잡는 틈이다: 대기 중 다음 큐가 시작되고 그
                 # 사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다.
@@ -392,7 +441,27 @@ class Director:
                     f"[{label}] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다"
                 )
                 return
-            self._remember(f"도슨트: {text}")
+            if slot == "after" and text != cue.mc_after:
+                # 큐시트 원문으로 물러난 경우는 건드리지 않는다 — 그것은 데이터
+                # 테스트가 이미 안내를 못박은 **안전한** 문장이고(마지막 큐의
+                # 마무리 인사처럼 일부러 '다음' 을 뺀 것도 있다), 거기에 또 붙이면
+                # 사람이 다듬어 둔 대사를 감독이 망친다.
+                text = self._ensure_visitor_cue(text, label, is_last)
+            self._remember(f"{SPEAKER_LABEL[role_pref]}: {text}")
+            if after_of is not None:
+                # 받아치기 **실제** — 도슨트가 방금 한 말을 보고 만든다. 도슨트
+                # 발화(~7-8초)가 이 생성 시간을 산다. 예비 슬롯은 건드리지 않는다
+                # (그것이 이 생성이 늦을 때의 여유분이다).
+                #
+                # `_remember` **뒤에** 띄운다 — 생성 스레드는 `list(self.history)`
+                # 를 찍어가므로, 먼저 띄우면 사회자가 방금 나간 해설을 못 본 채
+                # 반응을 만든다. `_begin_cue` 가 사회자 대사를 먼저 넣는 것과 같은 이유다.
+                self._spawn_generate(
+                    "after", "mc",
+                    f"도슨트가 방금 이렇게 말했다: {text}. "
+                    "짧게 받고 관람객에게 질문을 권한다.",
+                    after_of.mc_after, f"{after_of.id}:after",
+                )
             # 역할은 **여기서 다시 정한다.** 기다리는 사이에 상대가 끊겼으면 남은
             # 한 대가 읽어야 한다(설계 §7). 1구간의 판단을 들고 가면 이미 끊긴
             # 로봇에게 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고 버린다
@@ -530,13 +599,49 @@ class Director:
 
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        # role="docent" — 이 슬롯은 도슨트 해설 전용이다. 사회자 받아치기용
-        # 슬롯(role="mc")은 이 태스크에서 만들지 않는다(뒤 태스크 몫).
+        # role="docent" — 이 슬롯은 도슨트 해설 전용이다.
         # **수준별 브리프를 쓴다** — 옛 `cue.docent_brief` 를 그대로 두면
         # 사회자 대사만 수준을 따르고 해설은 수준과 무관해진다(계획 보완
         # Step 5b). 폴백도 같은 값을 줘야 한다 — `brief_for` 가 브리프 없는
         # 섹션에서는 옛 `docent_brief` 를 돌려주므로 폴백 의미가 그대로다.
         self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
+
+        # **받아치기 슬롯 둘은 큐가 바뀔 때마다 반드시 갈아끼운다.**
+        #
+        # 예전에는 이 메서드가 `"docent"` 슬롯만 건드렸다. 받아치기가 고정
+        # 대사이던 동안에는 그래도 됐지만 생성이 들어오면 얘기가 다르다 —
+        # 이전 큐의 세대가 그대로 남으면 `on_speaking_ended` 2구간의 세대
+        # 검사가 **큐 전환을 못 본다.** 그 검사는 "내가 기다리는 동안 이
+        # 슬롯이 갈렸는가" 로 다음 턴을 판정하는데, 큐 전환이 슬롯을 안
+        # 갈면 판정 근거 자체가 없다. 상태 검사(LISTENING 인가)로도 못
+        # 잡는다 — 다음 큐의 사회자 발화까지 끝나면 상태가 **다시
+        # LISTENING** 이라(`test_대기_중_다음_큐가_돌아…` 와 같은 틈) 이전
+        # 섹션 반응이 그대로 새 섹션에 얹힌다.
+        #
+        # "실제" 슬롯은 무조건 비운다 — 그것은 **이전 큐의 도슨트 발화**를
+        # 보고 만든 것이라 새 큐에서는 언제나 남의 대사다.
+        self._invalidate_slot("after")
+        if cue.mc_after:
+            # 받아치기 **예비** — 도슨트 지시문만 보고 미리 만든다. 실제 반응이
+            # 늦을 때의 여유분이다(폴백 사다리: 실제 → 예비 → 큐시트). 해설 다음
+            # 순번이라 급한 쪽이 먼저 나간다.
+            #
+            # slot="after_spare" / role="mc" — **다른 축이다.** 슬롯은 "어느 자리의
+            # 생성인가", role 은 "어느 페르소나로 말할 것인가" 다. role 이 "mc" 라서
+            # `stage/prompts.py` 가 사회자 분량(1~3문장·40~120자, 수준과 무관하게
+            # 고정)을 준다 — 받아치기가 저절로 짧게 나오는 것이 그 덕이다.
+            self._spawn_generate(
+                "after_spare", "mc",
+                f"도슨트가 이런 해설을 할 것이다: {docent_brief}. "
+                "짧게 받고 관람객에게 질문을 권한다.",
+                cue.mc_after, f"{cue.id}:after-예비",
+            )
+        else:
+            # 받아치기가 없는 섹션이다. 그래도 **끊는다** — 안 끊으면 이전 큐의
+            # 예비가 슬롯에 남아, 이 슬롯을 읽는 경로가 하나만 더 생기면
+            # (다음 태스크들이 그렇다) 이전 섹션 반응이 조용히 새어 나온다.
+            self._invalidate_slot("after_spare")
+
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, mc_text, gaze=cue.gaze)
         )
@@ -556,8 +661,22 @@ class Director:
 
         `role` 은 **슬롯과 다른 축이다** — 슬롯은 "어느 자리의 생성인가"(밀어내기
         방지), `role` 은 "어느 페르소나로 말할 것인가"(`stage/prompts.py`).
-        지금은 도슨트 해설·질문 응답 모두 `role="docent"` 다. 사회자 받아치기용
-        슬롯이 생기면 그때 `role="mc"` 를 쓴다.
+        도슨트 해설·질문 응답은 `role="docent"`, 사회자 받아치기(예비·실제)는
+        `role="mc"` 다 — 그래야 사회자가 도슨트 분량으로 떠들지 않는다.
+        """
+        token = self._bump_slot(slot)
+        threading.Thread(
+            target=self._generate_pending,
+            args=(slot, role, brief, token, fallback, label),
+            daemon=True,
+        ).start()
+
+    def _bump_slot(self, slot: str) -> int:
+        """슬롯 한 칸의 세대를 올리고 내용을 비운다. 새 세대 번호를 준다.
+
+        `_spawn_generate`(새 생성을 띄운다)와 `_invalidate_slot`(그냥 끊는다)이
+        **같은 코드**를 쓰게 묶어 뒀다 — 둘이 갈라지면 한쪽만 `is_fallback` 을
+        내리거나 한쪽만 대기자를 깨우는 식으로 어긋난다.
         """
         with self._gen_lock:
             s = self._slots.setdefault(
@@ -577,12 +696,63 @@ class Director:
             s["is_fallback"] = False
             s["ready"] = threading.Event()
             s["token"] += 1
-            token = s["token"]
-        threading.Thread(
-            target=self._generate_pending,
-            args=(slot, role, brief, token, fallback, label),
-            daemon=True,
-        ).start()
+            return s["token"]
+
+    def _invalidate_slot(self, slot: str) -> None:
+        """이 슬롯의 세대를 끊는다 — 진행 중인 생성 결과를 버리고 남은 텍스트도 지운다.
+
+        새 생성을 띄우지 않는 "갈아끼움" 이다. 큐가 바뀔 때 받아치기 슬롯에 쓴다
+        (`_begin_cue` 의 주석 참고). 슬롯이 아직 없으면 **빈 칸으로 만들어 둔다**
+        — 그래야 `_snapshot_slot` 이 KeyError 없이 돌고, "한 번도 안 띄운 슬롯"
+        과 "끊긴 슬롯" 이 같은 모양이 된다.
+        """
+        self._bump_slot(slot)
+
+    def _slot_text(self, slot: str) -> str:
+        """그 슬롯에 **이미 들어온 진짜 생성 결과**. 없으면 빈 문자열.
+
+        기다리지 않는다 — 이 값은 "지금 준비돼 있으면 쓴다" 는 여유분이다.
+        폴백으로 갈린 텍스트(`is_fallback`)는 주지 않는다: 그것은 생성 결과가
+        아니라 호출부가 이미 아는 큐시트 문장이라, 폴백의 폴백으로 넘기면 같은
+        값이 두 번 도는 셈이고 로그에는 "예비가 살아 있다" 는 착시만 남는다.
+
+        **`self._lock` 을 쥔 채 부른다** — 락 순서는 언제나 `_lock` → `_gen_lock`
+        한 방향뿐이다(`__init__` 의 `self._lock` 주석).
+        """
+        with self._gen_lock:
+            s = self._slots.get(slot)
+            if s is None or s["is_fallback"] or not s["ready"].is_set():
+                return ""
+            return s["text"] or ""
+
+    def _ensure_visitor_cue(self, text: str, label: str, is_last: bool) -> str:
+        """생성된 받아치기에 **관람객 창구 안내**가 있는지 보고, 없으면 붙인다.
+
+        왜 필요한가: 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2). 큐시트의
+        고정 `mc_after` 19곳은 전부 "질문 받습니다 + '다음' 이라고 하면 넘어갑니다"
+        를 달고 있고 데이터 테스트가 그것을 못박는다(`tests/test_stage_cues.py::
+        test_모든_큐에_받아치기가_있고_다음을_안내한다`). 받아치기를 생성으로
+        바꾸면 그 보장이 **폴백에만** 남는다 — 생성이 성공할수록 관람객이 참여
+        방법을 모르게 되는 비대칭이라, 그 자리를 여기서 메운다.
+
+        `is_last` 면 '다음' 안내는 붙이지 않는다 — 더 넘어갈 데가 없다. 데이터
+        쪽 가드가 `cues[:-1]` 로 마지막을 빼는 것과 같은 예외다.
+        """
+        missing: list[str] = []
+        if not any(q in text for q in QUESTION_PROMPTS):
+            missing.append(QUESTION_PROMPTS[self._q_i % len(QUESTION_PROMPTS)])
+            self._q_i += 1
+        if not is_last and "다음" not in text:
+            missing.append(ADVANCE_HINT)
+        if not missing:
+            return text
+        # **조용히 기우지 않는다.** 이 경고가 잦으면 사회자 프롬프트가 질문 유도를
+        # 못 시키고 있다는 뜻이라, 고칠 곳은 여기가 아니라 페르소나다.
+        self._warn(
+            f"[{label}] 생성된 받아치기에 관람객 창구 안내가 없다 — "
+            f"고정 문장을 붙인다: {' '.join(missing)}"
+        )
+        return " ".join([text, *missing])
 
     def _snapshot_slot(self, slot: str) -> tuple[threading.Event, int]:
         """기다릴 이벤트와 세대를 찍는다. **`self._lock` 을 쥔 채 부른다.**
@@ -640,10 +810,11 @@ class Director:
         없이 써서, 유예가 끝나는 바로 그 순간에 생성 스레드가 막 넣은 진짜 대사를
         폴백으로 덮어쓸 수 있었다. 돌려주기만 하면 그 경합 자체가 없다.
 
-        호출부(`on_speaking_ended`)가 사회자 몫과 구분되는 id(`:docent`/`:qa`)를
-        붙인다. 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 그대로 쓰이므로, 도슨트
-        몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인 모드에서 같은 로봇이 도슨트 몫을
-        끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로 오판돼 무한 반복한다.
+        호출부(`on_speaking_ended`)가 사회자 여는 대사와 구분되는 id(`:docent`/
+        `:qa`/`:after`)를 붙인다. 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 그대로
+        쓰이므로, 뒤따르는 몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인 모드에서 같은
+        로봇이 도슨트 몫을 끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로
+        오판돼 무한 반복한다.
         """
         if not ready.wait(timeout=GENERATE_GRACE_S):
             self._warn(f"[{label}] 대사 생성이 늦다 — 폴백")
