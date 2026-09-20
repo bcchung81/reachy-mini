@@ -274,8 +274,8 @@ def test_대기_중_다음_큐가_돌아_LISTENING_이_돼도_옛_대사는_안_
     """상태만 보는 판정으로는 못 잡는 틈. 대기 중 `n` 으로 다음 큐가 시작되고 그
     사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다 — 그때 깨어난 옛
     대기가 상태만 보면 "아직 내 차례" 로 오해해 **이전 섹션 해설**을 읽고, 뒤이어
-    새 큐의 핸드오프가 `TurnError` 를 맞는다. 세대 토큰(`_gen_token`)이 이것을
-    가른다 — `_generate_pending` 이 늦게 끝난 생성을 버릴 때 쓰는 것과 같은 장치다.
+    새 큐의 핸드오프가 `TurnError` 를 맞는다. 슬롯의 세대 토큰(`_slots[…]["token"]`)
+    이 이것을 가른다 — `_generate_pending` 이 늦게 끝난 생성을 버릴 때 쓰는 것과 같은 장치다.
     """
     gates = {"첫 지시": threading.Event(), "둘째 지시": threading.Event()}
 
@@ -485,16 +485,26 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
 
     release_c1 = threading.Event()
+    c1_entered = threading.Event()
+    c1_box: dict[str, threading.Thread] = {}
 
     def gen(brief, history):
         if brief == "첫 지시":
+            # **생성 스레드 자신을 여기서 집는다.** 예전에는 `h.d._gen_thread` 를
+            # 봤는데, 슬롯이 이름별로 갈리면서 "마지막에 띄운 스레드" 하나를
+            # 들고 있는 그 필드가 없어졌다(슬롯이 둘이면 뒤에 띄운 것이 앞의
+            # 핸들을 덮어써 엉뚱한 스레드를 join 하게 된다). 콜백 안에서 부르는
+            # `current_thread()` 가 곧 그 생성 스레드라 감독 내부를 안 들춰도 된다.
+            c1_box["t"] = threading.current_thread()
+            c1_entered.set()
             release_c1.wait(5.0)
             return "c1 늦은 대사"
         return f"[{brief} 로 만든 대사]"
 
     h = Harness(generate=gen)
     h.d.start()
-    c1_thread = h.d._gen_thread  # c1 의 생성 스레드 — 곧 유예시간을 넘긴다
+    assert c1_entered.wait(2.0), "c1 생성 스레드가 시작되지 않았다"
+    c1_thread = c1_box["t"]  # c1 의 생성 스레드 — 곧 유예시간을 넘긴다
 
     h.ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
     assert h.says()[-1] == ("docent", "첫 지시")
@@ -641,7 +651,7 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
     d.start()  # 사회자 데드라인 설정
     assert gen_started.wait(2.0), "생성 스레드가 시작되지 않았다"
     gen_release.set()
-    assert d._pending_ready.wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
+    assert d._snapshot_slot("docent")[0].wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
 
     clock.t = 10_000.0  # 사회자 데드라인을 확실히 지난 시각으로 만든다
 
@@ -854,7 +864,7 @@ def test_사회자_대사가_도슨트_생성에_실제로_넘어간다():
 
     h = Harness(generate=gen)
     h.d.start()
-    assert h.d._pending_ready.wait(2.0)
+    assert h.d._snapshot_slot("docent")[0].wait(2.0)
     assert 본것 and 본것[0][-1]["content"] == "사회자: 사회자 첫 대사"
 
 
@@ -1079,3 +1089,16 @@ def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는�
     h.ended("mc", "c1:ack")
     assert any("빈 문자열" in w for w in h.warnings), h.warnings
     assert not any("짧다" in w for w in h.warnings), h.warnings
+
+
+def test_슬롯이_다르면_서로를_지우지_않는다():
+    """도슨트 해설 생성이 받아치기 슬롯을 밀어내면 받아치기가 통째로 사라진다."""
+    h = Harness()
+    h.d._spawn_generate("docent", "해설 지시", "해설 폴백", "c1")
+    h.d._spawn_generate("after", "받아치기 지시", "받아치기 폴백", "c1:after")
+    ready_d, tok_d = h.d._snapshot_slot("docent")
+    ready_a, tok_a = h.d._snapshot_slot("after")
+    assert ready_d is not ready_a, "두 슬롯이 같은 Event 를 쓴다"
+    assert ready_d.wait(3.0) and ready_a.wait(3.0)
+    assert h.d._await_pending("docent", ready_d, tok_d, "x", "c1") != \
+           h.d._await_pending("after", ready_a, tok_a, "y", "c1:after")

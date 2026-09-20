@@ -99,25 +99,33 @@ class Director:
         # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
         # 참고.
         self._speak_budget: float = 0.0
-        # 생성 슬롯 하나 — 도슨트 해설(큐 시작 때)과 질문 응답(확인 멘트 때)이
-        # 같이 쓴다. 한 턴에 생성은 하나뿐이다.
-        self._pending_text: str | None = None
-        # `_pending_text` 가 **진짜 생성 결과**인지 `_generate_pending` 이 이미
-        # 폴백으로 갈아치운 것인지 표시한다. 리뷰 지적: 이 표시가 없으면
-        # `_await_pending` 의 MIN_CHARS 검사가 폴백 문자열에도 걸려 "생성 실패"
-        # 경고 뒤에 "생성 결과가 짧다" 는 **틀린** 경고가 덧붙는다(예: QA_FALLBACK
-        # 은 37자로 MIN_CHARS 40 미만이다) — 로그만 보면 LLM 이 짧게 답한 것으로
-        # 오판한다.
-        self._pending_is_fallback = False
-        self._pending_ready = threading.Event()
-        self._gen_thread: threading.Thread | None = None
+        # 생성 슬롯 — **이름으로 나뉜다.** 예전에는 하나뿐이라 "한 턴에 생성은
+        # 하나" 였는데, 사회자 받아치기가 도슨트 해설과 동시에 살아 있어야 해서
+        # 나눴다. 슬롯이 하나면 나중에 띄운 생성이 앞선 생성을 밀어내고, 밀려난
+        # 쪽은 세대 검사에 걸려 통째로 버려진다 — 받아치기를 만들었더니 해설이
+        # 사라지는 식이다.
+        #
+        # 한 칸은 네 항목이다:
+        #   text        — 생성 결과(또는 폴백)
+        #   is_fallback — 그 `text` 가 **진짜 생성 결과**인지, `_generate_pending`
+        #                 이 빈 문자열·예외를 만나 이미 폴백으로 갈아치운 것인지.
+        #                 이 표시가 없으면 `_await_pending` 의 MIN_CHARS 검사가
+        #                 폴백 문자열에도 걸려 "생성 실패" 경고 뒤에 "생성 결과가
+        #                 짧다" 는 **틀린** 경고가 덧붙는다(QA_FALLBACK 은 37자,
+        #                 MIN_CHARS 는 40) — 로그만 보면 LLM 이 37자짜리 답을 낸
+        #                 것으로 오판한다.
+        #   ready       — 이 세대의 결과가 들어왔음을 알리는 이벤트
+        #   token       — 세대 번호. 슬롯마다 따로 센다. 하나로 뭉쳐 두면 한
+        #                 슬롯을 가는 것만으로 다른 슬롯의 진행 중인 생성까지
+        #                 세대가 어긋나 버려진다.
+        self._slots: dict[str, dict] = {}
         self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
-        # 세대 번호 — `_begin_cue` 가 부를 때마다 하나씩 올라간다. 늦게 끝난
-        # 생성 스레드가 이미 다음 큐로 넘어간 뒤에 결과를 들고 오면, 세대가
-        # 안 맞으므로 버린다. 락은 "세대 확인 + 결과 반영"을 한 번에 묶어
-        # 그 사이에 `_begin_cue` 가 끼어드는 경합을 막는다.
+        # 슬롯을 읽고 쓰는 락. "세대 확인 + 결과 반영"을 한 번에 묶어 그 사이에
+        # `_spawn_generate` 가 끼어드는 경합을 막는다. 슬롯이 여럿이어도 락은
+        # **하나로 둔다** — 쥐는 구간이 딕셔너리 한 칸을 읽고 쓰는 정도라 쪼갤
+        # 이득이 없고, 쪼개면 `self._lock` → `_gen_lock` 한 방향뿐이던 락 순서가
+        # 슬롯 수만큼 갈래를 늘려 교착을 따지기 어려워진다.
         self._gen_lock = threading.Lock()
-        self._gen_token = 0
 
         # 진입점 직렬화. `stage/server.py` 가 붙은 뒤로는 `tick()` 이 타이머
         # 스레드에서, 나머지는 커넥션마다 다른 스레드에서 불린다. 이 락이
@@ -340,15 +348,14 @@ class Director:
             # `_spawn_generate` 가 슬롯을 갈아끼워도 우리는 우리 세대의 결과를
             # 기다린 뒤 아래 검사에서 물러난다. 겹쳐 잡는 순서는 언제나
             # `self._lock` → `_gen_lock` 이다.
-            with self._gen_lock:
-                ready, token = self._pending_ready, self._gen_token
+            ready, token = self._snapshot_slot("docent")
             # **여기서는 아무것도 내보내지 않는다.** `cmds` 의 마이크 열기 지시는
             # 2구간에서 도슨트의 닫기와 한 번에 나가 coalesce 가 덮는다 — 그래야
             # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
             # (끼어든 쪽이 이미 제 지시를 내보냈다).
 
         role_pref, speak_cue_id, fallback, label = pending
-        text = self._await_pending(ready, token, fallback, label)
+        text = self._await_pending("docent", ready, token, fallback, label)
 
         with self._lock:
             if self._machine.state is not State.LISTENING:
@@ -359,9 +366,10 @@ class Director:
                     "바뀌었다 — 이 대사는 얹지 않는다"
                 )
                 return
-            with self._gen_lock:
-                stale = token != self._gen_token
-            if stale:
+            # 세대 재확인도 **찍었던 그 슬롯**을 본다. 다른 슬롯의 세대가 올라간
+            # 것은 이 대사와 무관하다 — 뭉뚱그려 보면 멀쩡한 해설이 버려진다.
+            _, current_token = self._snapshot_slot("docent")
+            if token != current_token:
                 # 상태만으로는 못 잡는 틈이다: 대기 중 다음 큐가 시작되고 그
                 # 사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다.
                 # 그대로 얹으면 이전 섹션 해설이 나가고, 뒤이어 새 큐의
@@ -478,36 +486,61 @@ class Director:
 
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        self._spawn_generate(cue.docent_brief, cue.docent_brief, cue.id)
+        self._spawn_generate("docent", cue.docent_brief, cue.docent_brief, cue.id)
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, cue.mc, gaze=cue.gaze)
         )
 
-    def _spawn_generate(self, brief: str, fallback: str, label: str) -> None:
-        """생성 슬롯을 비우고 스레드를 띄운다. 이력은 **이 시점의 사본**이다.
+    def _spawn_generate(self, slot: str, brief: str, fallback: str, label: str) -> None:
+        """슬롯 **하나**를 비우고 스레드를 띄운다. 이력은 **이 시점의 사본**이다.
 
-        도슨트 해설과 질문 응답이 같은 슬롯을 쓴다 — 세대 번호가 하나라
-        늦게 끝난 쪽은 어느 것이든 버려진다.
+        다른 이름의 슬롯은 건드리지 않는다 — 받아치기 생성이 도슨트 해설 슬롯을
+        밀어내면 해설이 통째로 사라진다(`tests/test_stage_director.py::
+        test_슬롯이_다르면_서로를_지우지_않는다`).
+
+        같은 슬롯 안에서는 여전히 "마지막 하나만 산다". 도슨트 해설(큐 시작 때)과
+        질문 응답(확인 멘트 때)은 둘 다 도슨트가 이어서 말할 자리라 같은 슬롯을
+        쓰고, 늦게 끝난 쪽은 세대 검사에 걸려 버려진다.
         """
         with self._gen_lock:
+            s = self._slots.setdefault(
+                slot,
+                {"text": None, "is_fallback": False, "ready": threading.Event(), "token": 0},
+            )
             # **이전 세대를 기다리던 스레드를 깨운다.** 그 세대의 결과는 이제
             # 버려지므로(`_generate_pending` 의 토큰 검사) 아무도 그 이벤트를
             # 세팅해 주지 않는다 — 깨우지 않으면 `_await_pending` 이 유예시간
             # 내내 좀비로 남고, 그 스레드는 커넥션 수신 루프라 그동안 그 로봇의
             # 메시지가 밀린다.
-            self._pending_ready.set()
-            self._pending_text = None
-            self._pending_is_fallback = False
-            self._pending_ready = threading.Event()
-            self._gen_token += 1
-            token = self._gen_token
-        self._gen_thread = threading.Thread(
-            target=self._generate_pending, args=(brief, token, fallback, label),
+            s["ready"].set()
+            s["text"] = None
+            # 새 세대는 아직 폴백이 아니다. 여기서 안 내리면 이전 세대가 남긴
+            # True 가 그대로 붙어 있어, 이번 세대가 진짜로 짧은 대사를 내놓아도
+            # MIN_CHARS 경고가 걸리지 않는다 — 조용히 짧아지는 것을 못 잡는다.
+            s["is_fallback"] = False
+            s["ready"] = threading.Event()
+            s["token"] += 1
+            token = s["token"]
+        threading.Thread(
+            target=self._generate_pending, args=(slot, brief, token, fallback, label),
             daemon=True,
-        )
-        self._gen_thread.start()
+        ).start()
 
-    def _generate_pending(self, brief: str, token: int, fallback: str, label: str) -> None:
+    def _snapshot_slot(self, slot: str) -> tuple[threading.Event, int]:
+        """기다릴 이벤트와 세대를 찍는다. **`self._lock` 을 쥔 채 부른다.**
+
+        두 락을 겹쳐 잡는 순서는 언제나 `self._lock` → `_gen_lock` 한 방향뿐이다
+        (`__init__` 의 `self._lock` 주석). 이 헬퍼를 락 밖에서 부르면 그 순서가
+        깨지는 것은 아니지만, 찍은 세대와 그때의 상태가 서로 다른 순간의 것이
+        되어 `on_speaking_ended` 의 "깨어나서 다시 본다" 가 무의미해진다.
+        """
+        with self._gen_lock:
+            s = self._slots[slot]
+            return s["ready"], s["token"]
+
+    def _generate_pending(
+        self, slot: str, brief: str, token: int, fallback: str, label: str
+    ) -> None:
         is_fallback = False
         try:
             text = self._generate(brief, list(self.history))
@@ -524,25 +557,28 @@ class Director:
             is_fallback = True
 
         with self._gen_lock:
-            if token != self._gen_token:
+            s = self._slots[slot]
+            if token != s["token"]:
                 # 이 결과가 나올 즈음 이미 다음 큐(또는 다음 질문)가 시작됐다.
+                # 세대는 **슬롯마다** 세므로, 다른 슬롯이 갈린 것은 여기에 걸리지
+                # 않는다 — 받아치기를 새로 띄웠다고 진행 중인 해설을 버리지 않는다.
                 # 그대로 반영하면 엉뚱한 대사가 조용히 새어 들어간다 — 버리고 소리 낸다.
                 self._warn(f"[{label}] 대사 생성이 늦게 끝나 버려졌다(다음 턴으로 이미 넘어갔다)")
                 return
-            self._pending_text = text
+            s["text"] = text
             # 폴백 여부를 텍스트와 **한 락 안에서 같이** 남긴다 — 따로 쓰면
             # `_await_pending` 이 텍스트는 새 세대, 표시는 이전 세대 것을 섞어
             # 읽을 수 있다.
-            self._pending_is_fallback = is_fallback
-            ready = self._pending_ready
+            s["is_fallback"] = is_fallback
+            ready = s["ready"]
         ready.set()
 
     def _await_pending(
-        self, ready: threading.Event, token: int, fallback: str, label: str
+        self, slot: str, ready: threading.Event, token: int, fallback: str, label: str
     ) -> str:
-        """생성된 대사를 기다린다 — **진입 락 밖에서.** 유예를 넘기면 폴백을 읽는다.
+        """`slot` 에 생성된 대사를 기다린다 — **진입 락 밖에서.** 유예를 넘기면 폴백을 읽는다.
 
-        폴백을 `self._pending_text` 에 **쓰지 않는다.** 예전에는 여기서 `_gen_lock`
+        폴백을 슬롯의 `text` 에 **쓰지 않는다.** 예전에는 여기서 `_gen_lock`
         없이 써서, 유예가 끝나는 바로 그 순간에 생성 스레드가 막 넣은 진짜 대사를
         폴백으로 덮어쓸 수 있었다. 돌려주기만 하면 그 경합 자체가 없다.
 
@@ -555,12 +591,13 @@ class Director:
             self._warn(f"[{label}] 대사 생성이 늦다 — 폴백")
             return fallback
         with self._gen_lock:
-            if token != self._gen_token:
-                # 다음 턴이 슬롯을 갈면서 깨워 준 것이다 — 이 값은 의미가 없다.
+            s = self._slots[slot]
+            if token != s["token"]:
+                # 다음 턴이 **이 슬롯을** 갈면서 깨워 준 것이다 — 이 값은 의미가 없다.
                 # 경고는 호출부가 한 번만 낸다(거기서 버리는 것이 확정된다).
                 return fallback
-            text = self._pending_text
-            is_fallback = self._pending_is_fallback
+            text = s["text"]
+            is_fallback = s["is_fallback"]
         if not text:
             self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
             text = fallback
@@ -586,7 +623,7 @@ class Director:
         # 콘솔 `a` 와 tick() 이 그동안 멈췄다(리뷰 C1). 사회자의 확인 멘트가 흐르는
         # 동안 스레드에서 만든다 — 관람객에게도 정적 대신 반응이 먼저 간다(B3).
         # 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
-        self._spawn_generate(brief, QA_FALLBACK, f"{cue.id}:qa")
+        self._spawn_generate("docent", brief, QA_FALLBACK, f"{cue.id}:qa")
         ack = QA_ACK_LINES[self._ack_i % len(QA_ACK_LINES)]
         self._ack_i += 1
         self._remember(f"사회자: {ack}")
