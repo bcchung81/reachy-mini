@@ -65,6 +65,17 @@ TIMEOUT_MARGIN_S = 15.0
 # 도슨트 대사 생성이 사회자 발화보다 늦어질 때 더 기다려 줄 한도.
 GENERATE_GRACE_S = 8.0
 
+# 섹션 끝에서 관람객 질문을 기다리는 시간. 넘으면 다음 섹션으로 간다.
+#
+# 예전에는 기한이 없었다 — 마이크만 열린 채 관람객이 **"다음" 이라는 낱말을
+# 알아야** 시연이 진행됐고(`is_advance`), 관람객은 그 규칙을 모른다. 사회자가
+# 말로 묻고(`QUESTION_PROMPTS`), 그래도 조용하면 여기서 스스로 넘어간다.
+#
+# **비대칭이라 넉넉한 쪽으로 잡는다.** 짧으면 말을 꺼내려던 관람객을 자르는데
+# 그건 회복이 안 된다(사람이 무안해서 다시 입을 열지 않는다). 길면 정적이
+# 흐를 뿐이고 운영자가 콘솔 `n` 으로 즉시 넘긴다.
+QUESTION_WAIT_S = 8.0
+
 # 대화 이력 상한(줄 수). 큐시트가 19섹션이고 그 위에 관람객 질문이 얹히므로
 # 상한이 없으면 시연이 진행될수록 프롬프트가 계속 커진다 — TTFT 가 늘고,
 # 컨텍스트 창을 넘기면 **앞이 조용히 잘려 나간다**(무엇이 잘렸는지 아무도
@@ -156,6 +167,16 @@ class Director:
         self.history: list[dict] = []
 
         self._deadline: float | None = None
+        # 관람객 질문을 기다리는 기한. **`_deadline` 과 절대 섞지 않는다.**
+        #
+        # 둘은 뜻도 복구 동작도 다르다. `_deadline` 은 "말하라고 보냈는데
+        # 끝났다는 보고가 안 온다"(고장)라 `force_listening` 으로 **복구**하고
+        # "응답이 없다" 고 경고한다. 이쪽은 "관람객이 조용하다"(정상)라 다음
+        # 섹션으로 **진행**하고 경고하지 않는다. 한 필드로 합치면 침묵할
+        # 때마다 로그에 "발화 종료 응답이 없다" 가 찍혀, 시연 중 로그를 보는
+        # 사람이 로봇이 먹통이 된 줄 안다 — 게다가 진짜 타임아웃 복구가
+        # 관람객 침묵에 밀려 안 돈다.
+        self._question_deadline: float | None = None
         # 방금 보낸 `say` 에 준 시간 예산. `speaking_started` 가 오면 그 시점을
         # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
         # 참고.
@@ -327,6 +348,13 @@ class Director:
             if self._machine.state is not State.LISTENING:
                 self._warn(f"발화 중({self._machine.state.value})에 들린 말을 버린다: {text!r}")
                 return
+            # 관람객이 입을 열었다 — 침묵이 아니다. 아래 두 갈래는 대개 곧바로
+            # 발화로 넘어가고 `tick()` 의 침묵 갈래는 LISTENING 일 때만 보지만,
+            # **LISTENING 에 그대로 머무는 갈래가 실제로 있다**: 마지막 큐에서
+            # 진행 신호를 받으면 `_next_locked()` 가 "마지막 큐다" 만 경고하고
+            # 상태를 안 바꾼다. 그때 기한이 살아 있으면 8초 뒤 같은 경고가
+            # 한 번 더 찍힌다 — 상태 검사에만 기대면 이런 자리가 조용히 는다.
+            self._question_deadline = None
             if is_advance(text):
                 self._next_locked()
                 return
@@ -386,6 +414,20 @@ class Director:
                 self._warn_ghost("speaking_ended", role, cue_id, seq)
                 return
             self._deadline = None
+            # **침묵 기한도 여기서 끊는다 — 유령 검사 아래에서.**
+            #
+            # 왜 끊는가: 아래 갈래 중 셋은 곧바로 다음 대사를 내보내지만, 그
+            # 사이 `_await_pending` 이 락을 놓고 최대 `GENERATE_GRACE_S` 동안
+            # 기다리는데 그동안 상태는 **LISTENING 이다**. 이전 섹션 끝에
+            # 걸어 둔 기한이 그때 만료되면 `tick()` 이 "침묵이다" 로 읽고
+            # 다음 섹션을 시작해 버린다 — 관람객은 조용한 적이 없는데 해설이
+            # 통째로 건너뛰어진다. 쉬러 들어가는 갈래(아래 `else`)가 그 자리에서
+            # 새로 건다.
+            #
+            # 왜 유령 검사 **아래**인가: 늦게 도착한 유령 `speaking_ended`
+            # (콘솔 `r` 뒤의 중단된 발화 등)가 관람객을 기다리는 기한을 꺼
+            # 버리면, 그 뒤로는 침묵이 아무리 길어도 자동 진행이 안 된다.
+            self._question_deadline = None
 
             # 큐 id 만으로 "사회자 몫이 방금 끝났다" 를 판정한다 — role 은
             # 안 본다. 도슨트 몫에는 아래에서 `f"{cue.id}:docent"` 처럼 구분되는
@@ -410,12 +452,38 @@ class Director:
                 if cue.mc_after:
                     after_of = cue
             elif cue_id == f"{cue.id}:ack":
-                # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
-                # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
+                # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다.
+                # 그 답이 끝나면 아래 `:qa` 갈래가 사회자에게 한 번 더 묻게 한다.
                 pending = _Pending(
                     "docent", "docent", f"{cue.id}:qa",
                     QA_FALLBACK, FB_QA, f"{cue.id}:qa",
                 )
+            elif cue_id == f"{cue.id}:qa":
+                # **도슨트 답이 끝났다 — 사회자가 짧게 다시 묻는다.**
+                #
+                # 예전에는 여기서 곧장 LISTENING 으로 갔다. 마이크는 열리지만
+                # 사회자가 아무 말도 안 하므로, 관람객은 자기 차례인지 다음
+                # 질문을 해도 되는지 알 수 없다 — 받아치기(`:after`)가 창구를
+                # 말로 열어 주는 것과 같은 이유로 여기도 말이 필요하다(리뷰 B2).
+                # 이 발화가 끝나야 LISTENING 으로 가고 침묵 기한이 걸린다.
+                #
+                # **여기서는 생성하지 않는다.** 고정 문장이라 지연이 0 이다.
+                # 질문마다 LLM 을 한 번 더 띄우면 답을 들은 관람객이 다음
+                # 물음을 꺼내기까지 몇 초를 더 기다려야 하는데, 이 자리에서
+                # 얻는 것(말투의 다양성)보다 잃는 것(반응 지연)이 크다.
+                # 같은 말이 반복되면 녹음처럼 들리므로 돌아가며 쓴다.
+                prompt = QUESTION_PROMPTS[self._q_i % len(QUESTION_PROMPTS)]
+                self._q_i += 1
+                # 이력에도 남긴다 — 다음 생성이 "사회자가 방금 질문을 권했다"
+                # 를 못 보면 받아치기·해설이 같은 권유를 또 한다.
+                self._remember(f"사회자: {prompt}")
+                self._emit(
+                    cmds
+                    + self._machine.speak(
+                        self._who("mc"), f"{cue.id}:reask", prompt, gaze="audience"
+                    )
+                )
+                return
             elif cue_id == f"{cue.id}:docent" and cue.mc_after:
                 # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
                 # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
@@ -439,6 +507,11 @@ class Director:
                 )
             else:
                 # 기다릴 것이 없는 갈래는 여기서 끝난다 — 락을 놓지 않는다.
+                # **여기가 관람객 차례다**(받아치기·다시 묻기가 끝났거나 받아치기
+                # 없는 큐의 해설이 끝났다). 마이크가 열리는 바로 그 자리에서
+                # 침묵 기한을 건다 — 말로 물어 놓고 아무도 답하지 않으면
+                # `tick()` 이 다음 섹션으로 넘긴다.
+                self._question_deadline = self._now() + QUESTION_WAIT_S
                 self._emit(cmds)
                 return
 
@@ -600,20 +673,46 @@ class Director:
             self._begin_cue(prev)
 
     def tick(self) -> None:
-        """타임아웃 감시. 서버 루프가 주기적으로 부른다.
+        """기한 감시. 서버 루프가 주기적으로 부른다. **기한은 두 종류다.**
 
-        진입 락 아래에서 판정과 강제 전이를 한 번에 묶는다 — 그렇지 않으면
+        진입 락 아래에서 판정과 전이를 한 번에 묶는다 — 그렇지 않으면
         판정 직후 다른 스레드가 핸드오프를 끝내고, 그 뒤에야 이 메서드가
         옛 데드라인을 근거로 방금 말을 시작한 로봇의 마이크를 강제로 연다
         (불변식 ① 위반. `__init__` 의 `self._lock` 주석 참고).
+
+        둘을 `elif` 로 가르는 이유: 발화 기한이 살아 있다는 것은 누군가 말하는
+        중이라는 뜻이라 관람객 침묵을 따질 자리가 아니다. 지금은 아래 갈래가
+        상태까지 보므로 `if` 두 개로 써도 같게 돌지만, 그러면 "복구하자마자
+        같은 tick 이 섹션을 넘길 수도 있다" 를 **상태 검사 하나에만** 맡기게
+        된다 — 우선순위를 제어흐름에 박아 두면 그 검사를 나중에 누가 느슨하게
+        고쳐도 고장 복구가 섹션 건너뛰기로 둔갑하지 않는다.
         """
         with self._lock:
-            if self._deadline is None or self._now() < self._deadline:
-                return
-            role = self._machine.speaking_role
-            self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
-            self._deadline = None
-            self._emit(self._machine.force_listening(self._who("mc")))
+            if self._deadline is not None and self._now() >= self._deadline:
+                role = self._machine.speaking_role
+                self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
+                self._deadline = None
+                # 복구로 열린 마이크도 관람객 창구다 — 기한을 안 걸면 복구된
+                # 뒤로는 침묵이 아무리 길어도 운영자가 `n` 을 칠 때까지 정적이다.
+                self._question_deadline = self._now() + QUESTION_WAIT_S
+                self._emit(self._machine.force_listening(self._who("mc")))
+            elif (
+                self._question_deadline is not None
+                and self._now() >= self._question_deadline
+                # **LISTENING 일 때만 본다.** 기한은 쉬러 들어갈 때 걸리지만
+                # 그 뒤 관람객 질문이 들어오면 상태가 발화로 옮겨간다 — 그때
+                # 넘어가면 도슨트가 답하는 도중에 섹션이 바뀐다.
+                and self._machine.state is State.LISTENING
+            ):
+                # 침묵이 한도를 넘었다 — 다음 섹션으로 간다. **경고하지 않는다**:
+                # 정상 동작이고, 여기에 경고를 달면 섹션마다 찍혀서 바로 위의
+                # 진짜 신호("응답이 없다")가 그 안에 묻힌다.
+                #
+                # 먼저 끄고 부른다 — 마지막 큐면 `_next_locked()` 가 "마지막
+                # 큐다" 만 경고하고 상태를 안 바꾸므로, 안 끄면 그 경고가
+                # tick 마다(0.5초에 한 번) 반복된다.
+                self._question_deadline = None
+                self._next_locked()
 
     def abort(self) -> None:
         with self._lock:

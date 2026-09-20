@@ -103,12 +103,24 @@ MC_SPEAKING(cue.mc) ──ended──▶ DOCENT_SPEAKING(:docent)   ← 사회�
 DOCENT_SPEAKING(:docent) ──ended──▶ MC_SPEAKING(:after, cue.mc_after) ──ended──▶ LISTENING
                                      (mc_after 가 없으면 곧장 LISTENING)
 LISTENING ──heard("다음"류)──▶ 다음 큐 ──▶ MC_SPEAKING(cue.mc)
+LISTENING ──침묵 8초(QUESTION_WAIT_S)──▶ 다음 큐 ──▶ MC_SPEAKING(cue.mc)
 LISTENING ──heard(질문)──▶ MC_SPEAKING(:ack, 확인 멘트)   ← 이 동안 LLM 이 답을 생성(락 밖)
-MC_SPEAKING(:ack) ──ended──▶ DOCENT_SPEAKING(:qa) ──ended──▶ LISTENING
+MC_SPEAKING(:ack) ──ended──▶ DOCENT_SPEAKING(:qa)
+DOCENT_SPEAKING(:qa) ──ended──▶ MC_SPEAKING(:reask, 고정 질문 유도) ──ended──▶ LISTENING
 ```
 
 (2026-09-14 갱신) 받아치기 `mc_after` 와 질문 확인 멘트 `:ack` 는 **관람객에게 창구가 열렸음을
 말로 알리고, 그 시간에 LLM 지연을 숨긴다** — 둘 다 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
+
+(2026-09-21 갱신) 그 "말로 알린다" 를 **끝까지 밀었다.** 예전에는 섹션이 끝나면 마이크만 열리고
+관람객이 **'다음' 이라는 낱말을 알아야** 진행됐다 — 아무도 그 규칙을 모른다. 이제 ① 받아치기에
+질문 유도가 없으면 감독이 고정 문장을 붙이고(`Director._ensure_visitor_cue`), ② 도슨트 답이
+끝나면 사회자가 짧게 다시 묻고(`:reask`, 고정 문장이라 지연 0), ③ 그래도 조용하면 8초 뒤
+감독이 스스로 다음 섹션으로 간다. `is_advance` 는 그대로 산다 — 아는 사람은 즉시 넘길 수 있다.
+
+**관람객 대기 기한은 발화 타임아웃(`_deadline`)과 별도 필드다**(`_question_deadline`).
+앞은 "관람객이 조용하다"(정상 → 진행, 경고 없음), 뒤는 "말하라고 보냈는데 보고가 안 온다"
+(고장 → 강제 복구, 경고). 섞으면 침묵할 때마다 "응답이 없다" 가 찍혀 진짜 고장을 못 가린다.
 
 ### 4.2 불변식 — 이 설계의 전부
 

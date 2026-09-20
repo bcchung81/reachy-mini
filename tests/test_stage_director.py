@@ -385,6 +385,7 @@ def test_확인_멘트는_돌아가며_쓴다():
         seen.append(h.says()[0][1])
         h.ended("mc", "c1:ack")
         h.ended("docent", "c1:qa")
+        h.ended("mc", "c1:reask")   # 답 뒤에 사회자가 다시 묻는다 — 그것까지 끝나야 LISTENING
     assert len(set(seen)) == len(QA_ACK_LINES)
 
 
@@ -1570,10 +1571,13 @@ def test_실제_받아치기_지시문은_도슨트가_실제로_한_말을_담�
 
 
 def test_질문_응답_뒤에는_받아치기를_생성하지_않는다():
-    """`:qa` 뒤에는 받아치지 않는다 — 관람객은 이미 창구를 안다(방금 질문했다).
+    """`:qa` 뒤에는 **생성된** 받아치기를 띄우지 않는다.
 
     그 자리에서 생성을 띄우면 아무도 안 읽는 LLM 호출이 질문마다 하나씩 는다.
     `_spawn_generate` 가 세대를 **동기적으로** 올리므로 토큰으로 본다.
+
+    답 뒤에 사회자가 다시 묻기는 한다(`:reask`) — 그건 고정 문장이라 LLM 을
+    부르지 않는다. 이 테스트가 지키는 것이 바로 그 구분이다.
     """
     h = Harness(after=("고정 받아치기", ""))
     h.d.start()
@@ -1584,7 +1588,8 @@ def test_질문_응답_뒤에는_받아치기를_생성하지_않는다():
     h.d.on_heard("마르코니가 누구예요")
     h.ended("mc", "c1:ack")
     h.ended("docent", "c1:qa")
-    assert h.d.state is State.LISTENING      # 질문 응답 뒤에는 곧장 듣기로 간다
+    h.ended("mc", "c1:reask")                # 고정 문장으로 다시 묻고 끝난다
+    assert h.d.state is State.LISTENING
     _, after_tok = h.d._snapshot_slot("after")
     assert after_tok == before, "질문 응답 뒤에 받아치기 생성이 떴다"
 
@@ -1967,3 +1972,312 @@ def test_진행_안내만_붙을_때는_경고하지_않는다():
     said = [t for r, t in h.says() if r == "mc"][0]
     assert said == f"{line} {ADVANCE_HINT}", said
     assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
+
+
+# ── (D) 섹션 끝에 묻고, 침묵이면 스스로 넘어간다 ──────────────────────
+#
+# 예전에는 섹션이 끝나면 마이크만 열렸다. 관람객은 **"다음" 이라는 낱말을 알아야**
+# 시연을 진행시킬 수 있었는데(`is_advance`) 그 규칙을 아무도 알려주지 않았다.
+# 이제 사회자가 말로 묻고(`QUESTION_PROMPTS`), 그래도 조용하면 감독이 넘긴다.
+
+
+def test_침묵이_한도를_넘으면_다음_큐로_간다():
+    """관람객이 아무 말도 안 해도 시연은 계속돼야 한다.
+
+    8.1 은 `QUESTION_WAIT_S`(8.0) 를 막 넘긴 시각이다 — 상수를 줄이면
+    `test_침묵_한도_전에는_다음_큐로_가지_않는다` 가, 늘리면 이 테스트가 깨진다.
+    """
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")       # 받아치기 없는 큐 → 곧장 듣기
+    assert h.d.state is State.LISTENING
+    h.clear()
+    h.warnings.clear()
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")], h.says()
+    # **침묵 기한은 `_deadline` 과 다른 것이다.** 하나로 합치면 관람객이 조용할
+    # 때마다 "발화 종료 응답이 없다" 가 찍혀, 로그를 보는 사람이 로봇이 먹통이
+    # 된 줄 안다 — 그리고 진짜 타임아웃 복구가 침묵에 밀려 안 돈다.
+    assert not any("응답이 없다" in w for w in h.warnings), h.warnings
+
+
+def test_침묵_한도_전에는_다음_큐로_가지_않는다():
+    """7.9 초는 아직 관람객이 입을 열 시간이다 — 말을 꺼내려던 사람을 자르면
+    회복이 안 된다(무안해서 다시 입을 안 연다). 그래서 기한 검사 자체를 못박는다."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.clear()
+    h.clock.t = 7.9
+    h.d.tick()
+    assert h.says() == [], h.says()
+    assert h.d.state is State.LISTENING
+
+
+def test_질문이_들어오면_침묵_기한이_꺼진다():
+    """관람객이 입을 열었으면 침묵이 아니다.
+
+    기한을 끄는 것은 `tick()` 의 상태 검사와 **다른** 방어선이다. 상태에만
+    기대면, 답을 만드는 동안 LISTENING 에 머무는 갈래가 나중에 하나라도
+    생기는 순간 관람객이 말하는 도중에 섹션이 넘어간다 — 그 회귀는 시연장
+    에서만 드러난다. 그래서 기한 자체가 꺼졌는지를 값으로 본다.
+    """
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요")   # 질문 → 확인 멘트(MC_SPEAKING)
+    assert h.d._question_deadline is None, "질문을 받고도 침묵 기한이 살아 있다"
+    h.clear()
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.says() == [], "질문 처리 중인데 다음 큐로 넘어갔다"
+    assert h.d.state is State.MC_SPEAKING
+
+
+def test_기한이_걸린_채_다음_큐가_시작되면_침묵_판정을_하지_않는다():
+    """운영자 `n` 은 기한이 걸린 LISTENING 에서 곧장 발화로 옮겨간다 — 그 기한은
+    아직 살아 있다. `tick()` 이 상태를 안 보면 사회자가 말하는 중에
+    `_next_locked()` 가 불려 TurnError 로 터지거나 섹션이 건너뛰어진다.
+
+    `on_heard` 의 기한 끄기로는 이 자리를 못 막는다 — 관람객이 아니라 운영자가
+    넘긴 길이라 `on_heard` 를 지나지 않는다.
+    """
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")        # 침묵 기한이 8.0 에 걸린다
+    h.clock.t = 1.0
+    h.d.next()                            # 운영자가 기한 만료 전에 넘긴다
+    assert h.d.state is State.MC_SPEAKING
+    h.clear()
+    h.clock.t = 8.1                       # 침묵 기한은 지났고 발화 기한은 아직 멀다
+    h.d.tick()
+    assert h.says() == [], h.says()
+    assert h.d.state is State.MC_SPEAKING
+
+
+def test_유령_발화_종료는_침묵_기한을_끄지_않는다():
+    """콘솔 `r` 뒤 중단된 발화의 늦은 보고 같은 유령이 관람객 대기를 꺼 버리면,
+    그 뒤로는 침묵이 아무리 길어도 자동 진행이 안 된다 — 운영자가 `n` 을 칠
+    때까지 정적이다. 기한을 끄는 줄은 반드시 유령 검사 **아래**에 있어야 한다."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.clear()
+    h.d.on_speaking_ended("docent", "c1:docent", 999)   # seq 가 안 맞는 유령
+    assert any("유령" in w for w in h.warnings), h.warnings
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")], h.says()
+
+
+def test_마지막_큐에서_침묵이_이어져도_경고는_한_번뿐이다():
+    """마지막 큐에서는 넘어갈 데가 없다 — 그래도 서버 루프는 0.5초마다 tick 한다.
+    기한을 끄지 않고 `_next_locked()` 를 부르면 "마지막 큐다" 가 초당 두 번씩
+    찍혀 로그가 쓸모없어진다(그 로그로 시연 중 문제를 찾는다)."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    h.d.on_heard("다음")                    # c2 — 기본 시트의 마지막 큐
+    h.ended("mc", "c2"); h.ended("docent", "c2:docent")
+    h.clear()
+    h.warnings.clear()
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.says() == [], h.says()
+    h.clock.t = 30.0
+    h.d.tick()
+    assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
+
+
+def test_마지막_큐에서_진행_신호를_받으면_침묵_기한도_꺼진다():
+    """`_next_locked()` 는 마지막 큐에서 경고만 하고 **상태를 안 바꾼다** —
+    LISTENING 에 그대로 머무는 갈래다. `on_heard` 가 기한을 안 끄면 관람객이
+    "다음" 이라고 말한 8초 뒤에 같은 경고가 한 번 더 찍힌다."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    h.d.on_heard("다음")
+    h.ended("mc", "c2"); h.ended("docent", "c2:docent")
+    h.warnings.clear()
+    h.d.on_heard("다음")                    # 마지막 큐 — 경고 한 번
+    assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
+    h.clock.t = 8.1
+    h.d.tick()
+    assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
+
+
+def test_타임아웃_복구_뒤에도_침묵이_이어지면_다음_큐로_간다():
+    """강제 복구로 열린 마이크도 관람객 창구다. 거기서 기한을 안 걸면 고장
+    복구가 **영구 정지**가 된다 — 운영자가 `n` 을 칠 때까지 아무 일도 안 난다."""
+    h = Harness()
+    h.d.start()
+    h.clock.t = len("사회자 첫 대사") / CHARS_PER_SEC + TIMEOUT_MARGIN_S + 0.1
+    h.d.tick()                              # 발화 종료 보고가 없다 → 강제 복구
+    assert h.d.state is State.LISTENING
+    h.clear()
+    h.clock.t += 8.1
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")], h.says()
+
+
+def test_생성을_기다리는_동안에는_침묵_기한이_섹션을_건너뛰지_않는다():
+    """**이 작업에서 가장 위험한 자리다.**
+
+    `on_speaking_ended` 는 도슨트 대사를 기다리는 동안 락을 놓는데, 그때 상태는
+    이미 LISTENING 이다(1구간이 상태기계를 옮겨 둔다). 이전 섹션 끝에 걸어 둔
+    기한이 하필 그 대기 중에 만료되면 `tick()` 이 "침묵이다" 로 읽고 다음 섹션을
+    시작한다 — 관람객은 조용한 적이 없는데 섹션 하나가 통째로 사라진다.
+    1구간이 기한을 끄고, 쉬러 들어가는 갈래가 새로 거는 이유다.
+
+    운영자 `n` 으로 재현한다: 기한이 걸린 채 다음 큐로 넘어가고, 그 큐의 도슨트
+    생성이 느리다.
+    """
+    gate = threading.Event()
+    started = threading.Event()
+
+    def gen(role, brief, hist):
+        if brief == "둘째 지시":
+            started.set()
+            gate.wait(5.0)
+        return f"[{brief} 로 만든 대사]"
+
+    sheet = CueSheet([
+        Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
+        Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "partner"),
+        Cue("c3", "셋째", "사회자 셋째 대사", "셋째 지시", "partner"),
+    ])
+    h = Harness(sheet=sheet, generate=gen)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")          # 침묵 기한이 8.0 에 걸린다
+    assert h.d.state is State.LISTENING
+
+    h.clock.t = 1.0
+    h.d.next()                              # 운영자가 기한 만료 전에 넘긴다
+    assert started.wait(2.0), "둘째 큐 도슨트 생성이 시작되지 않았다"
+
+    done = threading.Event()
+
+    def end_mc():
+        h.ended("mc", "c2")                 # 여기서 생성 대기에 들어간다
+        done.set()
+
+    waiter = threading.Thread(target=end_mc, daemon=True)
+    waiter.start()
+    # 대기 구간에 들어갔는지 상태로 본다 — `tick()` 은 진입 락을 잡으므로
+    # 1구간이 끝난 뒤에야 돈다(경합이 아니라 순서가 보장된다).
+    assert _wait_state(h, State.LISTENING), "생성 대기 구간에 들어가지 않았다"
+
+    h.clear()
+    h.clock.t = 8.1                         # c1 끝에 걸렸던 기한을 지난 시각
+    h.d.tick()
+    assert h.says() == [], f"해설을 기다리는 사이에 섹션이 건너뛰어졌다: {h.says()}"
+    assert h.d._sheet.current().id == "c2"
+
+    gate.set()
+    assert done.wait(3.0), "생성 대기 스레드가 안 끝났다"
+
+
+# ── (E) 질문에 답한 뒤에도 사회자가 다시 묻는다 ───────────────────────
+
+
+def test_질문_응답이_끝나면_사회자가_다시_묻는다():
+    """예전에는 `:qa` 뒤에 곧장 LISTENING 이었다 — 마이크만 열리고 사회자는
+    아무 말도 안 하니, 답을 들은 관람객은 더 물어도 되는지 알 수 없었다.
+    받아치기가 창구를 말로 여는 것과 같은 이유로 여기도 말이 필요하다(리뷰 B2).
+    """
+    from stage.cues import QUESTION_PROMPTS
+
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    h.clear()
+    h.ended("docent", "c1:qa")
+    assert h.says() == [("mc", QUESTION_PROMPTS[0])], h.says()
+    assert h.d.state is State.MC_SPEAKING
+    # 불변식 ① — 다시 묻는 동안에는 어느 마이크도 열리지 않는다.
+    assert all(open_ is False for _, open_ in h.mics()), h.mics()
+
+
+def test_다시_묻는_말이_끝나야_듣기로_가고_침묵_기한이_걸린다():
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    h.ended("docent", "c1:qa")
+    h.clear()
+    h.ended("mc", "c1:reask")
+    assert h.d.state is State.LISTENING
+    assert h.mics() == [("mc", True)]
+    h.clear()
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")], h.says()
+
+
+def test_다시_묻는_말은_생성을_띄우지_않는다():
+    """고정 문장이라 지연이 0 이다. 여기서 LLM 을 부르면 답을 들은 관람객이
+    다음 물음을 꺼내기까지 몇 초를 더 기다린다 — 얻는 것(말투)보다 잃는 것
+    (반응 지연)이 크다.
+
+    **세대 토큰으로 본다.** `_spawn_generate` 는 토큰을 **동기적으로** 올리지만
+    `gen_calls` 는 스레드가 돌아야 쌓인다 — 개수만 보면 "아직 안 돌았을 뿐"
+    인 것을 "안 띄웠다" 로 오판한다(간헐적으로 통과하는 테스트가 된다).
+    """
+    slots = ("docent", "after", "after_spare")
+    h = Harness(after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.ended("mc", "c1:after")
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    before = {s: h.d._snapshot_slot(s)[1] for s in slots}
+    h.ended("docent", "c1:qa")
+    assert {s: h.d._snapshot_slot(s)[1] for s in slots} == before
+
+
+def test_다시_묻는_말은_돌아가며_쓴다():
+    """같은 말이 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    seen = []
+    for _ in range(2):
+        h.d.on_heard("질문")
+        h.ended("mc", "c1:ack")
+        h.clear()
+        h.ended("docent", "c1:qa")
+        seen.append(h.says()[0][1])
+        h.ended("mc", "c1:reask")
+    assert seen[0] != seen[1], seen
+
+
+def test_다시_묻는_말도_이력에_남는다():
+    """이력은 하나다(설계 §5.2). 사회자가 방금 질문을 권한 것을 다음 생성이
+    못 보면, 이어지는 받아치기·해설이 같은 권유를 또 한다."""
+    from stage.cues import QUESTION_PROMPTS
+
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    h.clear()
+    h.ended("docent", "c1:qa")
+    said = h.says()[0][1]
+    assert h.d.history[-1] == {"role": "assistant", "content": f"사회자: {said}"}
+    assert said in QUESTION_PROMPTS, said
