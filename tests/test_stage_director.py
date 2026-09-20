@@ -1187,6 +1187,8 @@ def test_슬롯이_다르면_서로를_지우지_않는다():
     않을 자리", `role` 은 "어느 페르소나로 말할지" 다. 이 태스크가 role 을
     시그니처에 더했다(이후 태스크가 전부 이 5-인자 형태를 쓴다).
     """
+    from stage.director import FB_BRIEF, FB_SHEET, _Pending
+
     h = Harness()
     h.d._spawn_generate("docent", "docent", "해설 지시", "해설 폴백", "c1")
     h.d._spawn_generate("after", "mc", "받아치기 지시", "받아치기 폴백", "c1:after")
@@ -1194,8 +1196,10 @@ def test_슬롯이_다르면_서로를_지우지_않는다():
     ready_a, tok_a = h.d._snapshot_slot("after")
     assert ready_d is not ready_a, "두 슬롯이 같은 Event 를 쓴다"
     assert ready_d.wait(3.0) and ready_a.wait(3.0)
-    assert h.d._await_pending("docent", ready_d, tok_d, "x", "c1") != \
-           h.d._await_pending("after", ready_a, tok_a, "y", "c1:after")
+    pend_d = _Pending("docent", "docent", "c1:docent", "x", FB_BRIEF, "c1")
+    pend_a = _Pending("after", "mc", "c1:after", "y", FB_SHEET, "c1:after")
+    assert h.d._await_pending(pend_d, ready_d, tok_d) != \
+           h.d._await_pending(pend_a, ready_a, tok_a)
 
 
 def test_생성_콜백은_슬롯이_아니라_role_을_받는다():
@@ -1447,8 +1451,8 @@ def test_받아치기_실제_생성이_늦으면_예비를_읽는다(monkeypatch
 
     h = Harness(generate=gen, after=("고정 받아치기", ""))
     h.d.start()
+    h.ended("mc", "c1")                   # 여기서 예비·실제가 나란히 뜬다
     _wait_slot(h, "after_spare")          # 예비가 준비된 상태를 만든다
-    h.ended("mc", "c1")
     h.clear()
     h.ended("docent", "c1:docent")
     said = [t for r, t in h.says() if r == "mc"]
@@ -1484,7 +1488,7 @@ def test_예비도_실제도_늦으면_큐시트_고정_문장을_읽는다(monk
     gate.set()
 
 
-def test_예비_받아치기는_섹션_시작에_사회자_역할로_띄운다():
+def test_예비_받아치기는_도슨트_지시문을_사회자_역할로_받는다():
     """슬롯과 role 은 **다른 축이다**(`_spawn_generate(slot, role, …)`).
 
     대장 「값이 같은 두 인자를 서로 바꿔도 안 잡힌다」 — 도슨트 쪽은 slot 과 role
@@ -1501,12 +1505,45 @@ def test_예비_받아치기는_섹션_시작에_사회자_역할로_띄운다()
 
     h = Harness(after=("고정 받아치기", ""), generate=gen)
     h.d.start()
+    h.ended("mc", "c1")
     _wait_slot(h, "after_spare")
     spare = [(r, b) for r, b in seen if _SPARE_MARK in b]
     assert len(spare) == 1, seen
     role, brief = spare[0]
     assert role == "mc", f"예비 받아치기가 {role!r} 페르소나로 생성됐다"
-    assert "첫 지시" in brief, brief        # 도슨트 **지시문**을 보고 미리 만든다
+    assert "첫 지시" in brief, brief        # 도슨트 **지시문**을 보고 만든다
+
+
+def test_섹션_시작에는_도슨트_해설_생성만_띄운다():
+    """(리뷰 Important 1) **임계경로에 받아치기 생성을 얹지 않는다.**
+
+    `stage/__main__.py::build_generate` 는 LLM 호출 전체를 락 하나로 직렬화한다.
+    그런데 파이썬 `Lock` 은 FIFO 가 아니라, `_begin_cue` 가 도슨트 해설과 예비를
+    연달아 띄우면 **예비가 먼저 잡아 도슨트 해설 생성을 사회자 대사 한 벌만큼
+    통째로 미룰 수 있다.** 도슨트의 예산은 여는 대사 재생 + `GENERATE_GRACE_S`
+    8초뿐이고, 넘기면 폴백이 `docent_brief` 라 **도슨트가 지시문을 소리 내어
+    읽는다** — 이 작업이 숨기려던 지연을 이 작업이 새로 만드는 꼴이다.
+
+    그래서 섹션이 시작될 때 뜨는 생성은 **하나**여야 한다. 받아치기 두 벌은
+    도슨트 해설 생성이 끝난 뒤(도슨트 대사를 보낼 때) 나란히 뜬다.
+    """
+    seen: list[tuple[str, str]] = []
+
+    def gen(role, brief, hist):
+        seen.append((role, brief))
+        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
+
+    h = Harness(after=("고정 받아치기", ""), generate=gen)
+    h.d.start()
+    _wait_slot(h, "docent")
+    assert len(seen) == 1, f"섹션 시작에 생성이 {len(seen)}건 떴다: {seen}"
+    assert seen[0][0] == "docent", seen
+
+    h.ended("mc", "c1")                    # 도슨트 해설이 확정된 뒤에야
+    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
+    assert len(seen) == 3, seen            # 해설 + 예비 + 실제
+    assert any(_SPARE_MARK in b for _, b in seen), seen
+    assert any(_REAL_MARK in b for _, b in seen), seen
 
 
 def test_실제_받아치기_지시문은_도슨트가_실제로_한_말을_담는다():
@@ -1576,7 +1613,7 @@ def test_생성된_받아치기에_관람객_창구_안내가_없으면_고정_�
     assert said.startswith("그렇군요. 저도 놀랐습니다."), said   # 생성물을 버리지는 않는다
     assert any(q in said for q in QUESTION_PROMPTS), said       # 질문을 받는다고 말한다
     assert ADVANCE_HINT in said, said                           # 넘기는 법도 말한다
-    assert any("창구 안내" in w for w in h.warnings), h.warnings
+    assert any("질문 유도가 없다" in w for w in h.warnings), h.warnings
 
 
 def test_받아치기에_이미_창구_안내가_있으면_덧붙이지_않는다():
@@ -1592,7 +1629,7 @@ def test_받아치기에_이미_창구_안내가_있으면_덧붙이지_않는�
     h.ended("docent", "c1:docent")
     said = [t for r, t in h.says() if r == "mc"][0]
     assert said == line, said
-    assert not any("창구 안내" in w for w in h.warnings), h.warnings
+    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
 
 
 def test_큐시트로_물러난_받아치기에는_안내를_덧붙이지_않는다():
@@ -1613,7 +1650,7 @@ def test_큐시트로_물러난_받아치기에는_안내를_덧붙이지_않는
     h.ended("docent", "c1:docent")
     said = [t for r, t in h.says() if r == "mc"][0]
     assert said == fixed, said
-    assert not any("창구 안내" in w for w in h.warnings), h.warnings
+    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
 
 
 def test_창구_안내_고정_문장은_돌아가며_쓴다():
@@ -1712,14 +1749,221 @@ def test_받아치기가_없는_큐로_넘어가면_예비_슬롯도_끊는다()
     """
     h = Harness(after=("c1 고정 받아치기", ""))   # c2 에는 받아치기가 없다
     h.d.start()
+    h.ended("mc", "c1")                           # c1 의 예비·실제가 뜬다
     _wait_slot(h, "after_spare")
     _, tok = h.d._snapshot_slot("after_spare")
     with h.d._gen_lock:
         assert h.d._slots["after_spare"]["text"], "예비가 생성되지 않았다"
 
-    h.ended("mc", "c1"); h.ended("docent", "c1:docent"); h.ended("mc", "c1:after")
+    h.ended("docent", "c1:docent"); h.ended("mc", "c1:after")
     h.d.on_heard("다음")                          # c2 시작
     _, tok2 = h.d._snapshot_slot("after_spare")
     assert tok2 != tok, "큐가 바뀌었는데 예비 받아치기 세대가 그대로다"
     with h.d._gen_lock:
         assert h.d._slots["after_spare"]["text"] is None, "이전 큐의 예비가 남아 있다"
+
+
+# ── 리뷰 수정 — 사다리가 "늦음" 에만 걸리던 구멍 (Critical) ─────────────
+
+
+def _spare_ready_harness(real_result, after=("고정 받아치기", "")):
+    """c1 의 예비는 준비시키고, 실제 생성만 `real_result` 로 망가뜨린 하네스.
+
+    `real_result` 가 예외 클래스면 던지고, 문자열이면 그대로 돌려준다.
+    """
+    def gen(role, brief, hist):
+        if _REAL_MARK in brief:
+            if isinstance(real_result, type) and issubclass(real_result, Exception):
+                raise real_result("실제 생성이 터졌다")
+            return real_result
+        if _SPARE_MARK in brief:
+            return "미리 만들어 둔 반응입니다. 궁금한 점 있으실까요?"
+        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
+
+    h = Harness(generate=gen, after=after)
+    h.d.start()
+    h.ended("mc", "c1")
+    _wait_slot(h, "after_spare")      # 예비는 **준비 완료** 상태다
+    _wait_slot(h, "after")
+    h.clear()
+    h.warnings.clear()
+    return h
+
+
+def test_실제_생성이_터져도_준비된_예비를_읽는다():
+    """**사다리가 "늦음" 에만 걸리면 안 된다**(리뷰 Critical).
+
+    `_generate_pending` 은 예외를 만나면 **띄울 때 받은 폴백**(= 큐시트 원문)을
+    슬롯에 넣고 `ready` 를 세운다. `_await_pending` 이 이벤트가 떴다는 이유로
+    그 값을 그대로 돌려주면, 1구간이 계산해 둔 "준비된 예비" 가 **안 쓰이고**
+    큐시트로 직행한다 — 늦을 때만 살아나는 반쪽짜리 사다리다.
+    """
+    h = _spare_ready_harness(RuntimeError)
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"]
+    assert said, "받아치기가 안 나갔다"
+    assert "미리 만들어 둔 반응" in said[0], said
+    assert "고정 받아치기" not in said[0], said
+
+
+def test_실제_생성이_빈_문자열이어도_준비된_예비를_읽는다():
+    """예외와 빈 문자열은 `_generate_pending` 안에서 **같은 길**을 탄다 —
+    한쪽만 고치면 다른 쪽이 조용히 남는다."""
+    h = _spare_ready_harness("")
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"]
+    assert said, "받아치기가 안 나갔다"
+    assert "미리 만들어 둔 반응" in said[0], said
+    assert "고정 받아치기" not in said[0], said
+
+
+def test_사다리_2단과_3단의_경고가_구별된다():
+    """`./reachy.sh logs` 로 원인을 가르는 저장소다 — "예비가 산 섹션" 과
+    "예비까지 죽은 섹션" 은 전혀 다른 문제인데 문구가 같으면 구분이 안 된다."""
+    from stage.director import FB_SHEET, FB_SPARE
+
+    h = _spare_ready_harness(RuntimeError)          # 예비는 살아 있다
+    h.ended("docent", "c1:docent")
+    assert any(FB_SPARE in w for w in h.warnings), h.warnings
+    assert not any(FB_SHEET in w for w in h.warnings), h.warnings
+
+    # 예비까지 죽은 경우 — 두 생성 다 터진다
+    def dead(role, brief, hist):
+        if role == "mc":
+            raise RuntimeError("사회자 생성이 통째로 죽었다")
+        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
+
+    h2 = Harness(generate=dead, after=("고정 받아치기", ""))
+    h2.d.start()
+    h2.ended("mc", "c1")
+    _wait_slot(h2, "after")
+    h2.warnings.clear()
+    h2.ended("docent", "c1:docent")
+    assert any(FB_SHEET in w for w in h2.warnings), h2.warnings
+    assert not any(FB_SPARE in w for w in h2.warnings), h2.warnings
+
+
+def test_예비를_읽어도_짧으면_경고한다():
+    """예비는 큐시트 원문과 달리 **진짜 생성 결과**다. 폴백이라는 이유로 길이
+    검사를 건너뛰면, 예비를 읽은 섹션만 "조용히 짧아지는 것" 의 사각지대가 된다."""
+    def gen(role, brief, hist):
+        if _REAL_MARK in brief:
+            raise RuntimeError("실제는 터진다")
+        if _SPARE_MARK in brief:
+            return "네, 그렇군요."            # 진짜 생성 결과인데 MIN_CHARS(40) 미만
+        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
+
+    h = Harness(generate=gen, after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    assert any("너무 짧다" in w for w in h.warnings), h.warnings
+
+
+def test_큐시트로_물러날_때는_짧다는_경고가_안_붙는다():
+    """반대쪽 — 사람이 쓴 폴백에 길이를 재면 "LLM 이 짧은 답을 냈다" 는 **틀린**
+    경고가 로그에 남는다(QA_FALLBACK 이 37자, MIN_CHARS 가 40이다)."""
+    def dead(role, brief, hist):
+        if role == "mc":
+            raise RuntimeError("사회자 생성이 통째로 죽었다")
+        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
+
+    h = Harness(generate=dead, after=("짧은 큐시트", ""))   # 6자짜리 폴백
+    h.d.start()
+    h.ended("mc", "c1")
+    _wait_slot(h, "after")
+    h.clear()
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    assert [t for r, t in h.says() if r == "mc"] == ["짧은 큐시트"], h.says()
+    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
+
+
+# ── 리뷰 수정 — 창구 안내 판정이 제 말도 알아본다 (Important 2) ──────────
+
+
+def test_받아치기가_제_말로_물었으면_고정_문장을_안_붙인다():
+    """사회자 지시문이 "관람객에게 질문을 권한다" 라, 모델은 `QUESTION_PROMPTS`
+    가 아니라 제 말로 묻는다. 완전 포함 검사만 하면 거의 매번 같은 뜻이 두 번
+    나가 **고정 문장을 생성으로 바꾼 이 작업의 목적이 도로 무너진다**(리뷰 I2).
+    """
+    line = "정말 흥미롭네요. 혹시 더 궁금하신 점 있으신가요? 아니면 '다음'이라고 말씀해 주세요."
+    h = Harness(generate=lambda role, brief, hist: line, after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"][0]
+    assert said == line, said
+    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
+
+
+def test_수사의문만_있으면_창구_안내를_붙인다():
+    """물음표만으로 "물었다" 고 보면 안 된다 — "놀랍지 않나요?" 는 창구를 여는
+    말이 아니다. 그때는 붙이되, 로그에서 **"정말 빠졌다" 와 구별**되게 적는다."""
+    from stage.cues import QUESTION_PROMPTS
+
+    h = Harness(generate=lambda role, brief, hist: "이거 정말 놀랍지 않나요?",
+                after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"][0]
+    assert any(q in said for q in QUESTION_PROMPTS), said
+    assert any("물어보긴 했는데" in w for w in h.warnings), h.warnings
+
+
+def test_물음이_아예_없으면_다른_문구로_경고한다():
+    """"정말 빠졌다"(페르소나를 고쳐라)와 "못 알아봤다"(판정 문구를 넓혀라)는
+    고칠 곳이 다르다 — 로그가 같은 문장을 찍으면 어느 쪽인지 모른다."""
+    h = Harness(generate=lambda role, brief, hist: "그렇군요. 저도 놀랐습니다.",
+                after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    assert any("질문 유도가 없다" in w for w in h.warnings), h.warnings
+    assert not any("물어보긴 했는데" in w for w in h.warnings), h.warnings
+
+
+def test_진행_안내는_다음이라는_낱말_등장만으로_넘어가지_않는다():
+    """"다음 섹션도 기대되네요" 에는 '다음' 이 있지만 관람객은 **'다음' 이라고
+    말하면 된다**는 것을 못 듣는다 — 낱말이 아니라 안내인지를 본다."""
+    from stage.cues import ADVANCE_HINT
+
+    h = Harness(generate=lambda role, brief, hist: "다음 섹션도 기대되네요. 궁금한 점 있으실까요?",
+                after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"][0]
+    assert ADVANCE_HINT in said, said
+
+
+def test_진행_안내만_붙을_때는_경고하지_않는다():
+    """모델에게 "'다음'이라고 안내해라" 를 시키지 않으므로 빠지는 게 정상이다
+    (19섹션 중 18섹션에서 빠진다) — 그때마다 경고가 뜨면 "질문 유도가 **정말**
+    빠졌다" 는 진짜 신호가 그 안에 묻힌다. 물러나는 것이 아니라 설계된 조립이다.
+
+    반대로 이 경고를 없앴다고 **질문 유도** 쪽 경고까지 지우면
+    `test_물음이_아예_없으면_다른_문구로_경고한다` 가 실패한다 — 둘은 다른 신호다.
+    """
+    from stage.cues import ADVANCE_HINT
+
+    line = "정말 흥미롭네요. 혹시 더 궁금하신 점 있으신가요?"
+    h = Harness(generate=lambda role, brief, hist: line, after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")
+    said = [t for r, t in h.says() if r == "mc"][0]
+    assert said == f"{line} {ADVANCE_HINT}", said
+    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings

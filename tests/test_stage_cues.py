@@ -529,3 +529,56 @@ def test_briefs에_위치_지시어가_없다():
                 text = b.get(field, "")
                 for w in _DEIXIS:
                     assert w not in text, f"{c.id}/{level}/{field}: {w!r} — {text!r}"
+
+
+# ── 창구 안내 판정 (Task 7 리뷰 Important 2) ──────────────────────────
+
+
+def test_붙이는_진행_안내는_스스로_안내로_인정된다():
+    """`_ensure_visitor_cue` 가 붙이는 문장이 제 판정을 통과 못 하면, 그 검사를
+    두 번 도는 경로가 하나라도 생기는 순간 같은 말을 두 번 붙인다."""
+    from stage.cues import ADVANCE_HINT, mentions_advance
+
+    assert mentions_advance(ADVANCE_HINT), ADVANCE_HINT
+
+
+def test_고정_질문_유도는_목록_대조_없이도_알아본다():
+    """`invites_question(q) for q in QUESTION_PROMPTS` 는 **지울 수 없는 단언**이다
+    — 그 함수의 첫 규칙이 목록을 통째로 대조하므로 목록에 무엇을 넣든 참이 된다
+    (대장 「검증을 지워도 통과하는 단언」과 같은 모양). 그래서 목록 대조를 빼고
+    어근·꼬리 규칙만으로 알아보는지 본다.
+
+    **이게 왜 중요한가**: 모델은 고정 문구를 그대로 쓰지 않고 제 말로 묻는다.
+    우리 고정 문구가 그 어휘 안에 있어야, 모델이 조금 다르게 말해도 같은 규칙이
+    알아본다 — 고정 문구만 알아보는 판정은 실전에서 매번 중복을 붙인다(리뷰 I2).
+    """
+    from stage.cues import _INVITE_ENDINGS, _INVITE_WORDS, QUESTION_PROMPTS
+
+    for q in QUESTION_PROMPTS:
+        by_word = any(w in q for w in _INVITE_WORDS)
+        by_ending = "?" in q and any(e in q for e in _INVITE_ENDINGS)
+        assert by_word or by_ending, f"어근·꼬리 규칙이 못 알아보는 고정 문구: {q!r}"
+
+
+def test_큐시트_받아치기는_전부_창구_안내로_인정된다():
+    """폴백(큐시트)에는 안내를 덧붙이지 않는다 — 그 전제가 "이미 안내가 있다" 다.
+    판정 문구를 좁히다가 이 전제가 깨지면, 폴백이 안내 없이 나가는데 감독은
+    "있다" 고 믿어 아무 경고도 안 낸다."""
+    from stage.cues import invites_question, mentions_advance
+
+    cues = load_cues()
+    for c in cues:
+        assert invites_question(c.mc_after), f"{c.id}: {c.mc_after}"
+    for c in cues[:-1]:                 # 마지막 큐는 '다음' 이 없다
+        assert mentions_advance(c.mc_after), f"{c.id}: {c.mc_after}"
+
+
+def test_위치_지시어는_고정_안내_문구에도_없다():
+    """두 로봇은 고정돼 있고 관람객이 움직인다(리뷰 B4). 데이터만 훑던 가드를
+    **런타임에 붙이는 문자열**까지 넓힌다 — 생성된 받아치기 끝에 매번 따라붙는
+    문장이라 큐시트 대사와 똑같은 무게를 진다."""
+    from stage.cues import ADVANCE_HINT, QA_ACK_LINES, QUESTION_PROMPTS
+
+    for line in (*QUESTION_PROMPTS, ADVANCE_HINT, *QA_ACK_LINES):
+        for w in _DEIXIS:
+            assert w not in line, f"{line!r} 에 위치 지시어 {w!r}"

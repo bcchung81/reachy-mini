@@ -9,7 +9,7 @@ LLM 호출을 여기서 독점한다 — 사회자와 도슨트가 **하나의 �
 
 import threading
 import time
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from stage.cues import (
     ADVANCE_HINT,
@@ -17,7 +17,9 @@ from stage.cues import (
     QUESTION_PROMPTS,
     Cue,
     CueSheet,
+    invites_question,
     is_advance,
+    mentions_advance,
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.mc_cache import cache_key
@@ -87,6 +89,36 @@ MIN_CHARS = 40
 # `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
 # 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
 SPEAKER_LABEL = {"mc": "사회자", "docent": "도슨트"}
+
+# 폴백이 **무엇인지** 로그에 적는 이름. 사다리 2단(예비)과 3단(큐시트)이 같은
+# 문구로 찍히면 `./reachy.sh logs` 로 "예비가 산 섹션" 과 "예비까지 죽은 섹션" 을
+# 못 가른다 — 둘은 전혀 다른 문제다(앞은 LLM 이 한 번 늦은 것, 뒤는 사회자 쪽
+# 생성이 통째로 안 도는 것).
+FB_BRIEF = "도슨트 지시문"
+FB_QA = "질문 응답 사과문"
+FB_SPARE = "예비 받아치기"
+FB_SHEET = "큐시트 받아치기"
+
+# 폴백인데도 **진짜 생성 결과**인 것. 예비만 그렇다 — 큐시트 원문·지시문·사과문은
+# 사람이 쓴 문장이라 길이를 재지 않지만(MIN_CHARS 경고가 헛돈다) 예비는 LLM 이
+# 낸 대사라 짧으면 짧다고 말해야 한다.
+_GENERATED_FALLBACKS = frozenset({FB_SPARE})
+
+
+class _Pending(NamedTuple):
+    """`on_speaking_ended` 가 락을 놓고 기다릴 **한 건**.
+
+    튜플 위치로 들고 다니다 `slot`/`role` 을 서로 바꿔 넣는 사고가 이 저장소에
+    이미 있었다(대장 「값이 같은 두 인자를 서로 바꿔도 안 잡힌다」). 이름을 붙여
+    두면 그 자리가 아예 없어진다 — 6칸이 되면서 더 그렇다.
+    """
+
+    slot: str            # 어느 슬롯의 세대를 기다리는가(밀어내기·세대 검사의 단위)
+    role: str            # 어느 페르소나로 말할 것인가(`stage/prompts.py`)
+    cue_id: str          # 내보낼 발화의 id(`:docent`/`:qa`/`:after`)
+    fallback: str        # 생성이 늦거나 실패했을 때 읽을 것
+    fallback_kind: str   # 그 폴백이 무엇인지(로그용, 위 FB_* 중 하나)
+    label: str           # 경고에 찍을 이름
 
 
 class UnitMismatch(RuntimeError):
@@ -371,14 +403,19 @@ class Director:
                 # 수준별 브리프를 쓴다(계획 보완 Step 5b) — 옛 `cue.docent_brief`
                 # 를 그대로 두면 여기 폴백만 수준을 안 따라, 사전 생성이 늦어
                 # 유예시간을 넘길 때마다 초등이든 전문가든 같은 문장이 나간다.
-                pending = ("docent", "docent", f"{cue.id}:docent",
-                           cue.brief_for(self._level_name)[1], cue.id)
+                pending = _Pending(
+                    "docent", "docent", f"{cue.id}:docent",
+                    cue.brief_for(self._level_name)[1], FB_BRIEF, cue.id,
+                )
                 if cue.mc_after:
                     after_of = cue
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
                 # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
-                pending = ("docent", "docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa")
+                pending = _Pending(
+                    "docent", "docent", f"{cue.id}:qa",
+                    QA_FALLBACK, FB_QA, f"{cue.id}:qa",
+                )
             elif cue_id == f"{cue.id}:docent" and cue.mc_after:
                 # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
                 # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
@@ -390,22 +427,26 @@ class Director:
                 # 한 말을 보고 만든 반응을 기다려야 하기 때문이다.
                 #
                 # 폴백 사다리는 셋이다: 실제 → 예비 → 큐시트. 예비(`after_spare`)는
-                # 섹션 시작에 띄워 뒀으므로 지금쯤 대개 준비돼 있다 — 준비된 것만
-                # 가져온다(`_slot_text` 는 기다리지 않는다). 없으면 큐시트 원문이다.
-                pending = ("after", "mc", f"{cue.id}:after",
-                           self._slot_text("after_spare") or cue.mc_after,
-                           f"{cue.id}:after")
+                # 도슨트 대사를 보낼 때 실제와 나란히 띄웠으므로, 도슨트가 말한
+                # 7~8초 동안 둘 다 돌았다 — 준비된 것만 가져온다(`_slot_text` 는
+                # 기다리지 않는다). 없으면 큐시트 원문이다.
+                spare = self._slot_text("after_spare")
+                pending = _Pending(
+                    "after", "mc", f"{cue.id}:after",
+                    spare or cue.mc_after,
+                    FB_SPARE if spare else FB_SHEET,
+                    f"{cue.id}:after",
+                )
             else:
                 # 기다릴 것이 없는 갈래는 여기서 끝난다 — 락을 놓지 않는다.
                 self._emit(cmds)
                 return
 
-            slot, role_pref, speak_cue_id, fallback, label = pending
             # 기다릴 이벤트와 세대를 **락 안에서** 찍어 둔다. 대기 중
             # `_spawn_generate` 가 슬롯을 갈아끼워도 우리는 우리 세대의 결과를
             # 기다린 뒤 아래 검사에서 물러난다. 겹쳐 잡는 순서는 언제나
             # `self._lock` → `_gen_lock` 이다.
-            ready, token = self._snapshot_slot(slot)
+            ready, token = self._snapshot_slot(pending.slot)
             # 마지막 큐인지도 **여기서** 찍는다 — 아래 관람객 창구 안내가 '다음'
             # 을 붙일지 정할 때 쓴다. 대기 중에 커서가 움직일 수 있으므로 판단
             # 근거는 이 순간의 것이어야 한다.
@@ -415,14 +456,14 @@ class Director:
             # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
             # (끼어든 쪽이 이미 제 지시를 내보냈다).
 
-        text = self._await_pending(slot, ready, token, fallback, label)
+        text = self._await_pending(pending, ready, token)
 
         with self._lock:
             if self._machine.state is not State.LISTENING:
                 # abort 가 대표적이다 — 운영자가 멈췄는데 늦게 끝난 생성이
                 # 뒤늦게 입을 열면, 멈춘 줄 아는 사람 앞에서 로봇이 말한다.
                 self._warn(
-                    f"[{label}] 기다리는 사이에 {self._machine.state.value} 로 "
+                    f"[{pending.label}] 기다리는 사이에 {self._machine.state.value} 로 "
                     "바뀌었다 — 이 대사는 얹지 않는다"
                 )
                 return
@@ -431,37 +472,26 @@ class Director:
             # 슬롯 이름을 `pending` 에 실어 온 이유가 이것이다: 여기에 "docent" 를
             # 박아 두면 받아치기 갈래가 **남의 슬롯 세대**와 자기 토큰을 비교해,
             # 멀쩡한 받아치기가 매번 "다음 턴으로 넘어갔다" 며 버려진다.
-            _, current_token = self._snapshot_slot(slot)
+            _, current_token = self._snapshot_slot(pending.slot)
             if token != current_token:
                 # 상태만으로는 못 잡는 틈이다: 대기 중 다음 큐가 시작되고 그
                 # 사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다.
                 # 그대로 얹으면 이전 섹션 해설이 나가고, 뒤이어 새 큐의
                 # 핸드오프가 불변식 ② 로 TurnError 를 맞는다.
                 self._warn(
-                    f"[{label}] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다"
+                    f"[{pending.label}] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다"
                 )
                 return
-            if slot == "after" and text != cue.mc_after:
+            if pending.slot == "after" and text != cue.mc_after:
                 # 큐시트 원문으로 물러난 경우는 건드리지 않는다 — 그것은 데이터
                 # 테스트가 이미 안내를 못박은 **안전한** 문장이고(마지막 큐의
                 # 마무리 인사처럼 일부러 '다음' 을 뺀 것도 있다), 거기에 또 붙이면
-                # 사람이 다듬어 둔 대사를 감독이 망친다.
-                text = self._ensure_visitor_cue(text, label, is_last)
-            self._remember(f"{SPEAKER_LABEL[role_pref]}: {text}")
+                # 사람이 다듬어 둔 대사를 감독이 망친다. 예비를 읽은 경우는
+                # **생성물이라** 검사를 받는다 — 예비도 LLM 출력이다.
+                text = self._ensure_visitor_cue(text, pending.label, is_last)
+            self._remember(f"{SPEAKER_LABEL[pending.role]}: {text}")
             if after_of is not None:
-                # 받아치기 **실제** — 도슨트가 방금 한 말을 보고 만든다. 도슨트
-                # 발화(~7-8초)가 이 생성 시간을 산다. 예비 슬롯은 건드리지 않는다
-                # (그것이 이 생성이 늦을 때의 여유분이다).
-                #
-                # `_remember` **뒤에** 띄운다 — 생성 스레드는 `list(self.history)`
-                # 를 찍어가므로, 먼저 띄우면 사회자가 방금 나간 해설을 못 본 채
-                # 반응을 만든다. `_begin_cue` 가 사회자 대사를 먼저 넣는 것과 같은 이유다.
-                self._spawn_generate(
-                    "after", "mc",
-                    f"도슨트가 방금 이렇게 말했다: {text}. "
-                    "짧게 받고 관람객에게 질문을 권한다.",
-                    after_of.mc_after, f"{after_of.id}:after",
-                )
+                self._spawn_after(after_of, text)
             # 역할은 **여기서 다시 정한다.** 기다리는 사이에 상대가 끊겼으면 남은
             # 한 대가 읽어야 한다(설계 §7). 1구간의 판단을 들고 가면 이미 끊긴
             # 로봇에게 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고 버린다
@@ -470,9 +500,53 @@ class Director:
             self._emit(
                 cmds
                 + self._machine.speak(
-                    self._who(role_pref), speak_cue_id, text, gaze="audience"
+                    self._who(pending.role), pending.cue_id, text, gaze="audience"
                 )
             )
+
+    def _spawn_after(self, cue: Cue, docent_text: str) -> None:
+        """받아치기 두 벌을 **여기서 나란히** 띄운다 — 도슨트 대사를 보내는 순간에.
+
+        **왜 섹션 시작(`_begin_cue`)이 아닌가.** `stage/__main__.py::build_generate`
+        는 LLM 호출 **전체를 락 하나로 직렬화**한다(역할별 클라이언트를 둬도 락은
+        하나다 — 두 화자가 하나의 이력을 보는 파이프라인이라 그렇다). 그래서
+        `_begin_cue` 에서 도슨트 해설과 예비를 연달아 띄우면 둘이 같은 락을
+        노리는데, 파이썬 `Lock` 은 FIFO 가 아니라 **예비가 먼저 잡으면 도슨트
+        해설 생성이 사회자 대사 한 벌만큼 통째로 밀린다.** 도슨트의 예산은 여는
+        대사 재생 + `GENERATE_GRACE_S` 8초뿐이고, 넘기면 폴백이 `docent_brief`
+        라 **도슨트가 지시문을 소리 내어 읽는다** — 이 작업이 숨기려던 지연을
+        이 작업이 임계경로에 새로 만드는 꼴이었다(리뷰 Important 1).
+        여기서는 도슨트 해설 생성이 이미 끝나 있으므로 임계경로와 다투지 않고,
+        도슨트가 말하는 7~8초가 두 생성의 시간을 산다.
+
+        **예비를 먼저 띄운다.** 프롬프트가 짧아(지시문 vs 도슨트 발언 전문) 더
+        빨리 끝나므로, 실제가 늦거나 터졌을 때 여유분으로 준비돼 있을 확률이 는다.
+
+        호출부가 `_remember` **뒤에** 부른다 — 생성 스레드는 `list(self.history)`
+        를 찍어가므로, 먼저 띄우면 사회자가 방금 나간 해설을 못 본 채 반응을 만든다.
+        """
+        _, docent_brief = cue.brief_for(self._level_name)
+        # 받아치기 **예비** — 도슨트 지시문만 보고 만든다. 실제가 늦거나 터질 때의
+        # 여유분이다(폴백 사다리 2단).
+        #
+        # slot="after_spare" / role="mc" — **다른 축이다.** 슬롯은 "어느 자리의
+        # 생성인가", role 은 "어느 페르소나로 말할 것인가" 다. role 이 "mc" 라서
+        # `stage/prompts.py` 가 사회자 분량(1~3문장·40~120자, 수준과 무관하게
+        # 고정)을 준다 — 받아치기가 저절로 짧게 나오는 것이 그 덕이다.
+        self._spawn_generate(
+            "after_spare", "mc",
+            f"도슨트가 이런 해설을 할 것이다: {docent_brief}. "
+            "짧게 받고 관람객에게 질문을 권한다.",
+            cue.mc_after, f"{cue.id}:after-예비",
+        )
+        # 받아치기 **실제** — 도슨트가 방금 한 말을 보고 만든다. 이게 제시간에
+        # 오면 이것을 쓴다(사다리 1단).
+        self._spawn_generate(
+            "after", "mc",
+            f"도슨트가 방금 이렇게 말했다: {docent_text}. "
+            "짧게 받고 관람객에게 질문을 권한다.",
+            cue.mc_after, f"{cue.id}:after",
+        )
 
     def on_error(self, role: str, where: str, detail: str) -> None:
         with self._lock:
@@ -618,29 +692,12 @@ class Director:
         # LISTENING** 이라(`test_대기_중_다음_큐가_돌아…` 와 같은 틈) 이전
         # 섹션 반응이 그대로 새 섹션에 얹힌다.
         #
-        # "실제" 슬롯은 무조건 비운다 — 그것은 **이전 큐의 도슨트 발화**를
-        # 보고 만든 것이라 새 큐에서는 언제나 남의 대사다.
+        # 둘 다 **이전 큐의 도슨트 발화·지시문**을 보고 만든 것이라 새 큐에서는
+        # 언제나 남의 대사다. 여기서 새로 띄우지는 않는다 — 받아치기 생성은
+        # 임계경로(도슨트 해설)와 LLM 락을 다투면 안 되므로 도슨트 대사를 보낼
+        # 때 한꺼번에 띄운다(`_spawn_after` 주석).
         self._invalidate_slot("after")
-        if cue.mc_after:
-            # 받아치기 **예비** — 도슨트 지시문만 보고 미리 만든다. 실제 반응이
-            # 늦을 때의 여유분이다(폴백 사다리: 실제 → 예비 → 큐시트). 해설 다음
-            # 순번이라 급한 쪽이 먼저 나간다.
-            #
-            # slot="after_spare" / role="mc" — **다른 축이다.** 슬롯은 "어느 자리의
-            # 생성인가", role 은 "어느 페르소나로 말할 것인가" 다. role 이 "mc" 라서
-            # `stage/prompts.py` 가 사회자 분량(1~3문장·40~120자, 수준과 무관하게
-            # 고정)을 준다 — 받아치기가 저절로 짧게 나오는 것이 그 덕이다.
-            self._spawn_generate(
-                "after_spare", "mc",
-                f"도슨트가 이런 해설을 할 것이다: {docent_brief}. "
-                "짧게 받고 관람객에게 질문을 권한다.",
-                cue.mc_after, f"{cue.id}:after-예비",
-            )
-        else:
-            # 받아치기가 없는 섹션이다. 그래도 **끊는다** — 안 끊으면 이전 큐의
-            # 예비가 슬롯에 남아, 이 슬롯을 읽는 경로가 하나만 더 생기면
-            # (다음 태스크들이 그렇다) 이전 섹션 반응이 조용히 새어 나온다.
-            self._invalidate_slot("after_spare")
+        self._invalidate_slot("after_spare")
 
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, mc_text, gaze=cue.gaze)
@@ -737,22 +794,35 @@ class Director:
 
         `is_last` 면 '다음' 안내는 붙이지 않는다 — 더 넘어갈 데가 없다. 데이터
         쪽 가드가 `cues[:-1]` 로 마지막을 빼는 것과 같은 예외다.
+
+        **판정은 고정 문구 대조가 아니다**(`stage/cues.py::invites_question`).
+        사회자 지시문이 "관람객에게 질문을 권한다" 라 모델은 제 말로 묻는다 —
+        완전 포함 검사만 하면 거의 매번 같은 뜻을 두 번 내보내, 고정 문장을
+        생성으로 바꾼 이 작업의 목적이 도로 무너진다(리뷰 Important 2).
         """
-        missing: list[str] = []
-        if not any(q in text for q in QUESTION_PROMPTS):
-            missing.append(QUESTION_PROMPTS[self._q_i % len(QUESTION_PROMPTS)])
+        added: list[str] = []
+        if not invites_question(text):
+            prompt = QUESTION_PROMPTS[self._q_i % len(QUESTION_PROMPTS)]
             self._q_i += 1
-        if not is_last and "다음" not in text:
-            missing.append(ADVANCE_HINT)
-        if not missing:
+            added.append(prompt)
+            # **여기만 경고한다.** 사회자 지시문이 "관람객에게 질문을 권한다" 라,
+            # 질문 유도가 빠진 것은 모델이 지시를 안 지킨 것이다 — 잦으면 고칠 곳은
+            # 감독이 아니라 `data/personas/mc.md` 다. 그리고 두 원인을 가른다:
+            # "정말 안 물었다"(페르소나를 고쳐라)와 "물어보긴 했는데 판정이 못
+            # 알아봤다"(`invites_question` 의 어휘를 넓혀라)는 고칠 곳이 다르다.
+            why = "물어보긴 했는데 질문 유도로 알아볼 수 없다" if "?" in text else "질문 유도가 없다"
+            self._warn(
+                f"[{label}] 생성된 받아치기에 {why} — 고정 문장을 붙인다: {prompt}"
+            )
+        if not is_last and not mentions_advance(text):
+            # **여기는 경고하지 않는다.** 진행 방법("'다음'이라고 하세요")은 애초에
+            # 모델에게 시키지 않는 것이라 빠지는 게 정상이고(19섹션 중 18섹션에서
+            # 빠진다), 섹션마다 경고가 뜨면 바로 위의 **진짜 신호**가 그 안에 묻힌다.
+            # 물러나는 것이 아니라 설계된 조립이다 — [생성된 반응 + 고정 길잡이].
+            added.append(ADVANCE_HINT)
+        if not added:
             return text
-        # **조용히 기우지 않는다.** 이 경고가 잦으면 사회자 프롬프트가 질문 유도를
-        # 못 시키고 있다는 뜻이라, 고칠 곳은 여기가 아니라 페르소나다.
-        self._warn(
-            f"[{label}] 생성된 받아치기에 관람객 창구 안내가 없다 — "
-            f"고정 문장을 붙인다: {' '.join(missing)}"
-        )
-        return " ".join([text, *missing])
+        return " ".join([text, *added])
 
     def _snapshot_slot(self, slot: str) -> tuple[threading.Event, int]:
         """기다릴 이벤트와 세대를 찍는다. **`self._lock` 을 쥔 채 부른다.**
@@ -802,9 +872,14 @@ class Director:
         ready.set()
 
     def _await_pending(
-        self, slot: str, ready: threading.Event, token: int, fallback: str, label: str
+        self, pending: "_Pending", ready: threading.Event, token: int
     ) -> str:
-        """`slot` 에 생성된 대사를 기다린다 — **진입 락 밖에서.** 유예를 넘기면 폴백을 읽는다.
+        """`pending.slot` 에 생성된 대사를 기다린다 — **진입 락 밖에서.**
+
+        유예를 넘기거나 생성이 실패했으면 `pending.fallback` 을 읽는다. 물러날
+        때는 **무엇으로** 물러났는지를 같이 적는다(`pending.fallback_kind`) —
+        받아치기의 사다리 2단(예비)과 3단(큐시트)이 같은 문구로 찍히면 로그로
+        원인을 못 가른다.
 
         폴백을 슬롯의 `text` 에 **쓰지 않는다.** 예전에는 여기서 `_gen_lock`
         없이 써서, 유예가 끝나는 바로 그 순간에 생성 스레드가 막 넣은 진짜 대사를
@@ -816,30 +891,56 @@ class Director:
         로봇이 도슨트 몫을 끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로
         오판돼 무한 반복한다.
         """
+        label = pending.label
         if not ready.wait(timeout=GENERATE_GRACE_S):
-            self._warn(f"[{label}] 대사 생성이 늦다 — 폴백")
-            return fallback
+            self._warn(f"[{label}] 대사 생성이 늦다 — {pending.fallback_kind}(으)로 물러난다")
+            return self._take_fallback(pending)
         with self._gen_lock:
-            s = self._slots[slot]
+            s = self._slots[pending.slot]
             if token != s["token"]:
                 # 다음 턴이 **이 슬롯을** 갈면서 깨워 준 것이다 — 이 값은 의미가 없다.
                 # 경고는 호출부가 한 번만 낸다(거기서 버리는 것이 확정된다).
-                return fallback
+                return pending.fallback
             text = s["text"]
             is_fallback = s["is_fallback"]
+        if is_fallback:
+            # **슬롯에 든 폴백이 아니라 호출부가 준 폴백을 읽는다.**
+            # `_generate_pending` 은 빈 문자열·예외를 만나면 **띄울 때** 받은
+            # 폴백을 슬롯에 넣고 `ready` 를 세운다. 그 값은 호출부가 지금 아는
+            # 것보다 낡았다 — 받아치기라면 "큐시트 원문"이고, 그 사이 호출부는
+            # 준비된 **예비**를 폴백으로 들고 있다(사다리 2단). 이 줄이 없으면
+            # 실제 생성이 **터지거나 빈 문자열일 때** 준비된 예비를 건너뛰고
+            # 큐시트로 직행한다 — 사다리가 "늦음" 에만 걸리는 꼴이다(리뷰 Critical).
+            # 도슨트 해설·`:qa` 는 두 값이 같아 영향이 없다.
+            self._warn(f"[{label}] 생성이 폴백으로 갈렸다 — {pending.fallback_kind}(으)로 물러난다")
+            return self._take_fallback(pending)
         if not text:
-            self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
-            text = fallback
-            is_fallback = True
-        # **폴백으로 이미 대체된 텍스트에는 길이 경고를 또 걸지 않는다.**
-        # `_generate_pending` 이 빈 문자열·예외를 만나면 이미 "생성 실패" 경고를
-        # 내고 폴백을 슬롯에 넣는다(예: QA_FALLBACK 은 37자로 MIN_CHARS 40 미만).
-        # 여기서 또 길이를 재면 "생성 실패" 경고 뒤에 "생성 결과가 짧다" 는
-        # **틀린** 경고가 덧붙어, 로그만 보면 LLM 이 실제로 37자를 냈다고
-        # 오판한다(리뷰 지적) — MIN_CHARS 는 **진짜 생성 결과**에만 적용한다.
-        if not is_fallback and len(text) < MIN_CHARS:
-            self._warn(f"[{label}] 생성 결과가 너무 짧다({len(text)}자) — 그대로 쓴다")
+            self._warn(f"[{label}] 대사가 비어 있다 — {pending.fallback_kind}(으)로 물러난다")
+            return self._take_fallback(pending)
+        # 여기까지 온 `text` 는 **진짜 생성 결과**다(폴백은 위에서 이미 돌아갔다).
+        # 그래서 길이를 잰다. 폴백에 이 검사를 걸면 "생성 실패" 경고 뒤에 "생성
+        # 결과가 짧다" 는 **틀린** 경고가 덧붙어, 로그만 보면 LLM 이 실제로 37자를
+        # 냈다고 오판한다(QA_FALLBACK 이 37자, MIN_CHARS 가 40이다).
+        self._warn_if_short(text, label)
         return text
+
+    def _take_fallback(self, pending: "_Pending") -> str:
+        """폴백으로 물러난다. **예비는 진짜 생성 결과**라 길이 검사를 받는다.
+
+        큐시트 원문·지시문·사과문은 사람이 쓴 문장이라 MIN_CHARS 를 재면 헛경보가
+        난다(QA_FALLBACK 은 37자다). 반면 예비 받아치기는 LLM 이 낸 대사이므로,
+        이 자리에서 안 재면 **예비를 읽은 섹션만 길이 감시의 사각지대**가 된다
+        — 조용히 짧아지는 것을 잡으려고 만든 경고가 하필 그때 꺼진다.
+        """
+        if pending.fallback_kind in _GENERATED_FALLBACKS:
+            self._warn_if_short(pending.fallback, pending.label)
+        return pending.fallback
+
+    def _warn_if_short(self, text: str, label: str) -> None:
+        """**진짜 생성 결과**가 해설·반응이라기엔 짧으면 소리 낸다. 그대로 쓴다 —
+        버리면 정적이 되는데 그게 더 나쁘다."""
+        if len(text) < MIN_CHARS:
+            self._warn(f"[{label}] 생성 결과가 너무 짧다({len(text)}자) — 그대로 쓴다")
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
