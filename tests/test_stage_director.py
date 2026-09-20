@@ -1091,6 +1091,56 @@ def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는�
     assert not any("짧다" in w for w in h.warnings), h.warnings
 
 
+def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다():
+    """같은 슬롯을 연달아 쓸 때 이전 세대의 폴백 표시가 남아 있으면, 다음 세대가
+    **진짜로** 짧은 대사를 내놓아도 MIN_CHARS 경고가 침묵한다 — 조용히 짧아지는
+    것을 잡으려고 만든 경고가 하필 그 상황에서 꺼진다.
+
+    슬롯이 하나뿐일 때는 닿기 어려웠지만, 받아치기(`"after"`)처럼 한 섹션 안에서
+    같은 슬롯이 여러 세대를 도는 자리가 생기면 "폴백 세대 → 진짜 생성" 배치가
+    정상 경로가 된다. 슬롯을 나누는 지금이 막기 가장 싼 자리다.
+
+    **어디를 봐야 하는가**: `_generate_pending` 은 `text` 와 `is_fallback` 을 한
+    락 안에서 쌍으로 쓴 **뒤에야** `ready` 를 세우고, `_await_pending` 은 그
+    이벤트를 기다린 뒤 토큰까지 맞아야 읽는다. 그래서 표시가 썩어 있는 구간은
+    **띄운 직후부터 결과가 들어오기 전까지**뿐이다. 그 구간을 게이트로 붙잡아
+    슬롯을 직접 본다 — 여기서 True 가 보이면 `_spawn_generate` 가 초기화를
+    빠뜨린 것이고, 결과를 기다리지 않고 슬롯을 엿보는 경로가 하나라도 생기는
+    순간 위의 침묵이 실제로 난다.
+    """
+    gate = threading.Event()
+    calls = {"n": 0}
+
+    def gen(brief, history):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ""        # 1세대: 빈 문자열 → 폴백으로 갈린다(표시가 True 가 된다)
+        gate.wait(5.0)       # 2세대: 결과를 붙잡아 둔다 — 썩은 표시가 보이는 구간을 연다
+        return "네."          # 진짜 생성 결과인데 MIN_CHARS(40) 미만
+
+    h = Harness(generate=gen)
+    h.d.start()                                        # 1세대
+    ready1, _ = h.d._snapshot_slot("docent")
+    assert ready1.wait(2.0), "1세대 생성이 끝나지 않았다"
+    with h.d._gen_lock:
+        assert h.d._slots["docent"]["is_fallback"] is True, "1세대가 폴백으로 갈리지 않았다"
+
+    h.ended("mc", "c1")                                # 1세대 폴백을 도슨트가 읽는다
+    h.ended("docent", "c1:docent")
+    h.warnings.clear()
+    h.d.on_heard("마르코니가 누구예요")                  # 2세대 — 같은 "docent" 슬롯
+
+    # 2세대는 게이트에 걸려 아직 아무것도 못 썼다. `_spawn_generate` 가 띄우면서
+    # 표시를 내려놨어야 하는 바로 그 구간이다.
+    with h.d._gen_lock:
+        assert h.d._slots["docent"]["is_fallback"] is False, \
+            "새 세대가 이전 세대의 폴백 표시를 물려받았다"
+
+    gate.set()
+    h.ended("mc", "c1:ack")
+    assert any("짧다" in w for w in h.warnings), h.warnings
+
+
 def test_슬롯이_다르면_서로를_지우지_않는다():
     """도슨트 해설 생성이 받아치기 슬롯을 밀어내면 받아치기가 통째로 사라진다."""
     h = Harness()
