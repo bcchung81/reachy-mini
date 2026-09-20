@@ -290,3 +290,122 @@ def test_사회자_대사_길이가_예산_안이다():
 def test_사회자_대사가_한_틀로_반복되지_않는다():
     firsts = [c.mc.split(" ")[0] for c in load_cues()]
     assert len(set(firsts)) >= 8, f"첫 낱말이 너무 겹친다: {firsts}"
+
+
+# ── 수준별 브리프 (Task 5) ───────────────────────────────────────────
+
+
+def test_수준별_브리프를_읽는다(tmp_path):
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  mc_after: "받아치기"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: {mc_brief: "초등 진행", docent_brief: "초등 해설"}
+    중고등: {mc_brief: "중고등 진행", docent_brief: "중고등 해설"}
+    일반: {mc_brief: "일반 진행", docent_brief: "일반 해설"}
+    전문가: {mc_brief: "전문가 진행", docent_brief: "전문가 해설"}
+""")
+    c = load_cues(p)[0]
+    assert c.brief_for("초등") == ("초등 진행", "초등 해설")
+    assert c.brief_for("전문가") == ("전문가 진행", "전문가 해설")
+
+
+def test_브리프가_없으면_옛_지시문으로_폴백한다(tmp_path):
+    """큐시트 전체를 한 번에 옮길 수 없다 — 섹션마다 순차로 보강한다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+""")
+    c = load_cues(p)[0]
+    assert c.brief_for("초등") == ("", "옛 지시문")
+
+
+def test_수준이_하나라도_빠지면_소리_내서_실패한다(tmp_path):
+    """한 수준만 빠지면 그 수준의 시연이 통째로 옛 지시문으로 도는데 로그에는
+    아무것도 안 남는다 — 그래서 일부만 채운 briefs 는 기동에서 막는다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: {mc_brief: "a", docent_brief: "b"}
+""")
+    with pytest.raises(CueError, match="수준"):
+        load_cues(p)
+
+
+def test_briefs_가_매핑이_아니면_거절한다(tmp_path):
+    # match 는 "매핑이어야" 로 잡는다 — "briefs" 로 잡으면 pytest tmp_path 가
+    # 테스트 함수 이름(이 안에 "briefs" 가 들어 있다)을 경로에 그대로 넣어
+    # 주는 바람에, 검증을 통째로 지워도 다른 에러 메시지의 **경로 문자열**과
+    # 우연히 일치해 테스트가 계속 통과하는 걸 실제로 확인했다.
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs: "초등만 적었다"
+""")
+    with pytest.raises(CueError, match="매핑이어야"):
+        load_cues(p)
+
+
+def test_브리프_항목의_docent_brief가_비면_거절한다(tmp_path):
+    """`levels.py` 의 선례(리뷰: 존재만 보고 타입을 안 봤다)와 같은 자리다 —
+    briefs 안의 값도 비어 있으면 조용히 빈 지시문으로 LLM 이 돈다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: {mc_brief: "a", docent_brief: ""}
+    중고등: {mc_brief: "a", docent_brief: "b"}
+    일반: {mc_brief: "a", docent_brief: "b"}
+    전문가: {mc_brief: "a", docent_brief: "b"}
+""")
+    with pytest.raises(CueError, match="docent_brief"):
+        load_cues(p)
+
+
+def test_브리프_항목이_매핑이_아니면_거절한다(tmp_path):
+    """`bool` 은 `int` 의 하위형이라 `isinstance` 만으로는 못 거르는 함정이
+    이 저장소에 선례가 있다(`stage/server.py::_seq_field`) — 여기서는 항목
+    자체가 매핑이 아닌 경우(예: 참/거짓, 문자열)를 가장 먼저 거른다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: true
+    중고등: {mc_brief: "a", docent_brief: "b"}
+    일반: {mc_brief: "a", docent_brief: "b"}
+    전문가: {mc_brief: "a", docent_brief: "b"}
+""")
+    with pytest.raises(CueError, match="docent_brief"):
+        load_cues(p)
+
+
+def test_데이터_큐시트에_섹션별_문장_수_지정이_없다():
+    """분량은 이제 수준 프로필이 정한다(`stage/prompts.py::_amount_for`).
+    docent_brief 에 "N문장 이내" 가 남아 있으면 섹션 지정이 수준 지정을
+    덮어써 수준을 바꿔도 분량이 안 변한다 — 회귀를 막는다."""
+    import re
+
+    for c in load_cues():
+        assert not re.search(r"\d+문장 이내", c.docent_brief), (
+            f"{c.id}: docent_brief 에 문장 수 지정이 남아 있다"
+        )

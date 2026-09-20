@@ -6,9 +6,11 @@
 
 import os
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
+
+from stage.levels import LEVEL_NAMES
 
 GAZE_TARGETS = frozenset({"partner", "audience"})
 
@@ -48,6 +50,23 @@ class Cue:
     # 도슨트 뒤 사회자의 받아치기. 관람객 창구가 열린다는 것을 **말로** 알린다 —
     # 마이크가 열려도 관람객은 모른다(리뷰 B2). 비면 곧장 듣기로 간다.
     mc_after: str = ""
+    # 조사 주제와 출처 달린 사실. 발화에는 직접 쓰지 않고 사람이 검토한다.
+    topic: str = ""
+    # 수준 → {mc_brief, docent_brief}. 비어 있으면 옛 `docent_brief` 로 폴백한다
+    # — 큐시트 19섹션을 한 번에 옮길 수 없으므로 섞여 있는 기간이 있다.
+    briefs: dict = field(default_factory=dict)
+
+    def brief_for(self, level_name: str) -> tuple[str, str]:
+        """수준에 맞는 (mc_brief, docent_brief) 를 준다.
+
+        이 섹션에 `briefs` 가 없으면(아직 안 옮긴 섹션) 옛 `docent_brief` 로
+        폴백한다 — `load_cues` 가 이미 "채웠으면 수준 전부" 를 강제하므로
+        여기서는 "비었으면 폴백" 만 보면 된다.
+        """
+        b = self.briefs.get(level_name)
+        if not b:
+            return "", self.docent_brief
+        return b.get("mc_brief", ""), b.get("docent_brief", self.docent_brief)
 
 
 def cues_path() -> pathlib.Path:
@@ -104,6 +123,20 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
             if not isinstance(v, str):
                 raise CueError(f"{p} {item['id']}: {key} 는 문자열이어야 한다({type(v).__name__})")
             extra[key] = v.strip()
+        extra["topic"] = item.get("topic", "") or ""
+        briefs = item.get("briefs") or {}
+        if briefs:
+            if not isinstance(briefs, dict):
+                raise CueError(f"{p} {item['id']}: briefs 는 매핑이어야 한다")
+            missing = set(LEVEL_NAMES) - set(briefs)
+            if missing:
+                # 한 수준만 빠지면 그 수준의 시연이 통째로 옛 지시문으로
+                # 돈다 — 조용히 품질이 떨어지므로 기동에서 막는다.
+                raise CueError(f"{p} {item['id']}: 빠진 수준이 있다 — {sorted(missing)}")
+            for name, b in briefs.items():
+                if not isinstance(b, dict) or not b.get("docent_brief"):
+                    raise CueError(f"{p} {item['id']} {name}: docent_brief 가 없다")
+        extra["briefs"] = briefs
         out.append(Cue(**{k: item[k] for k in _REQUIRED}, **extra))
     return out
 
