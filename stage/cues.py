@@ -124,18 +124,45 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
                 raise CueError(f"{p} {item['id']}: {key} 는 문자열이어야 한다({type(v).__name__})")
             extra[key] = v.strip()
         extra["topic"] = item.get("topic", "") or ""
-        briefs = item.get("briefs") or {}
+        briefs = item.get("briefs")
+        if briefs is None:
+            # 못 채운 섹션의 기본 상태다 — "키가 없음"과 "명시적 null" 을 같게
+            # 본다. 19섹션을 순차로 옮기는 동안 나머지는 이 상태로 남는다.
+            briefs = {}
+        elif not isinstance(briefs, dict):
+            # `item.get("briefs") or {}` 로 감싸면 `briefs: false`·`briefs: 0`
+            # 처럼 falsy 이면서 매핑도 아닌 값이 조용히 빈 매핑으로 둔갑해
+            # 아래 매핑 검사 자체를 건너뛴다(리뷰 Minor). `None`·빠짐만 빈
+            # 매핑으로 받고 그 외에는 여기서 먼저 거절한다.
+            raise CueError(
+                f"{p} {item['id']}: briefs 는 매핑이어야 한다 — "
+                f"지금은 {type(briefs).__name__}({briefs!r})"
+            )
         if briefs:
-            if not isinstance(briefs, dict):
-                raise CueError(f"{p} {item['id']}: briefs 는 매핑이어야 한다")
             missing = set(LEVEL_NAMES) - set(briefs)
             if missing:
                 # 한 수준만 빠지면 그 수준의 시연이 통째로 옛 지시문으로
                 # 돈다 — 조용히 품질이 떨어지므로 기동에서 막는다.
                 raise CueError(f"{p} {item['id']}: 빠진 수준이 있다 — {sorted(missing)}")
             for name, b in briefs.items():
-                if not isinstance(b, dict) or not b.get("docent_brief"):
-                    raise CueError(f"{p} {item['id']} {name}: docent_brief 가 없다")
+                if not isinstance(b, dict):
+                    raise CueError(
+                        f"{p} {item['id']} {name}: briefs 항목이 매핑이어야 한다 — "
+                        f"지금은 {type(b).__name__}({b!r})"
+                    )
+                for field_name in ("mc_brief", "docent_brief"):
+                    v = b.get(field_name)
+                    # `docent_brief: true` 처럼 YAML 이 boolean 으로 파싱한 값은
+                    # `not b.get(...)` 같은 truthiness 검사만으로는 못 거른다 —
+                    # `bool` 은 `int` 의 하위형이라는 함정과 같은 자리다
+                    # (`stage/levels.py` 96행, `stage/server.py::_seq_field`).
+                    # 걸러지지 않으면 `brief_for` 가 파이썬 `True` 를 그대로
+                    # 돌려줘 프롬프트에 리터럴 "True" 가 꽂힌다(리뷰 Important 1).
+                    if not isinstance(v, str) or not v.strip():
+                        raise CueError(
+                            f"{p} {item['id']} {name}.{field_name} 는 비어 있지 "
+                            f"않은 문자열이어야 한다 — 지금은 {type(v).__name__}({v!r})"
+                        )
         extra["briefs"] = briefs
         out.append(Cue(**{k: item[k] for k in _REQUIRED}, **extra))
     return out

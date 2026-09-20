@@ -395,8 +395,89 @@ def test_브리프_항목이_매핑이_아니면_거절한다(tmp_path):
     일반: {mc_brief: "a", docent_brief: "b"}
     전문가: {mc_brief: "a", docent_brief: "b"}
 """)
-    with pytest.raises(CueError, match="docent_brief"):
+    # match 는 "항목이 매핑이어야"(공백 포함)로 잡는다 — 함수 이름의
+    # "항목이_매핑이_아니면"(밑줄)과 문자 그대로 겹치지 않는 문구를 고른다
+    # (아래 "pytest tmp_path 와 match 가 우연히 겹친다" 항목 참고).
+    with pytest.raises(CueError, match="항목이 매핑이어야"):
         load_cues(p)
+
+
+# ── 리뷰 반영: briefs 필드 타입 검증 (리뷰 Important 1 / Minor) ──────────
+
+
+def test_브리프_필드가_불리언이면_소리_내서_실패한다(tmp_path):
+    """`docent_brief: true` 처럼 YAML 이 boolean 으로 파싱하는 값이 오면
+    옛 검사(`not b.get("docent_brief")`)는 truthiness 만 보므로 조용히
+    통과하고, `brief_for` 가 파이썬 `True` 를 그대로 돌려줘 프롬프트에
+    리터럴 "True" 가 꽂힌다(리뷰 Important 1). `levels.py` 의 문자열 필드
+    검증(`isinstance(v, str) and v.strip()`)과 같은 기준을 요구해야 한다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: {mc_brief: "a", docent_brief: true}
+    중고등: {mc_brief: "a", docent_brief: "b"}
+    일반: {mc_brief: "a", docent_brief: "b"}
+    전문가: {mc_brief: "a", docent_brief: "b"}
+""")
+    with pytest.raises(CueError, match="문자열이어야"):
+        load_cues(p)
+
+
+def test_브리프에_사회자_문구가_없으면_거절한다(tmp_path):
+    """`mc_brief` 는 지금까지 아예 검사하지 않았다 — `docent_brief` 와 같은
+    자리에 있는 값인데 타입·존재 검증이 비대칭이면 언젠가 같은 구멍이 난다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+    초등: {docent_brief: "a"}
+    중고등: {mc_brief: "a", docent_brief: "b"}
+    일반: {mc_brief: "a", docent_brief: "b"}
+    전문가: {mc_brief: "a", docent_brief: "b"}
+""")
+    with pytest.raises(CueError, match="mc_brief"):
+        load_cues(p)
+
+
+@pytest.mark.parametrize("raw", ["false", "0"])
+def test_briefs가_거짓값이면서_매핑이_아니면_거절한다(tmp_path, raw):
+    """`briefs = item.get("briefs") or {}` 로 감싸면 `briefs: false`·
+    `briefs: 0` 처럼 falsy 이면서 매핑이 아닌 값이 조용히 빈 매핑으로
+    둔갑해 "매핑이 아니면 거절한다" 검사 자체를 건너뛴다(리뷰 Minor).
+    `None`·키가 빠진 경우만 빈 매핑으로 받고 나머지는 거절해야 한다."""
+    p = write(tmp_path, f"""
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs: {raw}
+""")
+    with pytest.raises(CueError, match="매핑이어야"):
+        load_cues(p)
+
+
+def test_briefs가_없거나_null이면_빈_매핑으로_받는다(tmp_path):
+    """`None` 과 "키 자체가 없음" 은 폴백 대상으로 계속 허용해야 한다 —
+    19섹션을 순차로 채우는 동안 나머지는 이 상태로 남는다."""
+    p = write(tmp_path, """
+- id: "t1"
+  title: "테스트"
+  mc: "여는 대사"
+  docent_brief: "옛 지시문"
+  gaze: partner
+  briefs:
+""")
+    c = load_cues(p)[0]
+    assert c.briefs == {}
+    assert c.brief_for("초등") == ("", "옛 지시문")
 
 
 def test_데이터_큐시트에_섹션별_문장_수_지정이_없다():
