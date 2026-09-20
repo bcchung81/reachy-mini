@@ -1,0 +1,40 @@
+# 관람객 수준 프로필. **분량은 섹션이 아니라 수준의 함수다** — 초등에게 6문장은
+# 길고 전문가에게 2문장은 부실하다. 큐시트의 "N문장 이내" 를 여기로 올렸다.
+# 글자 수는 발화 길이로 환산된다(CHARS_PER_SEC = 4.0): 초등 약 18~30초,
+# 전문가 약 65~100초.
+초등:
+  min_sentences: 2
+  max_sentences: 3
+  min_chars: 70
+  max_chars: 120
+  vocabulary: "전문 용어를 쓰지 않는다. 아이가 아는 말로만 말한다."
+  depth: "비유 중심으로 말한다. 원리는 설명하지 않는다."
+  numbers: "연도·수치·거리를 말하지 않는다."
+  sources: "기관 이름이나 출처를 말하지 않는다."
+중고등:
+  min_sentences: 3
+  max_sentences: 4
+  min_chars: 120
+  max_chars: 200
+  vocabulary: "전문 용어가 나오면 풀어서 말한다."
+  depth: "비유로 열고 원리를 한 겹 덧붙인다."
+  numbers: "연도만 말한다. 정밀한 수치는 생략한다."
+  sources: "기관 이름이나 출처를 말하지 않는다."
+일반:
+  min_sentences: 4
+  max_sentences: 5
+  min_chars: 180
+  max_chars: 280
+  vocabulary: "전문 용어를 풀어서 말하되 용어 자체도 함께 말한다."
+  depth: "원리를 설명한다."
+  numbers: "연도와 개략 수치를 말한다."
+  sources: "기관 이름까지는 말해도 된다."
+전문가:
+  min_sentences: 5
+  max_sentences: 7
+  min_chars: 260
+  max_chars: 400
+  vocabulary: "전문 용어를 그대로 쓴다."
+  depth: "수식·수치·표준 번호까지 들어간다."
+  numbers: "정확한 날짜와 원수치를 말한다."
+  sources: "기관·조항·표준 번호를 말해도 된다."

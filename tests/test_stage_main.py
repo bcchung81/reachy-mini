@@ -100,3 +100,11 @@ def test_시스템_프롬프트에_분량_규정이_있다():
     assert "이상" in p, p
     # 한 문장 답이 지시 위반임을 명시적으로 못박는 문장이 있어야 한다.
     assert "한 문장" in p and "아니다" in p, p
+
+
+def test_기동_로그에_수준이_찍힌다(capsys, monkeypatch):
+    """엉뚱한 수준으로 도는 것은 조용히 품질만 떨어지는 전형적인 실패다."""
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
+    import stage.__main__ as m
+    m.announce_level()
+    assert "초등" in capsys.readouterr().out

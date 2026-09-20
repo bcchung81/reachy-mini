@@ -64,7 +64,26 @@ def _system_prompt() -> str:
     )
 
 
+def announce_level() -> None:
+    """어느 수준으로 도는지 기동 때 밝힌다.
+
+    `level_of_env` 가 오타를 예외로 던지므로 이 함수를 서버 생성 **전에**
+    불러야 한다 — 수준이 잘못됐으면 서버를 띄우기 전에 죽는 편이,
+    콘솔까지 뜬 뒤에 엉뚱한 수준으로 시연이 도는 것보다 낫다.
+    """
+    from stage.levels import level_of_env, load_levels
+
+    lv = level_of_env(load_levels())
+    src = "환경변수" if os.environ.get("REACHY_AUDIENCE_LEVEL") else "기본값"
+    print(
+        f"관람객 수준: {lv.name} ({src}) — "
+        f"{lv.min_sentences}~{lv.max_sentences}문장 / {lv.min_chars}~{lv.max_chars}자",
+        flush=True,
+    )
+
+
 def main() -> None:
+    announce_level()  # 수준이 잘못됐으면 서버를 만들기 전에 여기서 죽는다.
     host = os.environ.get("REACHY_DIRECTOR_HOST", "0.0.0.0")
     port = int(os.environ.get("REACHY_DIRECTOR_PORT", "8777"))
     expect = {
