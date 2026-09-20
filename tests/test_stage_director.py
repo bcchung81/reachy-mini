@@ -34,6 +34,14 @@ class Harness:
         self.warnings: list[str] = []
         self.clock = Clock()
         self.gen_calls: list[tuple[str, int]] = []
+        # 생성 콜백이 실제로 받은 role 을 호출 순서대로 남긴다(리뷰 Important 1).
+        # `_spawn_generate`/`_generate_pending` 은 slot 과 role 을 **둘 다** 받는데,
+        # `Director._begin_cue`/`_answer` 의 실제 호출은 늘 slot == role == "docent"
+        # 라 `self._generate(role, …)` 를 실수로 `self._generate(slot, …)` 로
+        # 바꿔도 그 두 호출부만으로는 절대 드러나지 않는다 — slot 과 role 을
+        # 일부러 다르게 주는 테스트(`test_생성_콜백은_슬롯이_아니라_role_을_받는다`)
+        # 가 이 목록을 본다.
+        self.gen_roles: list[str] = []
         sheet = CueSheet([
             Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0]),
             Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
@@ -44,9 +52,11 @@ class Harness:
         # `gen_calls` 모양은 그대로 `(brief, len(history))` 로 둔다 — 이걸 보는
         # 유일한 단언(`len(h.gen_calls) == 1`)이 개수만 보므로 굳이 넓힐 이유가
         # 없고, 넓히면 이 파일의 커스텀 `generate=` 콜백을 쓰는 테스트들이 전부
-        # role 인자까지 신경 써야 해서 변경 범위만 늘어난다.
+        # role 인자까지 신경 써야 해서 변경 범위만 늘어난다. role 은 별도
+        # 목록(`gen_roles`)에 쌓는다.
         def _gen(role, brief, history):
             self.gen_calls.append((brief, len(history)))
+            self.gen_roles.append(role)
             if generate is not None:
                 return generate(role, brief, history)
             return f"[{brief} 로 만든 대사]"
@@ -1163,3 +1173,21 @@ def test_슬롯이_다르면_서로를_지우지_않는다():
     assert ready_d.wait(3.0) and ready_a.wait(3.0)
     assert h.d._await_pending("docent", ready_d, tok_d, "x", "c1") != \
            h.d._await_pending("after", ready_a, tok_a, "y", "c1:after")
+
+
+def test_생성_콜백은_슬롯이_아니라_role_을_받는다():
+    """리뷰 Important 1 — `_generate_pending` 이 `self._generate(role, …)`
+    대신 실수로 `self._generate(slot, …)` 를 부르면 이 테스트가 잡는다.
+
+    `Director` 의 실제 호출부 둘(`_begin_cue`/`_answer`)은 늘
+    `slot == role == "docent"` 라 그 두 자리만으로는 이 혼동이 드러나지
+    않는다 — 533개가 전부 통과한 채로 `_generate(role, …)` 를
+    `_generate(slot, …)` 로 바꿀 수 있었던 이유다. 그래서 slot 과 role 을
+    일부러 다르게 준다("after"/"mc") — 생성 콜백에 "after" 가 닿으면
+    슬롯이 새어 들어간 것이고, "mc" 가 닿아야 role 이 제대로 전달된 것이다.
+    """
+    h = Harness()
+    h.d._spawn_generate("after", "mc", "받아치기 지시", "폴백", "c1:after")
+    ready, _ = h.d._snapshot_slot("after")
+    assert ready.wait(2.0), "생성이 끝나지 않았다"
+    assert h.gen_roles[-1] == "mc", h.gen_roles

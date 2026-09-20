@@ -9,6 +9,8 @@ import sys
 import threading
 import time
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import stage.__main__ as stage_main
 from stage.levels import load_levels
@@ -115,8 +117,83 @@ def test_기동_로그에_수준이_찍힌다(capsys, monkeypatch):
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     import stage.__main__ as m
     from stage.levels import level_of_env
-    m.announce_level(level_of_env(load_levels()))
+    m.announce_level(level_of_env(load_levels()), explicit=True)
     assert "초등" in capsys.readouterr().out
+
+
+def test_수준_출처_라벨은_전달받은_explicit만_보고_환경변수를_다시_읽지_않는다(
+    monkeypatch, capsys
+):
+    """리뷰 Minor 4 — `announce_level` 이 `lv` 는 인자로 받으면서 "환경변수인지
+    기본값인지" 라벨만 몰래 `os.environ` 을 다시 봐서 판정하면, 호출자가 env 와
+    다른 값을 넘겼을 때 로그가 거짓 출처를 찍는다. 환경변수를 **설정해 두고도**
+    `explicit=False` 를 주면 라벨이 인자를 따라야 한다 — 그러지 않으면 함수가
+    인자를 무시하고 `os.environ` 을 다시 읽은 것이다.
+    """
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "전문가")  # 환경변수는 있지만
+    stage_main.announce_level(_레벨, explicit=False)         # 기본값이라고 알려준다
+    out = capsys.readouterr().out
+    assert "기본값" in out
+    assert "환경변수" not in out
+
+
+def test_main_은_수준을_한_번만_읽어_announce_level과_build_generate에_같이_넘긴다(
+    monkeypatch,
+):
+    """리뷰 Minor 4 — (b)(main 이 수준을 한 번만 읽어 양쪽에 넘긴다) 자체를
+    박제한 테스트가 없었다. 지금까지의 테스트는 `announce_level`/`build_generate`
+    를 직접 불러 넘기므로 `main()` 의 배선은 아무도 보지 않는다.
+
+    `load_levels` 호출 횟수를 세고, `announce_level`/`build_generate` 가 받은
+    `Level` 객체가 **동일 객체**인지 본다. `main()` 이 소켓·콘솔까지 가면
+    (표준입력이 없을 때 끝내지 않고 버티는 `run_console` 때문에) 테스트가
+    멈추므로, `build_generate` 를 가짜로 바꿔 그 안에서 즉시 멈춘다 — 실제
+    서버·콘솔은 아직 만들어지기 전이다.
+    """
+    # 이 테스트는 어느 수준이 골라지는지가 아니라 "몇 번 읽고 같은 값이 두
+    # 곳에 가는지"만 본다 — 그래도 환경에 REACHY_AUDIENCE_LEVEL 이 이미
+    # (오타로) 남아 있으면 `level_of_env` 가 `LevelError` 를 던져 아래
+    # `pytest.raises(_멈춤)` 이 엉뚱한 예외로 실패한다. 깨끗한 상태를 보장한다.
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+
+    calls = {"load_levels": 0}
+    seen: dict[str, object] = {}
+
+    import stage.levels as levels_mod
+
+    원래_load_levels = levels_mod.load_levels
+
+    def counting_load_levels(*a, **kw):
+        calls["load_levels"] += 1
+        return 원래_load_levels(*a, **kw)
+
+    monkeypatch.setattr(levels_mod, "load_levels", counting_load_levels)
+
+    def fake_announce(lv, explicit):
+        seen["announce"] = lv
+
+    class _멈춤(Exception):
+        """`build_generate` 호출 직후 `main()` 을 여기서 멈춘다 — 서버·콘솔이
+        뜨기 전이라 소켓도 안 열리고 표준입력 대기 루프도 안 돈다."""
+
+    def fake_build_generate(level):
+        seen["build"] = level
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "announce_level", fake_announce)
+    monkeypatch.setattr(stage_main, "build_generate", fake_build_generate)
+
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    assert calls["load_levels"] == 1, (
+        f"load_levels 가 {calls['load_levels']} 번 불렸다 — 한 번이어야 한다"
+    )
+    assert "announce" in seen and "build" in seen
+    assert seen["announce"] is seen["build"], (
+        "announce_level 과 build_generate 가 서로 다른 Level 객체를 받았다 — "
+        "main() 이 수준을 두 번 읽었을 가능성이 있다"
+    )
 
 
 def test_모듈_문서에_수준_환경변수가_적혀_있다():

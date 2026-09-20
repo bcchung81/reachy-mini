@@ -56,16 +56,18 @@ def build_generate(level) -> "callable":
     return generate
 
 
-def announce_level(lv) -> None:
+def announce_level(lv, explicit: bool) -> None:
     """어느 수준으로 도는지 기동 때 밝힌다.
 
-    `lv` 는 `main()` 이 **한 번만** 읽어 이 함수와 `build_generate()` 양쪽에
-    넘긴다. 예전에는 이 함수가 안에서 직접 `level_of_env(load_levels())` 를
-    했는데, `build_generate(level)` 이 생기면서 그대로 두면 같은 파일을 두
-    번 읽게 된다 — 파일을 두 번 여는 것 자체보다, 그사이 값이 갈릴 여지를
-    만드는 것이 문제다(로딩을 한 곳으로 모으면 그 여지가 아예 없다).
+    `lv` 와 `explicit` 은 **같은 호출자**(`main()`)에게서 받는다. 예전에는
+    `lv` 는 인자로 받으면서 "환경변수인지 기본값인지" 라벨만 이 함수가 따로
+    `os.environ` 을 봐서 판정했다 — 호출자가 env 와 다른 `Level` 을 넘기면
+    (예: 테스트가 임의의 `Level` 을 만들어 넘기는 경우) 로그가 거짓 출처를
+    찍는다(리뷰 Minor 4). `lv`/`explicit` 을 한 곳에서 같이 받으면 그 둘이
+    갈릴 여지가 없다 — (b)가 "수준을 두 번 읽지 않는다" 로 없앤 여지를 여기서
+    "출처 판정을 두 번 하지 않는다" 로 마저 없앤다.
     """
-    src = "환경변수" if os.environ.get("REACHY_AUDIENCE_LEVEL") else "기본값"
+    src = "환경변수" if explicit else "기본값"
     print(
         f"관람객 수준: {lv.name} ({src}) — "
         f"{lv.min_sentences}~{lv.max_sentences}문장 / {lv.min_chars}~{lv.max_chars}자",
@@ -79,8 +81,14 @@ def main() -> None:
     # **여기서 한 번만 읽는다.** `level_of_env` 가 오타를 예외로 던지므로 이
     # 줄을 서버 생성 **전에** 둬야 한다 — 수준이 잘못됐으면 서버를 띄우기
     # 전에 죽는 편이, 콘솔까지 뜬 뒤에 엉뚱한 수준으로 시연이 도는 것보다 낫다.
+    #
+    # `explicit` 도 이 한 번의 환경 조회에서 함께 뽑는다 — `level_of_env` 가
+    # 보는 것과 같은 환경변수를 같은 자리에서 본다. `announce_level` 이 따로
+    # `os.environ` 을 보게 하면 "무엇을 찍는지" 와 "무엇으로 도는지" 가
+    # 서로 다른 조회에서 나와 갈릴 여지가 생긴다.
+    explicit = bool(os.environ.get("REACHY_AUDIENCE_LEVEL", "").strip())
     level = level_of_env(load_levels())
-    announce_level(level)  # 수준이 잘못됐으면 이미 위에서 죽었다.
+    announce_level(level, explicit)  # 수준이 잘못됐으면 이미 위에서 죽었다.
     host = os.environ.get("REACHY_DIRECTOR_HOST", "0.0.0.0")
     port = int(os.environ.get("REACHY_DIRECTOR_PORT", "8777"))
     expect = {
