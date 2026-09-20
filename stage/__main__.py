@@ -7,6 +7,8 @@
     REACHY_DOCENT_UNIT     도슨트 로봇의 hardware id
     REACHY_LLM_URL         추론 서버 (llm.py 의 기본값을 따른다)
     REACHY_CUES_PATH       큐시트 경로 (기본 data/cues.yaml)
+    REACHY_AUDIENCE_LEVEL  관람객 수준 — 초등/중고등/일반/전문가 (기본 일반)
+    REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
 """
 
 import os

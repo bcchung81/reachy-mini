@@ -14,8 +14,11 @@ import yaml
 LEVEL_NAMES = ("초등", "중고등", "일반", "전문가")
 DEFAULT_LEVEL = "일반"
 
-_FIELDS = ("min_sentences", "max_sentences", "min_chars", "max_chars",
-           "vocabulary", "depth", "numbers", "sources")
+# 숫자 네 필드와 문자열 네 필드를 나눠 둔다 — `load_levels` 가 타입별로 다른
+# 검사를 하기 때문이다(리뷰: 존재만 보고 타입을 안 봤다).
+_INT_FIELDS = ("min_sentences", "max_sentences", "min_chars", "max_chars")
+_STR_FIELDS = ("vocabulary", "depth", "numbers", "sources")
+_FIELDS = _INT_FIELDS + _STR_FIELDS
 
 
 class LevelError(ValueError):
@@ -64,9 +67,36 @@ def load_levels(path: pathlib.Path | None = None) -> dict[str, Level]:
     out: dict[str, Level] = {}
     for name in LEVEL_NAMES:
         item = raw[name]
+        # YAML 에서 `초등:` 아래를 비우면(`null`) item 이 None 이 된다 — 그대로
+        # `f not in item` 을 돌리면 `TypeError: argument of type 'NoneType' is
+        # not iterable` 이 어느 파일·어느 수준인지 말 없이 튀어나온다.
+        if not isinstance(item, dict):
+            raise LevelError(
+                f"{p} {name}: 항목이 매핑이어야 한다 — 지금은 {type(item).__name__}"
+            )
         for f in _FIELDS:
             if f not in item:
                 raise LevelError(f"{p} {name}: {f} 가 없다")
+        for f in _INT_FIELDS:
+            v = item[f]
+            # bool 은 int 의 하위형이라 `isinstance(v, int)` 만으로는 `true`/`false`
+            # 를 못 거른다(stage/server.py::_seq_field 와 같은 함정). 여기서
+            # 놓치면 `min_chars: true` 같은 오타가 조용히 실려 분량 계산이
+            # 엉뚱한 수로 돈다 — "실패는 소리 내서 실패한다" 위반이다.
+            if not isinstance(v, int) or isinstance(v, bool):
+                raise LevelError(
+                    f"{p} {name}.{f} 는 정수여야 한다 — "
+                    f"지금은 {type(v).__name__}({v!r})"
+                )
+        for f in _STR_FIELDS:
+            v = item[f]
+            # 빈 문자열도 거절한다 — 프롬프트에 그대로 얹히는 지시문이라 비면
+            # "말하는 방식을 안 가른" 채로 조용히 넘어간다.
+            if not isinstance(v, str) or not v.strip():
+                raise LevelError(
+                    f"{p} {name}.{f} 는 비어 있지 않은 문자열이어야 한다 — "
+                    f"지금은 {type(v).__name__}({v!r})"
+                )
         out[name] = Level(name=name, **{f: item[f] for f in _FIELDS})
     return out
 

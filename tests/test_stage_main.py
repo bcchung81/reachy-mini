@@ -108,3 +108,12 @@ def test_기동_로그에_수준이_찍힌다(capsys, monkeypatch):
     import stage.__main__ as m
     m.announce_level()
     assert "초등" in capsys.readouterr().out
+
+
+def test_모듈_문서에_수준_환경변수가_적혀_있다():
+    """`announce_level()` 이 실제로 쓰는 두 환경변수(REACHY_AUDIENCE_LEVEL/
+    REACHY_LEVELS_PATH)가 기동 문서에서 빠지면, "주소는 전부 환경변수다" 규약대로
+    이 파일 머리말만 보고 배포하는 사람이 그 존재를 알 길이 없다."""
+    doc = stage_main.__doc__ or ""
+    assert "REACHY_AUDIENCE_LEVEL" in doc
+    assert "REACHY_LEVELS_PATH" in doc

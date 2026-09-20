@@ -8,9 +8,34 @@ import pathlib
 import sys
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.levels import LevelError, level_of_env, load_levels
+
+
+def _valid_raw() -> dict:
+    """규약을 통과하는 최소 데이터. 각 테스트는 이걸 복사해 필드 하나만 깨뜨린다 —
+    통째로 다시 쓰면 무엇을 깨뜨렸는지 diff 로 못 읽는다."""
+    return {
+        name: {
+            "min_sentences": 2,
+            "max_sentences": 3,
+            "min_chars": 70,
+            "max_chars": 120,
+            "vocabulary": "말",
+            "depth": "말",
+            "numbers": "말",
+            "sources": "말",
+        }
+        for name in ("초등", "중고등", "일반", "전문가")
+    }
+
+
+def _write(tmp_path: pathlib.Path, raw: dict) -> pathlib.Path:
+    p = tmp_path / "levels.yaml"
+    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    return p
 
 
 def test_수준_넷이_모두_있다():
@@ -40,3 +65,52 @@ def test_모르는_수준은_소리_내서_실패한다(monkeypatch):
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "고급")
     with pytest.raises(LevelError, match="REACHY_AUDIENCE_LEVEL"):
         level_of_env(load_levels())
+
+
+def test_숫자_필드가_문자열이면_소리_내서_실패한다(tmp_path):
+    # `min_chars` 는 max_tokens 계산에 안 쓰여서 즉시 안 터진다 — 그대로
+    # 로그·프롬프트로 흘러가 분량 규정 전체가 조용히 무의미해진다(리뷰 지적).
+    raw = _valid_raw()
+    raw["초등"]["min_chars"] = "칠십"
+    p = _write(tmp_path, raw)
+    with pytest.raises(LevelError, match="min_chars"):
+        load_levels(p)
+
+
+def test_숫자_필드가_참거짓이면_소리_내서_실패한다(tmp_path):
+    # bool 은 int 의 하위형이라 `isinstance(v, int)` 만으로는 안 걸린다
+    # (stage/server.py::_seq_field 가 이미 겪은 함정). YAML 의 `true`/`false` 가
+    # 그대로 문장 수로 실리면 안 된다.
+    raw = _valid_raw()
+    raw["초등"]["max_sentences"] = True
+    p = _write(tmp_path, raw)
+    with pytest.raises(LevelError, match="max_sentences"):
+        load_levels(p)
+
+
+def test_문자열_필드가_비어있으면_소리_내서_실패한다(tmp_path):
+    # 빈 문자열은 "말하는 방식을 안 가른" 채로 프롬프트에 실린다 — 수준 프로필의
+    # 존재 의의(사실이 아니라 말하는 방식만 가른다)를 무의미하게 만든다.
+    raw = _valid_raw()
+    raw["일반"]["vocabulary"] = "   "
+    p = _write(tmp_path, raw)
+    with pytest.raises(LevelError, match="vocabulary"):
+        load_levels(p)
+
+
+def test_문자열_필드가_숫자면_소리_내서_실패한다(tmp_path):
+    raw = _valid_raw()
+    raw["전문가"]["depth"] = 3
+    p = _write(tmp_path, raw)
+    with pytest.raises(LevelError, match="depth"):
+        load_levels(p)
+
+
+def test_수준_항목이_매핑이_아니면_소리_내서_실패한다(tmp_path):
+    # YAML 에서 `초등:` 아래를 비우면(null) 원래는 어느 파일·어느 수준인지 말
+    # 없는 TypeError 가 그대로 튀어나왔다.
+    raw = _valid_raw()
+    raw["초등"] = None
+    p = _write(tmp_path, raw)
+    with pytest.raises(LevelError, match="초등"):
+        load_levels(p)
