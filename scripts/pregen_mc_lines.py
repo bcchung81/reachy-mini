@@ -6,7 +6,14 @@
 **LLM 서버가 떠 있어야 실제로 돈다** — `build_generate` 가 `stage/__main__.py`
 와 똑같은 클라이언트를 만들어 진짜로 추론 서버에 왕복한다. 그래서 이 스크립트
 자체는 자동 테스트에서 돌리지 않는다(`tests/test_pregen.py` 는 캐시 키·폴백·
-스킵 로직만 `build_generate` 를 가짜로 바꿔 단위로 본다).
+스킵·파일 보존 로직만 `build_generate` 를 가짜로 바꿔 단위로 본다).
+
+**새 항목은 건별로 파일에 이어 붙인다 — 통째로 재작성하지 않는다.** 두 가지
+이유다. ① 76회(19섹션 × 4수준) LLM 왕복 중 하나만 실패해도 그 전에 만든
+것까지 통째로 사라지면 사전 생성의 의미가 없다. ② `yaml.safe_dump(전체, ...)`
+로 매번 다시 쓰면 사람이 파일에 남긴 주석·순서가 실행마다 사라진다 —
+"사람이 읽고 고친다"는 이 파일의 존재 이유와 정면으로 충돌한다. 기존 줄은
+한 글자도 안 건드리고, 새로 만든 항목만 뒤에 이어 붙인다.
 """
 
 import pathlib
@@ -21,28 +28,69 @@ from stage.mc_cache import cache_key, cache_path, load_mc_lines
 from stage.__main__ import build_generate
 
 
+def _valid_keys(cues) -> set[str]:
+    """지금 큐시트가 가질 수 있는 모든 (수준 무관) 키 — 고아 판정 기준이다.
+
+    `wanted`(이번 실행이 고른 수준)가 아니라 **전체 수준**을 본다 — 안 그러면
+    "이번엔 초등만 돌렸다" 는 이유만으로 다른 수준의 멀쩡한 키가 고아로
+    잘못 잡힌다.
+    """
+    keys = set()
+    for cue in cues:
+        for name in LEVEL_NAMES:
+            mc_brief, _ = cue.brief_for(name)
+            if mc_brief:
+                keys.add(cache_key(cue.id, name, mc_brief))
+    return keys
+
+
+def _append_entry(path: pathlib.Path, key: str, text: str) -> None:
+    """항목 하나만 파일 끝에 이어 붙인다. 기존 줄(사람이 남긴 주석 포함)은
+    절대 다시 쓰지 않는다 — `open(..., "a")` 라 파일이 없으면 새로 만든다."""
+    with path.open("a", encoding="utf-8") as f:
+        f.write(yaml.safe_dump({key: text}, allow_unicode=True, sort_keys=True))
+
+
 def main() -> None:
     wanted = sys.argv[1:] or list(LEVEL_NAMES)
     levels = load_levels()
     cues = load_cues()
     out = load_mc_lines()
-    for name in wanted:
-        gen = build_generate(levels[name])
-        for cue in cues:
-            mc_brief, _ = cue.brief_for(name)
-            if not mc_brief:
-                print(f"  건너뜀 {cue.id}/{name} — mc_brief 가 없다", flush=True)
-                continue
-            key = cache_key(cue.id, name, mc_brief)
-            if key in out:
-                continue
-            text = gen("mc", mc_brief, [])
-            out[key] = text
-            print(f"  {cue.id}/{name}: {text}", flush=True)
-    cache_path().write_text(
-        yaml.safe_dump(out, allow_unicode=True, sort_keys=True), encoding="utf-8"
-    )
-    print(f"\n{len(out)}개를 {cache_path()} 에 썼다. **읽어보고 고친다.**")
+    before = len(out)
+    orphans = [k for k in out if k not in _valid_keys(cues)]
+    p = cache_path()
+
+    try:
+        for name in wanted:
+            gen = build_generate(levels[name])
+            for cue in cues:
+                mc_brief, _ = cue.brief_for(name)
+                if not mc_brief:
+                    print(f"  건너뜀 {cue.id}/{name} — mc_brief 가 없다", flush=True)
+                    continue
+                key = cache_key(cue.id, name, mc_brief)
+                if key in out:
+                    continue
+                text = gen("mc", mc_brief, [])
+                out[key] = text
+                # **여기서 바로 쓴다.** 다음 반복에서 다른 왕복이 실패해도
+                # 이 항목은 이미 파일에 남아 있다.
+                _append_entry(p, key, text)
+                print(f"  {cue.id}/{name}: {text}", flush=True)
+    finally:
+        # 도중에 예외가 나도 여기까지는 반드시 실행된다 — 시연 담당자가
+        # "몇 개까지 만들고 어디서 죽었는지" 를 알아야 다음 실행에서 재개할
+        # 수 있다(스킵 로직이 이미 만든 것은 다시 안 부른다).
+        새로 = len(out) - before
+        if 새로:
+            print(f"\n{새로}개를 새로 만들어 {p} 에 이어 붙였다(총 {len(out)}개). "
+                  "**읽어보고 고친다.**")
+        else:
+            print(f"\n새로 만들 것이 없다(총 {len(out)}개, {p}) — 캐시가 최신 상태다.")
+        if orphans:
+            # 지우지는 않는다 — 사람이 지금 큐시트와 대조해서 지울지 정한다.
+            print(f"고아 {len(orphans)}개 — 지금 큐시트에 없는 키다({p}). "
+                  "지워도 되는지 확인한다.")
 
 
 if __name__ == "__main__":

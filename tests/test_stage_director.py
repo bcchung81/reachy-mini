@@ -1216,18 +1216,65 @@ def test_여는_대사_캐시가_없으면_큐시트_원문을_읽고_경고한�
     assert any("캐시" in w for w in h.warnings), h.warnings
 
 
+def test_캐시_미스_경고에_키와_캐시_개수와_재생성_명령이_있다():
+    """리뷰 Important 2 — "사전 생성을 아예 안 돌렸다" 와 "브리프를 고쳐
+    해시가 바뀌었다"(해시를 키에 넣은 바로 그 목적)를 경고 문구가 구분 못
+    하면, `data/mc_lines.yaml` 을 grep 해서 원인을 좁힐 수조차 없다. 조회한
+    `key`, 로드된 캐시 개수, 재생성 명령을 경고에 담아야 그 즉시 원인을
+    좁힐 수 있다."""
+    from stage.mc_cache import cache_key
+
+    h = Harness(mc_lines={"엉뚱한|키|000000000000": "관련없는 값"})
+    h.d.start()
+
+    key = cache_key("c1", "일반", "")   # 기본 시트는 briefs 가 없어 mc_brief 가 ""
+    warning = next(w for w in h.warnings if "캐시가 없다" in w)
+    assert str(key) in warning, warning
+    assert "1개" in warning, warning   # 로드된 캐시 개수(엉뚱한 키 1개)
+    assert "pregen_mc_lines.py" in warning, warning
+
+
 def test_여는_대사_캐시가_있으면_캐시_문장을_읽는다():
     """(A) 배선 확인 — `mc_lines`/`level_name` 이 `Director` 까지 실제로
     흘러왔을 때만 캐시 히트가 쓰인다. 미스만 보는 앞 테스트는 `Director`
     가 `mc_lines` 인자를 통째로 무시해도(늘 빈 dict 로 취급해도) 통과하므로
     히트 쪽을 따로 확인한다 — `Director.__init__` 이 `mc_lines` 를
     저장하지 않게 되돌리면 이 테스트가 실패한다.
+
+    **리뷰 Important 1** — 예전 버전은 `cache_key("c1", "초등", "")` 처럼
+    `mc_brief` 가 빈 퇴화 케이스만 봤다(기본 시트에 `briefs` 가 없어서).
+    그러면 `stage/director.py` 의 `cache_key(cue.id, self._level_name,
+    mc_brief)` 를 `cache_key(cue.id, self._level_name, "")` 로 바꿔도(=
+    지시문을 아예 안 본다) 이 테스트가 여전히 통과한다 — 캐시 키의 존재
+    이유("큐시트를 고치면 낡은 항목이 드러난다")를 검증하는 경로가 통째로
+    비어 있었다. 그래서 여기서는 `briefs` 를 채운 시트를 쓰고, **mc_brief
+    만 다른 둘째 큐로 넘어가면 미스가 되는지**까지 본다 — 히트한 이유가
+    "지시문을 봤기 때문"이지 "캐시에 뭐가 있든 무조건 맞기 때문"이 아님을
+    가른다.
     """
-    key = cache_key("c1", "초등", "")   # 기본 시트는 briefs 가 없어 mc_brief 가 ""
-    h = Harness(level_name="초등", mc_lines={key: "캐시에서 읽은 여는 대사"})
+    sheet = CueSheet([
+        Cue("c1", "첫째", "여는 대사 c1", "지시1", "partner",
+            briefs={"초등": {"mc_brief": "초등 브리프 A", "docent_brief": "해설1"}}),
+        Cue("c2", "둘째", "여는 대사 c2", "지시2", "partner",
+            briefs={"초등": {"mc_brief": "초등 브리프 B", "docent_brief": "해설2"}}),
+    ])
+    key1 = cache_key("c1", "초등", "초등 브리프 A")   # c2 의 키(다른 브리프)는 일부러 안 넣는다
+    h = Harness(sheet=sheet, level_name="초등", mc_lines={key1: "캐시에서 읽은 여는 대사"})
+
     h.d.start()
     assert h.says() == [("mc", "캐시에서 읽은 여는 대사")]
     assert not any("캐시가 없다" in w for w in h.warnings), h.warnings
+
+    # 같은 시트, 같은 수준인데 mc_brief 만 다른 c2 로 넘어간다 — 해시가
+    # 달라 다른 키가 되므로 미스여야 한다. `cache_key` 가 `mc_brief` 를
+    # 무시하게 망가지면 이 부분에서 (엉뚱하게) 다시 히트해 버린다.
+    h.clear()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.warnings.clear()
+    h.d.on_heard("다음")
+    assert h.says()[-1] == ("mc", "여는 대사 c2"), h.says()   # 캐시 미스 → 큐시트 원문
+    assert any("캐시가 없다" in w for w in h.warnings), h.warnings
 
 
 def test_도슨트_해설_브리프가_수준을_따른다():
@@ -1296,3 +1343,33 @@ def test_도슨트_해설_폴백도_수준을_따른다(monkeypatch):
     h.ended("mc", "c1")          # 유예시간(0.05s) 안에 못 끝나 폴백으로 진행
     assert h.says()[-1] == ("docent", "초등 해설 지시"), h.says()
     gate.set()                   # 뒤늦게 끝난 생성 스레드를 풀어 정리한다
+
+
+def test_질문_응답_브리프에_문장_수_지정이_없다():
+    """리뷰 Important(범위 밖에서 찾아 범위로 접은 항목) — 분량은 섹션이
+    아니라 수준의 함수다(설계 §5, Task 3). `_answer` 가 브리프 본문에
+    "N문장 이내" 를 박으면 (i) 사회자 대사·도슨트 해설은 수준을 따르는데
+    질문 응답만 고정 분량으로 도는 비대칭이 생기고, (ii) 큐시트에서 걷어낸
+    (Task 5) 바로 그 표현이 다른 자리에서 되살아난 것이다."""
+    import re
+
+    got = threading.Event()
+    seen: list[str] = []
+
+    def gen(role, brief, hist):
+        seen.append(brief)
+        got.set()
+        return "답"
+
+    h = Harness(generate=gen)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    got.clear()
+    seen.clear()
+    h.d.on_heard("마르코니가 누구예요")
+    assert got.wait(2.0), "질문 응답 생성이 돌지 않았다"
+    assert seen, "질문 응답 브리프를 못 봤다"
+    qa_brief = seen[-1]
+    assert "마르코니가 누구예요" in qa_brief, qa_brief   # 질문·섹션 맥락은 그대로 준다
+    assert not re.search(r"\d+\s*문장\s*이내", qa_brief), qa_brief

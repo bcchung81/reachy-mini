@@ -231,10 +231,34 @@ def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴
     )
 
 
+def test_기동_로그에_캐시_개수가_찍힌다(monkeypatch, capsys):
+    """리뷰 Important 2 — "시연 전에 사람이 확인한다" 는 이 캐시의 존재
+    이유가, 정작 기동 로그에 몇 개를 읽었는지 한 줄도 안 남으면 지켜지지
+    않는다. 캐시를 통째로 못 읽어 왔거나 사전 생성을 깜빡한 채 기동해도
+    그 사실이 콘솔에 안 남는다."""
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {"a": "1", "b": "2", "c": "3"})
+
+    class _멈춤(Exception):
+        pass
+
+    def fake_server(*a, **kw):
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", fake_server)
+
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    assert "여는 대사 캐시 3개" in capsys.readouterr().out
+
+
 def test_모듈_문서에_수준_환경변수가_적혀_있다():
     """`announce_level()` 이 실제로 쓰는 두 환경변수(REACHY_AUDIENCE_LEVEL/
     REACHY_LEVELS_PATH)가 기동 문서에서 빠지면, "주소는 전부 환경변수다" 규약대로
-    이 파일 머리말만 보고 배포하는 사람이 그 존재를 알 길이 없다."""
+    이 파일 머리말만 보고 배포하는 사람이 그 존재를 알 길이 없다. `REACHY_MC_LINES_PATH`
+    도 같은 이유로 형제 로더들과 나란히 적혀 있어야 한다(리뷰 Important 4)."""
     doc = stage_main.__doc__ or ""
     assert "REACHY_AUDIENCE_LEVEL" in doc
     assert "REACHY_LEVELS_PATH" in doc
+    assert "REACHY_MC_LINES_PATH" in doc

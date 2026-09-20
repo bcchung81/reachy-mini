@@ -435,15 +435,25 @@ def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달�
     (기본값으로 삼키면) 캐시는 늘 비고 수준은 늘 "일반" 으로 굳는다 —
     Task 6 전체가 무효화된다. 감독 내부 속성만 보면 `_send` 까지 이어지는
     배선이 새는 지점을 못 잡으므로 실제 소켓 끝까지 흘려보내 확인한다.
+
+    **리뷰 Important 1** — `briefs` 가 없는 큐(`mc_brief == ""`)만 보면
+    `cache_key` 가 `mc_brief` 를 아예 무시해도(예: 코드에서 `""` 를
+    하드코딩해도) 이 테스트가 여전히 통과한다. `briefs` 를 채운 시트를
+    쓰고, mc_brief 만 다른 둘째 큐가 미스가 되는지까지 확인한다.
     """
-    key = cache_key("c1", "초등", "")   # briefs 가 없는 큐 → mc_brief 는 ""
-    sheet = CueSheet([Cue("c1", "첫째", "큐시트 원문", "지시", "partner")])
+    sheet = CueSheet([
+        Cue("c1", "첫째", "큐시트 원문 c1", "지시1", "partner",
+            briefs={"초등": {"mc_brief": "초등 브리프 A", "docent_brief": "해설1"}}),
+        Cue("c2", "둘째", "큐시트 원문 c2", "지시2", "partner",
+            briefs={"초등": {"mc_brief": "초등 브리프 B", "docent_brief": "해설2"}}),
+    ])
+    key1 = cache_key("c1", "초등", "초등 브리프 A")   # c2 의 키는 일부러 안 넣는다
     warnings: list[str] = []
     s = StageServer(
         sheet,
         generate=lambda role, brief, history: "도슨트 대사",
         warn=warnings.append,
-        mc_lines={key: "캐시된 여는 대사"},
+        mc_lines={key1: "캐시된 여는 대사"},
         level_name="초등",
     )
 
@@ -459,8 +469,22 @@ def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달�
             time.sleep(0.2)
             s.director.start()
             said = next(m for m in drain(mc, 3) if m["type"] == "say")
+            drain(docent, 1)   # 초기 마이크 닫힘 — 안 걷으면 뒤이은 통수가 밀린다
             assert said["text"] == "캐시된 여는 대사"
             assert not any("캐시가 없다" in w for w in warnings), warnings
+
+            # c2 로 넘어간다 — mc_brief 가 달라 다른 해시가 되므로 미스여야
+            # 한다(콘솔 `n` 과 같은 경로인 `Director.next()` 로 직접 진행).
+            ended(mc, "c1")
+            drain(docent, 3)
+            drain(mc, 1)
+            ended(docent, "c1:docent")
+            drain(mc, 1)
+            warnings.clear()
+            s.director.next()
+            said2 = next(m for m in drain(mc, 3) if m["type"] == "say")
+            assert said2["text"] == "큐시트 원문 c2", said2   # 캐시 미스 → 원문 폴백
+            assert any("캐시가 없다" in w for w in warnings), warnings
     finally:
         srv.shutdown()
         t.join(timeout=2)

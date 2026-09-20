@@ -9,6 +9,7 @@
     REACHY_CUES_PATH       큐시트 경로 (기본 data/cues.yaml)
     REACHY_AUDIENCE_LEVEL  관람객 수준 — 초등/중고등/일반/전문가 (기본 일반)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
+    REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
 """
 
 import os
@@ -17,7 +18,7 @@ import sys
 import threading
 
 from stage.cues import CueSheet, load_cues
-from stage.mc_cache import load_mc_lines
+from stage.mc_cache import cache_path, load_mc_lines
 from stage.server import StageServer
 
 # 대화 로직은 앱 하나에만 둔다 — LLM 클라이언트를 다시 쓰지 않고 그것을 가져온다.
@@ -108,9 +109,15 @@ def main() -> None:
     # 여기서 한 번만 읽어 `Director` 로 흘려보낸다 — `StageServer.__init__`
     # 이 기본값(빈 dict·"일반")으로 넘기게 두면 캐시가 아무리 채워져 있어도
     # 늘 무시된다.
+    mc_lines = load_mc_lines()
+    # **기동 로그에 몇 개 읽었는지 남긴다.** "시연 전에 사람이 미리 확인한다"
+    # 는 이 캐시의 존재 이유가, 정작 기동 때 몇 개가 실제로 실렸는지 아무
+    # 데도 안 남으면 지켜지지 않는다 — 캐시를 통째로 못 읽어 왔거나(배선
+    # 문제) 사전 생성을 깜빡한 채로 기동해도 콘솔에는 아무 신호가 없었다.
+    print(f"여는 대사 캐시 {len(mc_lines)}개 로드됨 ({cache_path()})", flush=True)
     server = StageServer(
         CueSheet(load_cues()), build_generate(level), expect_units=expect,
-        mc_lines=load_mc_lines(), level_name=level.name,
+        mc_lines=mc_lines, level_name=level.name,
     )
     stop = threading.Event()
     threading.Thread(
