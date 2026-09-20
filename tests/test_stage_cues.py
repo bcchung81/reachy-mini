@@ -482,11 +482,50 @@ def test_briefs가_없거나_null이면_빈_매핑으로_받는다(tmp_path):
 
 def test_데이터_큐시트에_섹션별_문장_수_지정이_없다():
     """분량은 이제 수준 프로필이 정한다(`stage/prompts.py::_amount_for`).
-    docent_brief 에 "N문장 이내" 가 남아 있으면 섹션 지정이 수준 지정을
-    덮어써 수준을 바꿔도 분량이 안 변한다 — 회귀를 막는다."""
+    docent_brief 에 "N문장 이내"(또는 "N~M문장") 가 남아 있으면 섹션 지정이
+    수준 지정을 덮어써 수준을 바꿔도 분량이 안 변한다 — 회귀를 막는다.
+
+    이 검사는 원래 옛 최상위 `docent_brief` 만 봤다. Task 9 가 접은 `briefs`
+    (섹션×수준별 지시문)에 조사 파일의 "2~3문장"/"5~7문장" 표현이 그대로
+    딸려 들어왔는데, 옛 정규식(`\\d+문장 이내`)은 "이내" 가 없는 이 범위 표현을
+    못 잡았다(리뷰, 2026-09-20) — 그래서 정규식도 넓히고 `briefs` 까지 본다."""
     import re
 
+    pattern = re.compile(r"\d+\s*(?:[~\-]\s*\d+\s*)?문장(?:\s*이내)?")
     for c in load_cues():
-        assert not re.search(r"\d+문장 이내", c.docent_brief), (
+        assert not pattern.search(c.docent_brief), (
             f"{c.id}: docent_brief 에 문장 수 지정이 남아 있다"
         )
+        for level, b in c.briefs.items():
+            for field in ("mc_brief", "docent_brief"):
+                text = b.get(field, "")
+                assert not pattern.search(text), (
+                    f"{c.id}/{level}/{field}: briefs 에 문장 수 지정이 남아 있다 — {text!r}"
+                )
+
+
+def test_모든_큐에_수준별_브리프가_채워져_있다():
+    """`briefs` 가 비면 `Cue.brief_for` 가 옛 최상위 `docent_brief` 로 폴백하는데,
+    거기엔 아직 못 걷어낸 사실 오류가 남아 있을 수 있다(예: 07-maritime 의
+    '695명'/'1992년' — Task 9 보고서 참고). 19섹션 전부 채웠다는 것을 회귀
+    가드로 박아 둔다 — `data/cues.yaml` 에서 `briefs` 를 통째로 지워도 이
+    테스트 전에는 그걸 잡는 게 없었다(리뷰, 2026-09-20)."""
+    from stage.levels import LEVEL_NAMES
+
+    for c in load_cues():
+        assert c.briefs, f"{c.id}: briefs 가 비어 있다 — 옛 docent_brief 로 폴백한다"
+        assert set(c.briefs) == set(LEVEL_NAMES), f"{c.id}: 수준이 빠졌다 — {sorted(c.briefs)}"
+
+
+def test_briefs에_위치_지시어가_없다():
+    """`test_사회자_대사에_위치_지시어가_없다`(B4)는 고정 대사(`mc`/`mc_after`)만
+    본다. 그런데 `briefs.*.docent_brief`/`mc_brief` 는 도슨트 LLM 에게 주는
+    지시문이라 "여기서는"/"이곳" 같은 표현이 있으면 LLM 이 그대로 되읊을 위험이
+    있다 — 로봇은 책상에 고정돼 있고 관람객이 움직인다(원장 「걷어낸 것」).
+    Task 9 가 조사 briefs 를 접으면서 16곳을 놓쳤던 자리라 별도로 가드한다."""
+    for c in load_cues():
+        for level, b in c.briefs.items():
+            for field in ("mc_brief", "docent_brief"):
+                text = b.get(field, "")
+                for w in _DEIXIS:
+                    assert w not in text, f"{c.id}/{level}/{field}: {w!r} — {text!r}"

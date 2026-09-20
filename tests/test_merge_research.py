@@ -1,8 +1,21 @@
 import pathlib
+import re
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-from scripts.merge_research import merge_all, merged_cue
+from scripts.merge_research import (
+    _DEIXIS,
+    _SHORTENED_MC_AFTER,
+    _clean_briefs,
+    _fix_mc,
+    _fix_mc_after,
+    _strip_sentence_count,
+    load_research,
+    merge_all,
+    merged_cue,
+)
 
 
 def test_조사_브리프가_큐시트로_접힌다():
@@ -41,67 +54,186 @@ def test_브리프가_비어_있으면_접지_않는다():
     assert merged_cue(cue, {"id": "t1", "briefs": {}})["mc"] == "옛 대사"
 
 
-def _full_briefs(tag: str) -> dict:
-    return {
-        lv: {"mc_brief": f"{tag} 진행", "docent_brief": f"{tag} 해설"}
-        for lv in ("초등", "중고등", "일반", "전문가")
-    }
-
-
-# ── merge_all: mc_after 인터랙션 불변식(다음 안내·90자 예산) 보호 ──────────
+# ── mc_after: 되돌리지 않고 접미사를 붙이거나 본문을 줄인다 (리뷰, 2026-09-20) ──
 #
-# 실제 조사 파일 19개를 접어 보니 mc/mc_after 어디에도 사실 오류가 없었고(오류는
-# 전부 docent_brief 쪽), 오히려 조사가 다시 쓴 mc_after 가 18/19섹션에서 '다음'
-# 안내를 빠뜨리고 1곳은 90자를 넘겨 `tests/test_stage_cues.py` 의 두 불변식을
-# 깼다. merged_cue 는 한 큐만 보므로 "마지막 큐인가"를 모른다 — 그 판단과 안전
-# 장치는 merge_all 의 몫이다.
+# 첫 구현은 인터랙션 불변식(다음 안내·90자)을 어기면 옛 mc_after 로 되돌렸는데,
+# 그러면 조사가 고친 사실 오류(14-mobile "아파트"→"자동차", 05-donor "의학박사"
+# →"의사", 15-emf 의 근거 없는 건강 단정 삭제)가 함께 사라진다. 아래는 그
+# 되돌림 대신 붙인 새 로직(_fix_mc_after)을 직접 검증한다.
 
 
-def test_mc_after가_다음_안내를_빠뜨리면_옛_값으로_되돌린다():
-    cues = [
-        {"id": "a", "title": "A", "gaze": "partner", "mc": "옛 대사 A",
-         "mc_after": "옛 받아치기 A, 이어가려면 '다음' 이요.", "docent_brief": "옛 지시문"},
-        {"id": "b", "title": "B", "gaze": "partner", "mc": "옛 대사 B",
-         "mc_after": "옛 받아치기 B, 이어가려면 '다음' 이요.", "docent_brief": "옛 지시문"},
+def test_mc_after에_다음_안내가_없으면_접미사를_붙인다():
+    fixed, note = _fix_mc_after("x", "궁금한 점 있으실까요?", is_last=False)
+    assert "다음" in fixed
+    assert fixed.startswith("궁금한 점 있으실까요?"), "원문을 지우지 않고 뒤에 덧붙여야 한다"
+    assert len(fixed) <= 90
+    assert note["action"] == "접미사_추가"
+
+
+def test_mc_after가_이미_안전하면_그대로_쓴다():
+    fixed, note = _fix_mc_after("x", "새 받아치기, 이어가려면 '다음' 이라고 해 주세요.", is_last=False)
+    assert fixed == "새 받아치기, 이어가려면 '다음' 이라고 해 주세요."
+    assert note is None
+
+
+def test_mc_after가_마지막_큐면_다음_없이도_그대로_쓴다():
+    fixed, note = _fix_mc_after("19-closing", "감사합니다.", is_last=True)
+    assert fixed == "감사합니다."
+    assert note is None
+
+
+def test_15emf는_되돌리지_않고_줄인_대체본을_쓴다():
+    """실제 조사 원문(106자, '다음' 없음)은 접미사를 붙여도 90자를 넘는다.
+    되돌리면 15-emf corrections 가 삭제하라고 한 건강 단정이 되살아난다 —
+    되돌리지 않고 정정을 지킨 대체본을 쓴다."""
+    original = (
+        "세기가 발생원에서 멀어질수록 빠르게 줄어든다는 것, 그래서 기준도 일반인용과 "
+        "직업인용으로 따로 있다는 게 핵심이군요. 이 주제는 특히 궁금한 점이 많으실 것 "
+        "같아요. 무엇이든 물어봐 주세요."
+    )
+    fixed, note = _fix_mc_after("15-emf", original, is_last=False)
+    assert fixed == _SHORTENED_MC_AFTER["15-emf"]
+    assert len(fixed) <= 90
+    assert "다음" in fixed
+    assert "괜찮다" not in fixed and "유해하지 않다" not in fixed
+    assert note["action"] == "줄여서_채택"
+
+
+def test_대체본도_접미사도_안_통하면_소리_내서_실패한다():
+    too_long_no_advance = "가" * 100  # '다음' 없음, 접미사를 붙여도 여전히 90자 초과
+    with pytest.raises(ValueError, match="mc_after"):
+        _fix_mc_after("등록되지-않은-id", too_long_no_advance, is_last=False)
+
+
+# ── mc: 실측 결과 사실 정정을 나르지 않으므로 불변식 위반이면 되돌려도 안전 ──
+
+
+def test_mc가_130자를_넘으면_되돌린다():
+    long_new = "가" * 131
+    fixed, note = _fix_mc("x", long_new, "짧은 옛 mc")
+    assert fixed == "짧은 옛 mc"
+    assert note["before"] == long_new
+
+
+def test_mc에_위치_지시어가_있으면_되돌린다():
+    fixed, note = _fix_mc("x", "여기는 전파체험관입니다.", "옛 mc")
+    assert fixed == "옛 mc"
+
+
+def test_mc가_안전하면_그대로_쓴다():
+    fixed, note = _fix_mc("x", "새 mc", "옛 mc")
+    assert fixed == "새 mc"
+    assert note is None
+
+
+# ── briefs 정화: 위치 지시어(리뷰 B4) ────────────────────────────────────
+
+
+def test_briefs의_위치_지시어가_고쳐진다():
+    # 09-special-exhibit/초등/mc_brief 는 고침표에 항목이 하나뿐이라(docent_brief
+    # 는 등록돼 있지 않다) 이 필드만 신경 쓰면 된다.
+    briefs = {"초등": {"mc_brief": "여기에는 가끔 바뀌는 특별한 전시가 있다고 알린다.",
+                      "docent_brief": "그대로"}}
+    cleaned, changes = _clean_briefs("09-special-exhibit", briefs)
+    assert "여기" not in cleaned["초등"]["mc_brief"]
+    assert cleaned["초등"]["mc_brief"] == "특별교류전시에는 가끔 바뀌는 전시가 있다고 알린다."
+    assert cleaned["초등"]["docent_brief"] == "그대로"
+    assert changes[0]["kind"] == "위치_지시어"
+
+
+def test_고침표의_원문_조각이_없으면_소리_내서_실패한다():
+    """조사 파일이 바뀌어 고침표가 겨냥하던 문구가 사라지면, 조용히 넘어가지
+    않고 실패해야 한다 — 안 그러면 다음에 같은 문구가 다른 자리에 다시 들어와도
+    아무도 못 잡는다."""
+    briefs = {"초등": {"mc_brief": "완전히 다른 문장이다.", "docent_brief": "그대로"}}
+    with pytest.raises(ValueError, match="못 찾았다"):
+        _clean_briefs("09-special-exhibit", briefs)
+
+
+# ── briefs 정화: 문장 수 중복(수준 프로필과 진실 원천이 둘이 된다) ──────────
+
+
+def test_문장_수_중복_표현이_걷어진다():
+    assert _strip_sentence_count("2~3문장. 전파는 파동이다.") == "전파는 파동이다."
+    assert _strip_sentence_count("전파는 파동이다. 5~7문장.") == "전파는 파동이다."
+    assert _strip_sentence_count("3문장 이내. 말한다.") == "말한다."
+    assert _strip_sentence_count("문장 수 표현이 없는 문장이다.") == "문장 수 표현이 없는 문장이다."
+
+
+# ── merge_all 통합: 실제 조사 파일로 접었을 때 사실 정정이 살아 있는가 ─────
+#
+# 리뷰(2026-09-20): 첫 구현은 아래 세 섹션의 mc_after 정정을 조용히 버렸다.
+# 실제 data/cues-research/*.yaml 을 읽어 옛(사실 오류가 있던) mc_after 를
+# 흉내 낸 큐와 함께 접어서, 정정이 살아남는지 직접 확인한다.
+
+
+def _old_cue(cue_id, mc, mc_after, title="제목", gaze="partner"):
+    return {"id": cue_id, "title": title, "gaze": gaze, "mc": mc,
+            "mc_after": mc_after, "docent_brief": "옛 지시문"}
+
+
+def test_실제_조사에서_사실_정정이_유지된다():
+    research = load_research()
+    old_cues = [
+        _old_cue(
+            "14-mobile",
+            "이번 주제는 휴대폰의 발전, 이동통신입니다. 도슨트, 1세대부터 5세대까지 어떻게 달라졌나요?",
+            "카폰이 아파트 한 채 값이었다니 놀랍네요. 질문 있으시면 말씀해 주시고, 이어가려면 '다음'이요.",
+            gaze="audience",
+        ),
+        _old_cue(
+            "15-emf",
+            "지금부터는 KCA가 정부에서 위탁받은 전파품질 관리 업무 이야기입니다. 도슨트, 전자파는 안전한가요?",
+            "거리를 조금만 두면 괜찮다는 게 핵심이군요. 이 주제는 질문이 많을 것 같아요. 말씀해 주시고, 아니면 '다음'입니다.",
+            gaze="audience",
+        ),
+        _old_cue(
+            "05-donor",
+            "이 체험관 정식 이름에는 사람 이름이 하나 들어 있습니다. 도슨트, 장황남 박사가 누구인지 소개해 주세요.",
+            "의학박사가 통신 장비를 모았다는 게 뜻밖이죠. 궁금한 점 있으시면 말씀해 주시고, 이어가려면 '다음'이요.",
+        ),
+        # 위 셋을 "마지막 큐"로 만들지 않으려는 더미 — 마지막 큐는 '다음' 검사가
+        # 빠지므로, 이걸 넣지 않으면 이 테스트가 실제로 검증하려는 접미사/줄임
+        # 경로를 안 타고도 통과해 버릴 수 있다.
+        _old_cue("__dummy__", "dummy", "dummy"),
     ]
-    research = {
-        # a: 마지막이 아닌데 '다음' 이 없다 — 되돌아가야 한다.
-        "a": {"id": "a", "briefs": _full_briefs("A"), "mc_after": "궁금한 점 있으실까요?"},
-        # b: 마지막 큐라 '다음' 이 없어도 된다 — 그대로 접힌다.
-        "b": {"id": "b", "briefs": _full_briefs("B"), "mc_after": "감사합니다."},
-    }
-    merged, skipped, reverted = merge_all(cues, research)
-    assert merged[0]["mc_after"] == "옛 받아치기 A, 이어가려면 '다음' 이요."
-    assert merged[1]["mc_after"] == "감사합니다."
-    assert reverted == ["a"]
-    assert skipped == []
+    merged, log = merge_all(old_cues, research)
+    by_id = {c["id"]: c for c in merged}
+
+    assert "아파트" not in by_id["14-mobile"]["mc_after"]
+    assert "자동차" in by_id["14-mobile"]["mc_after"]
+
+    assert "괜찮다" not in by_id["15-emf"]["mc_after"]
+    assert "유해하지 않다" not in by_id["15-emf"]["mc_after"]
+
+    assert "의학박사" not in by_id["05-donor"]["mc_after"]
 
 
-def test_mc_after가_90자를_넘으면_옛_값으로_되돌린다():
-    too_long = "다음으로 가려면 다음이라고 말씀해 주세요. " + "가" * 90
-    cues = [
-        {"id": "a", "title": "A", "gaze": "partner", "mc": "옛 대사",
-         "mc_after": "옛 받아치기", "docent_brief": "옛 지시문"},
-        {"id": "b", "title": "B", "gaze": "partner", "mc": "옛 대사 B",
-         "mc_after": "옛 받아치기 B", "docent_brief": "옛 지시문"},
+def test_실제_조사를_접으면_briefs에_위치_지시어나_문장_수_중복이_안_남는다():
+    research = load_research()
+    old_cues = [
+        _old_cue(rid, "m", "m") for rid in sorted(research)
     ]
-    research = {"a": {"id": "a", "briefs": _full_briefs("A"), "mc_after": too_long}}
-    merged, skipped, reverted = merge_all(cues, research)
-    assert merged[0]["mc_after"] == "옛 받아치기"
-    assert reverted == ["a"]
+    merged, log = merge_all(old_cues, research)
 
+    sentence_count_re = re.compile(r"\d+\s*[~\-]\s*\d+\s*문장")
+    offenders = []
+    for c in merged:
+        for level, b in (c.get("briefs") or {}).items():
+            for field in ("mc_brief", "docent_brief"):
+                text = b.get(field, "")
+                if not isinstance(text, str):
+                    continue
+                if any(w in text for w in _DEIXIS):
+                    offenders.append((c["id"], level, field, "위치 지시어", text))
+                if sentence_count_re.search(text):
+                    offenders.append((c["id"], level, field, "문장 수", text))
+    assert offenders == []
 
-def test_불변식을_만족하면_조사_mc_after를_그대로_쓴다():
-    cues = [
-        {"id": "a", "title": "A", "gaze": "partner", "mc": "옛 대사",
-         "mc_after": "옛 받아치기", "docent_brief": "옛 지시문"},
-        {"id": "b", "title": "B", "gaze": "partner", "mc": "옛 대사 B",
-         "mc_after": "옛 받아치기 B", "docent_brief": "옛 지시문"},
-    ]
-    research = {
-        "a": {"id": "a", "briefs": _full_briefs("A"),
-              "mc_after": "새 받아치기, 이어가려면 '다음' 이라고 해 주세요."},
-    }
-    merged, skipped, reverted = merge_all(cues, research)
-    assert merged[0]["mc_after"] == "새 받아치기, 이어가려면 '다음' 이라고 해 주세요."
-    assert reverted == []
+    # 이번에 실제로 고쳤다고 보고한 위치 지시어 16곳 + 문장 수 중복 20곳(5섹션×4수준)
+    # 이 이 실행에서도 그대로 잡혔는지 — 표가 비거나 함수가 no-op 이 되면 이 수가
+    # 0으로 떨어진다.
+    deixis_fixed = [c for c in log["briefs_changes"] if c["kind"] == "위치_지시어"]
+    sc_fixed = [c for c in log["briefs_changes"] if c["kind"] == "문장_수_중복"]
+    assert len(deixis_fixed) == 16
+    assert len(sc_fixed) == 20
