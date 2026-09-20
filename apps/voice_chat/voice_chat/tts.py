@@ -74,6 +74,16 @@ QWEN_STREAM = os.environ.get("TTS_QWEN_STREAM", "1").lower() not in ("0", "false
 # 서버가 X-Sample-Rate 를 주면 그것을 우선한다.
 QWEN_PCM_RATE = int(os.environ.get("TTS_QWEN_PCM_RATE", "24000"))
 
+# 출력 장치. 빈 값이면 **시스템 기본** — 실기는 스피커가 하나뿐이라 언제나 여기다.
+# 갈라야 하는 곳은 시뮬 하나다: 맥 한 대에 앱 둘을 띄우면 두 목소리가 같은
+# 스피커로 나가고, 도슨트 소리가 사회자 마이크로 되돌아와 자기목소리 루프가
+# 실기보다 훨씬 쉽게 난다(실기는 두 로봇이 물리적으로 떨어져 있다).
+# CLAUDE.md 의 "시뮬 전용 우회는 스위치 뒤에 두고 기본을 꺼짐으로 한다" 그대로다.
+# 값은 sounddevice 가 받는 것 — 장치 이름의 일부 또는 인덱스.
+# ⚠️ `_afplay` 폴백(`_external_player`)과 AEC 프로브의 GStreamer sink 는 이 값을
+# 못 따른다. 폴백으로 떨어지면 기본 출력으로 나간다 — 그때는 경고가 남는다.
+OUT_DEVICE = _config.get("REACHY_AUDIO_OUT", "").strip()
+
 # ── 출력 샘플레이트 맞추기 ──────────────────────────────────────
 # **로봇 오디오 장치는 16 kHz 다.** 탑재 펌웨어 `ua_io16_lin` 의 `io16` 이 USB
 # 입출력 16 kHz 를 뜻하고(비트폭이 아니다), SDK 도 `media/audio_base.py` 에서
@@ -276,15 +286,54 @@ def _pcm_to_wav(pcm: bytes, rate: int) -> bytes:
 
 
 def _open_stream(rate: int):
-    """PortAudio 출력 스트림을 연다. 실패하면 None — 호출부가 afplay 로 떨어진다."""
+    """PortAudio 출력 스트림을 연다. 실패하면 None — 호출부가 afplay 로 떨어진다.
+
+    `OUT_DEVICE` 가 있으면 그 장치로 연다. 시그니처는 `rate` 하나 그대로 둔다 —
+    `_open_output` 의 레이트 탐색 루프와 테스트 대역들이 이 모양을 쓴다.
+    """
     try:
         import sounddevice as sd
+    except Exception:
+        return None
 
+    if OUT_DEVICE:
+        try:
+            stream = sd.OutputStream(
+                samplerate=rate, channels=1, dtype="int16", device=OUT_DEVICE
+            )
+            stream.start()
+            return stream
+        except Exception as exc:  # noqa: BLE001
+            # **조용히 기본 출력으로 떨어지면 안 된다.** 이 설정을 쓰는 이유가
+            # 두 앱을 서로 다른 출력으로 보내는 것인데, 말없이 기본으로 가면
+            # 정확히 막으려던 상태(한 스피커에 두 목소리)가 된다.
+            _warn_once(
+                "out_device",
+                f"REACHY_AUDIO_OUT={OUT_DEVICE!r} 로 출력을 못 열었다"
+                f"({type(exc).__name__}: {exc}) — 기본 출력으로 낸다. "
+                f"쓸 수 있는 출력: {_output_device_names()}",
+            )
+    try:
         stream = sd.OutputStream(samplerate=rate, channels=1, dtype="int16")
         stream.start()
         return stream
     except Exception:
         return None
+
+
+def _output_device_names() -> str:
+    """경고에 붙일 출력 장치 목록 — 이름을 모르면 고칠 수가 없다."""
+    try:
+        import sounddevice as sd
+
+        names = [
+            d["name"]
+            for d in sd.query_devices()
+            if d.get("max_output_channels", 0) > 0
+        ]
+        return ", ".join(names) if names else "(없음)"
+    except Exception as exc:  # noqa: BLE001
+        return f"(목록을 못 읽었다: {type(exc).__name__})"
 
 
 def _open_output(src_rate: int):

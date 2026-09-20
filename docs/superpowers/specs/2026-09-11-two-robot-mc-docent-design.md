@@ -266,12 +266,23 @@ LAN/WebSocket bypass it entirely."* 우리 앱은 온보드에서 도니 락을 
 # ② 무대감독 (LLM 이 있어야 한다 — 없으면 폴백 대사로 돈다)
 .venv/bin/python -m stage
 
-# ③ 앱 2개 — 역할과 데몬 포트를 짝지어 준다
+# ③ 앱 2개 — 역할·데몬 포트·출력 장치를 짝지어 준다
+#    REACHY_AUDIO_OUT 은 sounddevice 장치 이름의 일부(또는 인덱스).
+#    목록: .venv/bin/python -c "import sounddevice; print(sounddevice.query_devices())"
 REACHY_ROLE=mc     REACHY_DAEMON_PORT=8000 REACHY_DIRECTOR_URL=ws://127.0.0.1:8777 \
+  REACHY_AUDIO_OUT="MacBook Pro 스피커" \
   .venv/bin/python apps/voice_chat/voice_chat/main.py
 REACHY_ROLE=docent REACHY_DAEMON_PORT=8001 REACHY_DIRECTOR_URL=ws://127.0.0.1:8777 \
+  REACHY_AUDIO_OUT="ZoomAudioDevice" \
   .venv/bin/python apps/voice_chat/voice_chat/main.py
 ```
+
+역할별 음성은 `main.py` 의 `ROLE_VOICE` 가 `apply_role_voice()` 로 넣는다 —
+**사회자 `serena`(속도 1.27), 도슨트 `sohee`(속도 1.13)**. `tts.py` 는 이 값을
+요청마다 사다리에서 다시 읽으므로 앱 기동 뒤에 넣어도 먹는다. 운영자가 환경변수나
+설정파일에 직접 적은 값이 있으면 그쪽이 이긴다(`config.source()` 검사).
+소리를 실제로 들으려면 TTS 서버가 떠 있어야 한다 — 없으면 발화가 실패하는데
+**감독에게는 정상 종료로 보고되어 무음으로 진행된다**(`docs/real-robot-deployment.md` §4).
 
 실측 결과(2026-09-20): 두 앱이 각각 붙고(`[mc] 붙었다`/`[docent] 붙었다`), 콘솔 `s`
 뒤 상태가 `mc_speaking → docent_speaking → mc_speaking(받아치기) → listening` 으로
@@ -282,12 +293,14 @@ REACHY_ROLE=docent REACHY_DAEMON_PORT=8001 REACHY_DIRECTOR_URL=ws://127.0.0.1:87
 고른다(`ReachyMiniApp._check_daemon_on_localhost(port=8000)` 이 8000 고정). 8001 만
 띄우면 network 모드로 빠져 `reachy-mini.local` 을 찾다 실패한다.
 
-**⚠️ 소리는 이 경로의 근거가 아니다.** 앱은 `--no-media` 라 SDK 미디어를 안 타고
-오디오를 직접 연다(`tts.py` 의 `sd.OutputStream` 에는 `device=` 인자가 없어 **항상
-시스템 기본 출력**이다). 맥 한 대에 앱 둘이면 두 목소리가 같은 스피커로 나가고,
-도슨트 소리가 사회자 마이크로 되돌아와 **자기목소리 루프가 실기보다 훨씬 쉽게 난다**
-(실기는 두 로봇이 물리적으로 떨어져 있다). 이 경로는 턴 전환·마이크 게이트·역할
-배선 검증용이고, 음향 판단은 실기에서 한다.
+**⚠️ 출력을 갈라 주지 않으면 소리가 섞인다.** 앱은 `--no-media` 라 SDK 미디어를 안
+타고 오디오를 직접 연다. `REACHY_AUDIO_OUT` 을 안 주면 두 앱이 **같은 기본 출력**을
+쓰고, 도슨트 소리가 사회자 마이크로 되돌아와 자기목소리 루프가 실기보다 훨씬 쉽게
+난다(실기는 두 로봇이 물리적으로 떨어져 있다). 갈라 줘도 마이크는 하나라
+(`main.py` 가 `role == "mc"` 일 때만 청취 루프를 띄운다) 한 방에서 두 스피커가
+울리는 것은 그대로다 — **음향 최종 판단은 실기에서 한다.** 이 경로는 턴 전환·
+마이크 게이트·역할 배선·음성 구분 확인용이다.
+`_afplay` 폴백과 AEC 프로브의 GStreamer sink 는 이 장치 설정을 **못 따른다.**
 
 ### 8.2 이 실험에서 발견한 것 — `docs/lessons.md` 등재 대상
 
