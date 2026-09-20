@@ -72,6 +72,36 @@ def test_대문자와_공백을_받아준다(monkeypatch):
     assert main_mod.role_of_env() == "mc"
 
 
+def test_데몬_포트는_기본이_8000_이다(monkeypatch, 빈_설정파일):
+    """**기본값이 실기의 값이다.** 실기에는 데몬이 하나(:8000)뿐이고, 앱은
+    `reachy_mini_apps` 진입점으로 데몬이 낳으므로 `__main__` 을 타지도 않는다.
+    포트 지정은 시뮬에서 2대를 한 맥에 띄울 때만 쓰는 스위치다 — CLAUDE.md 의
+    "시뮬 전용 우회는 스위치 뒤에 두고 기본을 꺼짐으로 한다".
+    """
+    monkeypatch.delenv("REACHY_DAEMON_PORT", raising=False)
+    assert main_mod.daemon_port_of_env() == 8000
+
+
+def test_데몬_포트를_바꿔_붙을_수_있다(monkeypatch, 빈_설정파일):
+    # 시뮬 2대: 사회자 :8000, 도슨트 :8001.
+    monkeypatch.setenv("REACHY_DAEMON_PORT", "8001")
+    assert main_mod.daemon_port_of_env() == 8001
+
+
+@pytest.mark.parametrize("나쁜값", ["팔천", "80 01", "", "0", "70000"])
+def test_말이_안_되는_데몬_포트는_소리_내서_실패한다(monkeypatch, 빈_설정파일, 나쁜값):
+    """조용히 8000 으로 흘려보내면 **두 앱이 같은 데몬에 붙는다** — 로봇 하나만
+    움직이는데 양쪽 로그는 정상으로 보여서 시연장에서 추적하기 가장 비싸다.
+    (빈 문자열은 사다리가 기본값으로 받으므로 8000 이 맞다.)
+    """
+    monkeypatch.setenv("REACHY_DAEMON_PORT", 나쁜값)
+    if 나쁜값 == "":
+        assert main_mod.daemon_port_of_env() == 8000
+        return
+    with pytest.raises(ValueError, match="REACHY_DAEMON_PORT"):
+        main_mod.daemon_port_of_env()
+
+
 def test_설정파일에_적힌_역할도_읽는다(monkeypatch, tmp_path):
     """**실기에서 값이 닿는 유일한 길이다.**
 

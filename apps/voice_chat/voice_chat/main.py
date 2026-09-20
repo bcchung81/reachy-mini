@@ -134,6 +134,39 @@ def role_of_env() -> str | None:
     return role
 
 
+def daemon_port_of_env() -> int:
+    """앱이 붙을 데몬 포트. **기본 8000 — 실기는 언제나 여기다.**
+
+    실기에는 데몬이 하나뿐이고, 앱은 `reachy_mini_apps` 진입점으로 **데몬이 낳는
+    자식**이라 아래 `__main__` 을 타지도 않는다(`pyproject.toml` 의
+    `voice_chat = "voice_chat.main:VoiceChat"`). 그쪽 경로는 `wrapped_run()` 을
+    인자 없이 부르므로 이 값이 관여하지 않는다.
+
+    갈리는 곳은 하나뿐이다 — 시뮬에서 2대를 한 맥에 띄울 때. 데몬 두 개를
+    `--fastapi-port 8000`(사회자) / `8001`(도슨트) 로 올리고 앱도 각각 그 포트에
+    붙인다. CLAUDE.md 의 "시뮬 전용 우회는 스위치 뒤에 두고 기본을 꺼짐으로
+    한다" 그대로다 — 기본값이 실기의 값이라 설정을 안 건드리면 실기가 그대로다.
+
+    ⚠️ SDK 는 **8000 이 살아 있는지로** localhost/network 모드를 고른다
+    (`ReachyMiniApp._check_daemon_on_localhost(port=8000)` 이 8000 고정). 8001 만
+    띄우면 network 모드로 빠져 `reachy-mini.local` 을 찾다 실패한다 — 시뮬 2대에서
+    사회자를 8000 에 두는 이유다.
+
+    오타를 조용히 8000 으로 흘려보내지 않는다. 두 앱이 같은 데몬에 붙으면 로봇
+    하나만 움직이는데 양쪽 로그는 정상으로 보인다 — 시연장에서 가장 비싼 종류다.
+    """
+    raw = _config.get("REACHY_DAEMON_PORT", "8000")
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"REACHY_DAEMON_PORT 가 {raw!r} 다 — 숫자여야 한다"
+        ) from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"REACHY_DAEMON_PORT 가 {port} 다 — 1..65535 여야 한다")
+    return port
+
+
 def apply_role_voice(role: str) -> None:
     """역할별 음성을 환경변수로 넣는다. **운영자가 정한 값은 덮어쓰지 않는다** —
     현장에서 손으로 바꾼 값이 코드에 밀려나면 안 된다.
@@ -424,6 +457,9 @@ class VoiceChat(ReachyMiniApp):
 if __name__ == "__main__":
     app = VoiceChat()
     try:
-        app.wrapped_run()
+        # 포트는 `wrapped_run` 이 `ReachyMini(...)` 로 그대로 넘긴다. 실기 경로
+        # (데몬이 진입점으로 낳는 앱)는 여기를 타지 않으므로 기본 8000 그대로다 —
+        # `daemon_port_of_env()` 주석 참고.
+        app.wrapped_run(port=daemon_port_of_env())
     except KeyboardInterrupt:
         app.stop()

@@ -247,6 +247,48 @@ LAN/WebSocket bypass it entirely."* 우리 앱은 온보드에서 도니 락을 
 시각 확인이 필요하면 한 대만 `./reachy.sh sim`(mjpython + 뷰어, :8000),
 나머지는 mockup(:8001)으로 둔다.
 
+### 8.1.1 앱 2개까지 붙인 종단 구동 — **실측 검증됨 (2026-09-20)**
+
+위 §8.1 은 데몬 공존까지만 봤다. 앱 2개를 각자 데몬에 붙여 턴을 돌리는 것은
+`REACHY_DAEMON_PORT` 가 생긴 뒤에야 된다 — 그전에는 `main.py` 의 `__main__` 이
+`wrapped_run()` 을 인자 없이 불러 **둘 다 :8000 에 붙었다**(로봇 하나만 움직이는데
+양쪽 로그는 정상으로 보인다).
+
+터미널 넷이다.
+
+```bash
+# ① 데몬 2대 (§8.1 과 같다)
+.venv/bin/python -m reachy_mini.daemon.app.main --mockup-sim --headless --no-media \
+  --fastapi-port 8000 --robot-name mc
+.venv/bin/python -m reachy_mini.daemon.app.main --mockup-sim --headless --no-media \
+  --fastapi-port 8001 --robot-name docent
+
+# ② 무대감독 (LLM 이 있어야 한다 — 없으면 폴백 대사로 돈다)
+.venv/bin/python -m stage
+
+# ③ 앱 2개 — 역할과 데몬 포트를 짝지어 준다
+REACHY_ROLE=mc     REACHY_DAEMON_PORT=8000 REACHY_DIRECTOR_URL=ws://127.0.0.1:8777 \
+  .venv/bin/python apps/voice_chat/voice_chat/main.py
+REACHY_ROLE=docent REACHY_DAEMON_PORT=8001 REACHY_DIRECTOR_URL=ws://127.0.0.1:8777 \
+  .venv/bin/python apps/voice_chat/voice_chat/main.py
+```
+
+실측 결과(2026-09-20): 두 앱이 각각 붙고(`[mc] 붙었다`/`[docent] 붙었다`), 콘솔 `s`
+뒤 상태가 `mc_speaking → docent_speaking → mc_speaking(받아치기) → listening` 으로
+완주했다. 두 데몬의 `/api/state/full` 이 **서로 다른 머리 자세**를 보고해 독립
+제어도 확인됐다(mc 는 원점 근처, docent 는 `z=-0.045`).
+
+**⚠️ 사회자를 :8000 에 둔다.** SDK 가 8000 이 살아 있는지로 localhost/network 모드를
+고른다(`ReachyMiniApp._check_daemon_on_localhost(port=8000)` 이 8000 고정). 8001 만
+띄우면 network 모드로 빠져 `reachy-mini.local` 을 찾다 실패한다.
+
+**⚠️ 소리는 이 경로의 근거가 아니다.** 앱은 `--no-media` 라 SDK 미디어를 안 타고
+오디오를 직접 연다(`tts.py` 의 `sd.OutputStream` 에는 `device=` 인자가 없어 **항상
+시스템 기본 출력**이다). 맥 한 대에 앱 둘이면 두 목소리가 같은 스피커로 나가고,
+도슨트 소리가 사회자 마이크로 되돌아와 **자기목소리 루프가 실기보다 훨씬 쉽게 난다**
+(실기는 두 로봇이 물리적으로 떨어져 있다). 이 경로는 턴 전환·마이크 게이트·역할
+배선 검증용이고, 음향 판단은 실기에서 한다.
+
 ### 8.2 이 실험에서 발견한 것 — `docs/lessons.md` 등재 대상
 
 1. **`DiscoveredRobot.host`를 쓰지 말 것.** `...local.local.` 로 `.local`이 중복돼
