@@ -14,6 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.cues import Cue, CueSheet
 from stage.director import CHARS_PER_SEC, TIMEOUT_MARGIN_S, Director, UnitMismatch
 from stage.machine import State
+from stage.mc_cache import cache_key
 
 
 class Clock:
@@ -27,7 +28,10 @@ class Clock:
 class Harness:
     """감독 하나와 그가 내보낸 지시를 모으는 그릇."""
 
-    def __init__(self, generate=None, expect_units=None, after=("", "")):
+    def __init__(
+        self, generate=None, expect_units=None, after=("", ""),
+        sheet=None, level_name="일반", mc_lines=None,
+    ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
         self.all_sent: list[tuple[str, str, dict]] = []
@@ -42,10 +46,14 @@ class Harness:
         # 일부러 다르게 주는 테스트(`test_생성_콜백은_슬롯이_아니라_role_을_받는다`)
         # 가 이 목록을 본다.
         self.gen_roles: list[str] = []
-        sheet = CueSheet([
-            Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0]),
-            Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
-        ])
+        # `sheet` 를 넘기지 않으면 지금까지 쓰던 2큐짜리 기본 시트를 그대로
+        # 쓴다(기본값은 지금 동작 유지) — 수준별 브리프를 손으로 채운
+        # `Cue` 가 필요한 테스트만 자기 시트를 넘긴다.
+        if sheet is None:
+            sheet = CueSheet([
+                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0]),
+                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
+            ])
 
         # `Director` 가 부르는 `generate` 는 이제 `(role, brief, history)` 다 —
         # 역할별로 다른 프롬프트를 조립해 쓰기 때문이다(`stage/prompts.py`).
@@ -71,6 +79,8 @@ class Harness:
             now=self.clock,
             expect_units=expect_units,
             warn=self.warnings.append,
+            mc_lines=mc_lines,
+            level_name=level_name,
         )
 
     def types(self, role=None):
@@ -1191,3 +1201,98 @@ def test_생성_콜백은_슬롯이_아니라_role_을_받는다():
     ready, _ = h.d._snapshot_slot("after")
     assert ready.wait(2.0), "생성이 끝나지 않았다"
     assert h.gen_roles[-1] == "mc", h.gen_roles
+
+
+# ── Task 6 — 여는 대사 사전 생성 캐시 ────────────────────────────────
+
+def test_여는_대사_캐시가_없으면_큐시트_원문을_읽고_경고한다():
+    """캐시 미스는 조용히 넘어가면 안 된다 — 사전 생성을 빠뜨린 채 시연이
+    돌면 애드리브가 통째로 없는데 아무도 모른다. `mc_lines` 를 안 주면
+    (기본값) 늘 미스이므로 큐시트 원문(`cue.mc`)으로 물러나면서 경고해야
+    한다."""
+    h = Harness()
+    h.d.start()
+    assert h.says()[0][1] == "사회자 첫 대사"      # 큐시트 원문 그대로
+    assert any("캐시" in w for w in h.warnings), h.warnings
+
+
+def test_여는_대사_캐시가_있으면_캐시_문장을_읽는다():
+    """(A) 배선 확인 — `mc_lines`/`level_name` 이 `Director` 까지 실제로
+    흘러왔을 때만 캐시 히트가 쓰인다. 미스만 보는 앞 테스트는 `Director`
+    가 `mc_lines` 인자를 통째로 무시해도(늘 빈 dict 로 취급해도) 통과하므로
+    히트 쪽을 따로 확인한다 — `Director.__init__` 이 `mc_lines` 를
+    저장하지 않게 되돌리면 이 테스트가 실패한다.
+    """
+    key = cache_key("c1", "초등", "")   # 기본 시트는 briefs 가 없어 mc_brief 가 ""
+    h = Harness(level_name="초등", mc_lines={key: "캐시에서 읽은 여는 대사"})
+    h.d.start()
+    assert h.says() == [("mc", "캐시에서 읽은 여는 대사")]
+    assert not any("캐시가 없다" in w for w in h.warnings), h.warnings
+
+
+def test_도슨트_해설_브리프가_수준을_따른다():
+    """사회자 대사만 수준을 따르고 해설이 안 따르면 기능이 반만 도는 것이다.
+
+    계획 보완(2026-09-20) Step 5b, 첫째 자리 — `_begin_cue` 의 도슨트
+    사전 생성이 `cue.docent_brief` 대신 `cue.brief_for(level_name)[1]` 을
+    써야 한다. 생성은 별도 스레드에서 돌므로(`_spawn_generate`) `started`
+    이벤트로 결정적으로 기다린다 — 안 그러면 스레드가 아직 안 돈 시점에
+    `seen` 을 봐서 간헐적으로 실패한다(위 `사회자가_말하는_동안…` 테스트와
+    같은 함정).
+    """
+    sheet = CueSheet([Cue(
+        "c1", "첫째", "여는 대사", "옛 지시문", "partner",
+        briefs={
+            "초등": {"mc_brief": "초등 진행", "docent_brief": "초등 해설 지시"},
+            "중고등": {"mc_brief": "중 진행", "docent_brief": "중 해설 지시"},
+            "일반": {"mc_brief": "일반 진행", "docent_brief": "일반 해설 지시"},
+            "전문가": {"mc_brief": "전 진행", "docent_brief": "전문가 해설 지시"},
+        },
+    )])
+    seen: list[str] = []
+    started = threading.Event()
+
+    def gen(role, brief, hist):
+        seen.append(brief)
+        started.set()
+        return "대사"
+
+    h = Harness(sheet=sheet, level_name="초등", generate=gen)
+    h.d.start()
+    assert started.wait(2.0), "도슨트 사전 생성이 돌지 않았다"
+    assert any("초등 해설 지시" in b for b in seen), seen
+    assert not any("옛 지시문" in b for b in seen), seen
+
+
+def test_도슨트_해설_폴백도_수준을_따른다(monkeypatch):
+    """계획 보완 Step 5b, 둘째 자리 — `on_speaking_ended` 의 `pending` 폴백.
+
+    사전 생성이 유예시간(`GENERATE_GRACE_S`)을 넘기면 이 폴백이 그대로
+    도슨트 입에 오른다. 여기를 옛 `cue.docent_brief` 로 남겨 두면 첫째
+    자리(`_begin_cue`)만 고친 채로도 571개가 통과한다 — 사전 생성이
+    "느릴 때만" 드러나는 잔여 버그라 놓치기 쉽다.
+    """
+    import stage.director as director_mod
+
+    monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
+
+    sheet = CueSheet([Cue(
+        "c1", "첫째", "여는 대사", "옛 지시문", "partner",
+        briefs={
+            "초등": {"mc_brief": "초등 진행", "docent_brief": "초등 해설 지시"},
+            "중고등": {"mc_brief": "중 진행", "docent_brief": "중 해설 지시"},
+            "일반": {"mc_brief": "일반 진행", "docent_brief": "일반 해설 지시"},
+            "전문가": {"mc_brief": "전 진행", "docent_brief": "전문가 해설 지시"},
+        },
+    )])
+    gate = threading.Event()
+
+    def gen(role, brief, history):
+        gate.wait(5.0)          # 유예시간을 반드시 넘기게 붙잡아 둔다
+        return "늦은 대사"
+
+    h = Harness(sheet=sheet, level_name="초등", generate=gen)
+    h.d.start()
+    h.ended("mc", "c1")          # 유예시간(0.05s) 안에 못 끝나 폴백으로 진행
+    assert h.says()[-1] == ("docent", "초등 해설 지시"), h.says()
+    gate.set()                   # 뒤늦게 끝난 생성 스레드를 풀어 정리한다

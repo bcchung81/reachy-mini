@@ -13,6 +13,7 @@ from typing import Callable
 
 from stage.cues import QA_ACK_LINES, Cue, CueSheet, is_advance
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
+from stage.mc_cache import cache_key
 
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
@@ -83,6 +84,8 @@ class Director:
         now: Callable[[], float] = time.monotonic,
         expect_units: dict[str, str] | None = None,
         warn: Callable[[str], None] = print,
+        mc_lines: dict[str, str] | None = None,
+        level_name: str = "일반",
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -90,6 +93,14 @@ class Director:
         self._now = now
         self._expect_units = expect_units or {}
         self._warn = warn
+        # 여는 대사 사전 생성 캐시(`scripts/pregen_mc_lines.py` 가 채운다)와
+        # 그것을 찾을 수준. 둘 다 `stage/__main__.py::main()` 에서 한 번만
+        # 읽어 `StageServer` → `Director` 로 흘러온다 — 여기서 기본값(빈
+        # dict·"일반")으로 두는 것은 오직 테스트 편의를 위해서다. 실기
+        # 기동에서 이 값이 안 흘러오면(배선을 빠뜨리면) 캐시는 늘 비고
+        # 수준은 늘 "일반" 으로 굳어 이 태스크 전체가 무효가 된다.
+        self._mc_lines = mc_lines or {}
+        self._level_name = level_name
 
         self._machine = TurnMachine()
         self.history: list[dict] = []
@@ -325,7 +336,10 @@ class Director:
             # 버그가 났었다.
             cue = self._sheet.current()
             if cue_id == cue.id:
-                pending = ("docent", f"{cue.id}:docent", cue.docent_brief, cue.id)
+                # 수준별 브리프를 쓴다(계획 보완 Step 5b) — 옛 `cue.docent_brief`
+                # 를 그대로 두면 여기 폴백만 수준을 안 따라, 사전 생성이 늦어
+                # 유예시간을 넘길 때마다 초등이든 전문가든 같은 문장이 나간다.
+                pending = ("docent", f"{cue.id}:docent", cue.brief_for(self._level_name)[1], cue.id)
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
                 # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
@@ -475,6 +489,23 @@ class Director:
                 f"{self._machine.speaking_role} 가 아직 말하는 중이다"
                 f"(큐 {self._machine.cue_id}) — 동시 발화를 막는다"
             )
+        # **수준별 브리프를 여기서 한 번 가른다.** `brief_for` 는 이 섹션에
+        # `briefs` 가 없으면 옛 `docent_brief` 로 폴백하므로, 아래 두 자리
+        # (여는 대사 캐시 키·도슨트 사전 생성) 모두 이 한 쌍만 보면 된다.
+        mc_brief, docent_brief = cue.brief_for(self._level_name)
+
+        # **여는 대사는 런타임에 만들지 않는다 — 사전 생성 캐시에서 읽는다.**
+        # `scripts/pregen_mc_lines.py` 가 시연 전에 19섹션 × 4수준을 만들어
+        # `data/mc_lines.yaml` 에 적어 두면, 사람이 그것을 읽고 고친 뒤에야
+        # 시연이 돈다 — 그게 이 캐시를 두는 진짜 이유다(지연 0 은 덤).
+        key = cache_key(cue.id, self._level_name, mc_brief)
+        mc_text = self._mc_lines.get(key, "")
+        if not mc_text:
+            # 조용히 물러나지 않는다 — 사전 생성을 빠뜨린 채 시연이 돌면
+            # 애드리브가 통째로 없는데 아무도 모른다.
+            self._warn(f"[{cue.id}] 여는 대사 캐시가 없다({self._level_name}) — 큐시트 원문을 읽는다")
+            mc_text = cue.mc
+
         # **사회자 대사도 이력에 넣는다 — 생성 스레드를 띄우기 전에.**
         # 설계 §5.2 는 이력이 하나이고 `사회자:`/`도슨트:`/`관람객:` 접두로
         # 구분한다고 못박는다. 사회자 몫을 빠뜨리면 도슨트의 LLM 은 방금
@@ -482,15 +513,19 @@ class Director:
         # 라는 넘김을 못 보고 해설을 시작하니 말이 이어지지 않는다.
         # 순서가 중요하다: `_generate_docent` 가 `list(self.history)` 를
         # 찍어가므로 스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다.
-        self._remember(f"사회자: {cue.mc}")
+        self._remember(f"사회자: {mc_text}")
 
         # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
         # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
         # role="docent" — 이 슬롯은 도슨트 해설 전용이다. 사회자 받아치기용
         # 슬롯(role="mc")은 이 태스크에서 만들지 않는다(뒤 태스크 몫).
-        self._spawn_generate("docent", "docent", cue.docent_brief, cue.docent_brief, cue.id)
+        # **수준별 브리프를 쓴다** — 옛 `cue.docent_brief` 를 그대로 두면
+        # 사회자 대사만 수준을 따르고 해설은 수준과 무관해진다(계획 보완
+        # Step 5b). 폴백도 같은 값을 줘야 한다 — `brief_for` 가 브리프 없는
+        # 섹션에서는 옛 `docent_brief` 를 돌려주므로 폴백 의미가 그대로다.
+        self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
         self._emit(
-            self._machine.speak(self._who("mc"), cue.id, cue.mc, gaze=cue.gaze)
+            self._machine.speak(self._who("mc"), cue.id, mc_text, gaze=cue.gaze)
         )
 
     def _spawn_generate(

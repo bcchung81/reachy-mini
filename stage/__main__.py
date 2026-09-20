@@ -17,6 +17,7 @@ import sys
 import threading
 
 from stage.cues import CueSheet, load_cues
+from stage.mc_cache import load_mc_lines
 from stage.server import StageServer
 
 # 대화 로직은 앱 하나에만 둔다 — LLM 클라이언트를 다시 쓰지 않고 그것을 가져온다.
@@ -102,7 +103,15 @@ def main() -> None:
     if not expect:
         print("⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다")
 
-    server = StageServer(CueSheet(load_cues()), build_generate(level), expect_units=expect)
+    # `level.name` 은 이미 위에서 한 번 읽어 둔 `level` 객체의 속성일 뿐이다
+    # — 환경변수를 다시 조회하지 않는다("수준을 두 번 읽지 않는다"). 캐시도
+    # 여기서 한 번만 읽어 `Director` 로 흘려보낸다 — `StageServer.__init__`
+    # 이 기본값(빈 dict·"일반")으로 넘기게 두면 캐시가 아무리 채워져 있어도
+    # 늘 무시된다.
+    server = StageServer(
+        CueSheet(load_cues()), build_generate(level), expect_units=expect,
+        mc_lines=load_mc_lines(), level_name=level.name,
+    )
     stop = threading.Event()
     threading.Thread(
         target=server.tick_forever, args=(0.5, stop.is_set), daemon=True

@@ -24,13 +24,21 @@ class StageServer:
         generate: Callable[[str, str, list[dict]], str],
         expect_units: dict[str, str] | None = None,
         warn: Callable[[str], None] = print,
+        mc_lines: dict[str, str] | None = None,
+        level_name: str = "일반",
     ) -> None:
         self._warn = warn
         self._conns: dict[str, object] = {}
         self._lock = threading.Lock()
+        # `mc_lines`/`level_name` 을 그대로 `Director` 로 흘려보낸다 — 여기서
+        # 기본값으로 삼키면(예: 인자를 받고 안 넘기면) `Director` 는 늘
+        # 기본값(빈 캐시·"일반")으로 돌고, `main()` 이 아무리 제대로 읽어도
+        # 이 자리에서 끊긴다. `stage/__main__.py::main()` 이 이 값을 채워
+        # 넘긴다.
         self.director = Director(
             sheet, generate=generate, send=self._send,
             expect_units=expect_units, warn=warn,
+            mc_lines=mc_lines, level_name=level_name,
         )
 
     # ── 전송 ──────────────────────────────────────────────────────

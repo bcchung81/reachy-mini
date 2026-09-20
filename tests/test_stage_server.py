@@ -19,6 +19,7 @@ from websockets.sync.client import connect
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.cues import Cue, CueSheet
+from stage.mc_cache import cache_key
 from stage.server import StageServer
 
 
@@ -424,3 +425,42 @@ def test_role_이_문자열이_아닌_hello_는_경고하고_끊는다(server):
         with pytest.raises(Exception):
             ws.recv(timeout=2)
     assert _wait_warning(server, "모르는 역할")
+
+
+# ── Task 6 — 여는 대사 사전 생성 캐시가 서버 배선까지 닿는지(브리프 (A)) ──
+
+def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달한다():
+    """(A) `Director.__init__` 이 `mc_lines`/`level_name` 을 받게 됐어도
+    `StageServer.__init__` 이 그 값을 `Director(...)` 에 넘기지 않으면
+    (기본값으로 삼키면) 캐시는 늘 비고 수준은 늘 "일반" 으로 굳는다 —
+    Task 6 전체가 무효화된다. 감독 내부 속성만 보면 `_send` 까지 이어지는
+    배선이 새는 지점을 못 잡으므로 실제 소켓 끝까지 흘려보내 확인한다.
+    """
+    key = cache_key("c1", "초등", "")   # briefs 가 없는 큐 → mc_brief 는 ""
+    sheet = CueSheet([Cue("c1", "첫째", "큐시트 원문", "지시", "partner")])
+    warnings: list[str] = []
+    s = StageServer(
+        sheet,
+        generate=lambda role, brief, history: "도슨트 대사",
+        warn=warnings.append,
+        mc_lines={key: "캐시된 여는 대사"},
+        level_name="초등",
+    )
+
+    from websockets.sync.server import serve as ws_serve
+    srv = ws_serve(s.handler, "127.0.0.1", 0)
+    port = srv.socket.getsockname()[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        with connect(f"ws://127.0.0.1:{port}") as mc, connect(f"ws://127.0.0.1:{port}") as docent:
+            hello(mc, "mc")
+            hello(docent, "docent")
+            time.sleep(0.2)
+            s.director.start()
+            said = next(m for m in drain(mc, 3) if m["type"] == "say")
+            assert said["text"] == "캐시된 여는 대사"
+            assert not any("캐시가 없다" in w for w in warnings), warnings
+    finally:
+        srv.shutdown()
+        t.join(timeout=2)

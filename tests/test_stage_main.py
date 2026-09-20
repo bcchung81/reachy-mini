@@ -196,6 +196,41 @@ def test_main_은_수준을_한_번만_읽어_announce_level과_build_generate�
     )
 
 
+def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴다(monkeypatch):
+    """(A) 배선 확인 — 브리프에 없던 자리다. `Director.__init__` 가
+    `mc_lines`/`level_name` 을 받게 됐어도, 그것을 만드는 `StageServer` 를
+    만드는 `main()` 이 값을 채워 넘기지 않으면 두 인자는 늘 기본값(빈
+    캐시·"일반")으로 굳는다 — 이 태스크 전체가 무효화된다.
+
+    `level` 은 이미 `test_main_은_수준을_한_번만_읽어…` 가 "한 번만 읽는다"
+    를 박제했으므로 여기서는 그 값(`level.name`)이 실제로 `StageServer` 까지
+    닿는지, 그리고 `load_mc_lines()` 의 결과가 함께 닿는지만 본다.
+    """
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen: dict[str, object] = {}
+
+    class _멈춤(Exception):
+        """`StageServer(...)` 호출 직후 여기서 멈춘다 — 소켓·콘솔은 아직 안 뜬다."""
+
+    def fake_server(*a, **kw):
+        seen["mc_lines"] = kw.get("mc_lines")
+        seen["level_name"] = kw.get("level_name")
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", fake_server)
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {"가짜": "캐시"})
+
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    assert seen["mc_lines"] == {"가짜": "캐시"}, (
+        "main() 이 load_mc_lines() 의 결과를 StageServer 에 넘기지 않았다"
+    )
+    assert seen["level_name"] == "일반", (
+        "main() 이 level.name 을 StageServer 에 넘기지 않았다"
+    )
+
+
 def test_모듈_문서에_수준_환경변수가_적혀_있다():
     """`announce_level()` 이 실제로 쓰는 두 환경변수(REACHY_AUDIENCE_LEVEL/
     REACHY_LEVELS_PATH)가 기동 문서에서 빠지면, "주소는 전부 환경변수다" 규약대로
