@@ -83,3 +83,11 @@ def test_도슨트_프롬프트에_음성_출력_규칙이_있다():
     """도슨트 답은 TTS 로 읽힌다 — 목록·이모지가 나오면 그 기호를 소리 내 읽는다(리뷰 B5)."""
     p = stage_main._system_prompt()
     assert "음성" in p and "목록" in p and "이모지" in p
+
+
+def test_시스템_프롬프트에_분량_규정이_있다():
+    import stage.__main__ as m
+    p = m._system_prompt()
+    # 상한만 주면 모델이 하단에 붙는다 — 하한이 반드시 있어야 한다.
+    assert "이내" not in p or "이상" in p, p
+    assert "문장" in p

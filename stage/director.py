@@ -65,6 +65,10 @@ HISTORY_MAX = 12
 # 관람객 질문에 LLM 이 답을 못 만들었을 때 도슨트가 하는 말.
 QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
 
+# 이보다 짧은 생성 결과는 해설이 아니다. 경고만 하고 그대로 쓴다 — 버리면
+# 정적이 되는데 그게 더 나쁘다. 목표 분량은 Task 3 에서 수준 프로필로 올라간다.
+MIN_CHARS = 40
+
 
 class UnitMismatch(RuntimeError):
     """로봇이 신고한 hardware id 가 기대값과 다르다 — 두 대가 뒤바뀌었다."""
@@ -544,6 +548,8 @@ class Director:
         if not text:
             self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
             text = fallback
+        if len(text) < MIN_CHARS:
+            self._warn(f"[{label}] 생성 결과가 너무 짧다({len(text)}자) — 그대로 쓴다")
         return text
 
     def _answer(self, question: str) -> None:

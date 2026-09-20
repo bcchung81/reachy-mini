@@ -96,3 +96,13 @@ def test_이미지_턴_다음_요청도_전부_문자열이다():
     list(c.chat_stream("이게 뭐야", image_jpeg=FAKE_JPEG))
     list(c.chat_stream("그럼 저건?"))
     assert all(isinstance(m["content"], str) for m in Stub.last_body["messages"])
+
+
+def test_max_tokens_기본값은_지금_동작과_같다():
+    from llm import LLMClient
+    assert LLMClient().max_tokens == 200
+
+
+def test_max_tokens_를_올려_잡을_수_있다():
+    from llm import LLMClient
+    assert LLMClient(max_tokens=900).max_tokens == 900

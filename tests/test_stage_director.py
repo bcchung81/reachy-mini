@@ -1045,3 +1045,11 @@ def test_받아치기도_이력에_남는다():
     h = Harness(after=("받아치기", ""))
     h.d.start(); h.ended("mc", "c1"); h.ended("docent", "c1:docent")
     assert h.d.history[-1]["content"] == "사회자: 받아치기"
+
+
+def test_생성_결과가_너무_짧으면_경고한다():
+    """조용히 짧게 나오는 것이 지금 문제의 본질이다 — 최소한 로그에는 드러나야 한다."""
+    h = Harness(generate=lambda brief, hist: "네.")
+    h.d.start()
+    h.ended("mc", "c1")
+    assert any("짧다" in w for w in h.warnings), h.warnings

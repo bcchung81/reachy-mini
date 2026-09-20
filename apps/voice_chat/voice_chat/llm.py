@@ -32,6 +32,7 @@ class LLMClient:
         system_prompt: str = "",
         history_pairs: int = 3,
         timeout: float = 10.0,
+        max_tokens: int = 200,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -39,6 +40,9 @@ class LLMClient:
         self.history: list[dict] = []
         self.history_pairs = history_pairs
         self.timeout = timeout
+        # 하드코딩이던 것을 뺀다. 한국어는 토큰당 글자가 적어 200 이면 대략
+        # 200~300자다 — 길게 쓰라고 시키는 순간 문장이 중간에서 잘린다.
+        self.max_tokens = max_tokens
 
     def chat_stream(
         self, user_text: str, image_jpeg: bytes | None = None
@@ -76,7 +80,7 @@ class LLMClient:
                 "messages": messages,
                 "stream": True,
                 "temperature": 0.7,
-                "max_tokens": 200,
+                "max_tokens": self.max_tokens,
             },
             stream=True,
             timeout=self.timeout,
