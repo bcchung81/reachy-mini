@@ -1053,3 +1053,29 @@ def test_생성_결과가_너무_짧으면_경고한다():
     h.d.start()
     h.ended("mc", "c1")
     assert any("짧다" in w for w in h.warnings), h.warnings
+
+
+def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는다():
+    """리뷰 지적: `_generate_pending` 이 빈 문자열을 이미 폴백(QA_FALLBACK, 37자)
+    으로 갈아친 뒤인데 `_await_pending` 이 그 폴백에도 MIN_CHARS(40) 검사를
+    걸면 "생성 실패" 경고 뒤에 "생성 결과가 짧다" 는 **틀린** 경고가 덧붙는다.
+    로그만 보면 LLM 이 37자짜리 답을 낸 것으로 오판한다 — 폴백에는 걸리지 않는다.
+    """
+    calls = {"n": 0}
+
+    def gen(brief, history):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
+        return ""  # 질문 응답만 빈 문자열 → QA_FALLBACK(37자) 로 대체된다
+
+    h = Harness(generate=gen)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.clear()
+    h.warnings.clear()
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    assert any("빈 문자열" in w for w in h.warnings), h.warnings
+    assert not any("짧다" in w for w in h.warnings), h.warnings

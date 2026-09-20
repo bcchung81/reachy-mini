@@ -102,6 +102,13 @@ class Director:
         # 생성 슬롯 하나 — 도슨트 해설(큐 시작 때)과 질문 응답(확인 멘트 때)이
         # 같이 쓴다. 한 턴에 생성은 하나뿐이다.
         self._pending_text: str | None = None
+        # `_pending_text` 가 **진짜 생성 결과**인지 `_generate_pending` 이 이미
+        # 폴백으로 갈아치운 것인지 표시한다. 리뷰 지적: 이 표시가 없으면
+        # `_await_pending` 의 MIN_CHARS 검사가 폴백 문자열에도 걸려 "생성 실패"
+        # 경고 뒤에 "생성 결과가 짧다" 는 **틀린** 경고가 덧붙는다(예: QA_FALLBACK
+        # 은 37자로 MIN_CHARS 40 미만이다) — 로그만 보면 LLM 이 짧게 답한 것으로
+        # 오판한다.
+        self._pending_is_fallback = False
         self._pending_ready = threading.Event()
         self._gen_thread: threading.Thread | None = None
         self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
@@ -490,6 +497,7 @@ class Director:
             # 메시지가 밀린다.
             self._pending_ready.set()
             self._pending_text = None
+            self._pending_is_fallback = False
             self._pending_ready = threading.Event()
             self._gen_token += 1
             token = self._gen_token
@@ -500,17 +508,20 @@ class Director:
         self._gen_thread.start()
 
     def _generate_pending(self, brief: str, token: int, fallback: str, label: str) -> None:
+        is_fallback = False
         try:
             text = self._generate(brief, list(self.history))
             if not text:
                 # 빈 문자열도 "아무 말도 안 하는 것"과 같다 — 조용히 넘기지 않는다.
                 self._warn(f"[{label}] 대사 생성이 빈 문자열을 내놓았다 — 폴백")
                 text = fallback
+                is_fallback = True
         except Exception as exc:
             # 조용히 벙어리가 되지 않는다. 폴백(지시문 또는 사과 한 줄)을
             # 그대로 읽는 것이 아무 말도 안 하는 것보다 낫다.
             self._warn(f"[{label}] LLM 생성 실패({type(exc).__name__}: {exc}) — 폴백")
             text = fallback
+            is_fallback = True
 
         with self._gen_lock:
             if token != self._gen_token:
@@ -519,6 +530,10 @@ class Director:
                 self._warn(f"[{label}] 대사 생성이 늦게 끝나 버려졌다(다음 턴으로 이미 넘어갔다)")
                 return
             self._pending_text = text
+            # 폴백 여부를 텍스트와 **한 락 안에서 같이** 남긴다 — 따로 쓰면
+            # `_await_pending` 이 텍스트는 새 세대, 표시는 이전 세대 것을 섞어
+            # 읽을 수 있다.
+            self._pending_is_fallback = is_fallback
             ready = self._pending_ready
         ready.set()
 
@@ -545,10 +560,18 @@ class Director:
                 # 경고는 호출부가 한 번만 낸다(거기서 버리는 것이 확정된다).
                 return fallback
             text = self._pending_text
+            is_fallback = self._pending_is_fallback
         if not text:
             self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
             text = fallback
-        if len(text) < MIN_CHARS:
+            is_fallback = True
+        # **폴백으로 이미 대체된 텍스트에는 길이 경고를 또 걸지 않는다.**
+        # `_generate_pending` 이 빈 문자열·예외를 만나면 이미 "생성 실패" 경고를
+        # 내고 폴백을 슬롯에 넣는다(예: QA_FALLBACK 은 37자로 MIN_CHARS 40 미만).
+        # 여기서 또 길이를 재면 "생성 실패" 경고 뒤에 "생성 결과가 짧다" 는
+        # **틀린** 경고가 덧붙어, 로그만 보면 LLM 이 실제로 37자를 냈다고
+        # 오판한다(리뷰 지적) — MIN_CHARS 는 **진짜 생성 결과**에만 적용한다.
+        if not is_fallback and len(text) < MIN_CHARS:
             self._warn(f"[{label}] 생성 결과가 너무 짧다({len(text)}자) — 그대로 쓴다")
         return text
 

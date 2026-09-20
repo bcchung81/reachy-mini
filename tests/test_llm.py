@@ -106,3 +106,12 @@ def test_max_tokens_기본값은_지금_동작과_같다():
 def test_max_tokens_를_올려_잡을_수_있다():
     from llm import LLMClient
     assert LLMClient(max_tokens=900).max_tokens == 900
+
+
+def test_max_tokens_가_요청_페이로드에_실제로_실린다():
+    """리뷰 지적: 생성자 속성만 보면 `"max_tokens": 200,` 하드코딩으로 되돌려도
+    위 두 테스트는 그대로 통과한다 — 이 태스크가 고치려는 핵심(하드코딩 제거 →
+    실제 요청 반영)은 요청 페이로드를 직접 봐야 보증된다."""
+    c = LLMClient(base_url=_serve(), system_prompt="시스템", max_tokens=77)
+    list(c.chat_stream("안녕"))
+    assert Stub.last_body["max_tokens"] == 77
