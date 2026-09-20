@@ -128,13 +128,20 @@ class Director:
         # 공개 메서드도 다른 공개 메서드를 부르지 않으므로(전부 `_begin_cue`
         # 등 내부 헬퍼만 거친다) 재진입이 필요 없어 일반 Lock 으로 충분하다.
         #
-        # `_speak_docent()` 의 유예시간(`GENERATE_GRACE_S`, 최대 8초) 대기는
-        # 이 락을 쥔 채로 일어난다 — 그동안 tick() 은 막힌다. 의도한
-        # 동작이다: 사회자→도슨트 핸드오프가 진행 중일 때는 애초에 아무것도
-        # 타임아웃돼서는 안 된다. 생성 스레드(`_generate_docent`)는 이 락을
-        # 절대 요구하지 않는다 — `_gen_lock` 만 짧게 쥐었다 놓으므로, 진입
-        # 락을 쥔 스레드가 생성 완료를 기다리는 동안에도 생성 스레드는
-        # 막히지 않는다(교착 없음).
+        # ~~`_speak_docent()` 의 유예시간(`GENERATE_GRACE_S`, 최대 8초) 대기는
+        # 이 락을 쥔 채로 일어난다 — 그동안 tick() 은 막힌다. 의도한 동작이다:
+        # 사회자→도슨트 핸드오프가 진행 중일 때는 애초에 아무것도 타임아웃돼서는
+        # 안 된다.~~ **2026-09-20 되돌림.** 그 보호는 이미 바로 위의
+        # `self._deadline = None` 이 하고 있었다 — 락이 거기에 더한 일은
+        # **운영자의 비상정지를 막는 것**뿐이었다. 큐 19개마다, 그리고 관람객
+        # 질문마다 한 번씩 콘솔 `a`/`n` 이 최대 8초 먹지 않았다. 지금은
+        # `on_speaking_ended()` 가 대기 전에 이 락을 놓고, 깨어난 뒤 상태와
+        # 세대 토큰을 다시 보고 얹는다.
+        #
+        # 생성 스레드(`_generate_pending`)는 이 락을 절대 요구하지 않는다 —
+        # `_gen_lock` 만 짧게 쥐었다 놓는다. 두 락을 겹쳐 잡는 자리는
+        # `self._lock` → `_gen_lock` **한 방향뿐**이라(교착 없음) 대기 구간에서
+        # 세대를 확인할 때도 그 순서를 지킨다.
         self._lock = threading.Lock()
 
         self._connected: set[str] = set()
@@ -265,6 +272,12 @@ class Director:
         )
 
     def on_speaking_ended(self, role: str, cue_id: str, seq: int | None) -> None:
+        """발화 종료 보고. 도슨트 몫으로 넘어갈 때는 **락을 놓고** 생성을 기다린다.
+
+        기다리는 동안에도 콘솔 `a`/`n`, tick, 재접속이 살아 있어야 한다 — 그 대기가
+        최대 `GENERATE_GRACE_S` 라 락을 쥔 채로는 비상정지가 그만큼 먹통이 된다.
+        대신 깨어난 뒤 **세상이 그대로인지 다시 확인**하고 얹는다(상태 + 세대 토큰).
+        """
         with self._lock:
             # 관람객 창구를 열어줄 로봇도 `_who()` 로 정한다 — 1인 모드에서
             # 리스닝으로 넘어갈 때 마이크를 열어야 할 대상은 "사회자" 가
@@ -285,31 +298,79 @@ class Director:
             self._deadline = None
 
             # 큐 id 만으로 "사회자 몫이 방금 끝났다" 를 판정한다 — role 은
-            # 안 본다. `_speak_docent` 가 도슨트 몫에는 `f"{cue.id}:docent"`
-            # 처럼 구분되는 id 를 쓰므로(§ 리뷰 finding 1), 맨 cue.id 는
-            # 두 모드 어디서든 사회자 몫에만 붙는다. 1인 모드에서는 같은
-            # 로봇이 두 몫을 연달아 말하므로 role 로는 구분이 안 된다 —
-            # role 로 갈랐다가 도슨트 몫이 끝난 뒤에도 다시 도슨트 몫을
-            # 트리거해 자기 대사를 무한 반복하는 버그가 났었다.
+            # 안 본다. 도슨트 몫에는 아래에서 `f"{cue.id}:docent"` 처럼 구분되는
+            # id 를 붙이므로(§ 리뷰 finding 1), 맨 cue.id 는 두 모드 어디서든
+            # 사회자 몫에만 붙는다. 1인 모드에서는 같은 로봇이 두 몫을 연달아
+            # 말하므로 role 로는 구분이 안 된다 — role 로 갈랐다가 도슨트 몫이
+            # 끝난 뒤에도 다시 도슨트 몫을 트리거해 자기 대사를 무한 반복하는
+            # 버그가 났었다.
             cue = self._sheet.current()
             if cue_id == cue.id:
-                cmds = cmds + self._speak_docent(cue)
+                pending = ("docent", f"{cue.id}:docent", cue.docent_brief, cue.id)
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다. `:qa` 뒤에는
                 # 받아치지 않는다(관람객이 이미 창구를 안다) — 곧장 LISTENING.
-                cmds = cmds + self._speak_pending(
-                    "docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa"
+                pending = ("docent", f"{cue.id}:qa", QA_FALLBACK, f"{cue.id}:qa")
+            else:
+                if cue_id == f"{cue.id}:docent" and cue.mc_after:
+                    # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
+                    # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
+                    # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
+                    # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
+                    self._remember(f"사회자: {cue.mc_after}")
+                    cmds = cmds + self._machine.speak(
+                        self._who("mc"), f"{cue.id}:after", cue.mc_after, gaze="audience"
+                    )
+                # 기다릴 것이 없는 갈래는 여기서 끝난다 — 락을 놓지 않는다.
+                self._emit(cmds)
+                return
+
+            # 기다릴 이벤트와 세대를 **락 안에서** 찍어 둔다. 대기 중
+            # `_spawn_generate` 가 슬롯을 갈아끼워도 우리는 우리 세대의 결과를
+            # 기다린 뒤 아래 검사에서 물러난다. 겹쳐 잡는 순서는 언제나
+            # `self._lock` → `_gen_lock` 이다.
+            with self._gen_lock:
+                ready, token = self._pending_ready, self._gen_token
+            # **여기서는 아무것도 내보내지 않는다.** `cmds` 의 마이크 열기 지시는
+            # 2구간에서 도슨트의 닫기와 한 번에 나가 coalesce 가 덮는다 — 그래야
+            # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
+            # (끼어든 쪽이 이미 제 지시를 내보냈다).
+
+        role_pref, speak_cue_id, fallback, label = pending
+        text = self._await_pending(ready, token, fallback, label)
+
+        with self._lock:
+            if self._machine.state is not State.LISTENING:
+                # abort 가 대표적이다 — 운영자가 멈췄는데 늦게 끝난 생성이
+                # 뒤늦게 입을 열면, 멈춘 줄 아는 사람 앞에서 로봇이 말한다.
+                self._warn(
+                    f"[{label}] 기다리는 사이에 {self._machine.state.value} 로 "
+                    "바뀌었다 — 이 대사는 얹지 않는다"
                 )
-            elif cue_id == f"{cue.id}:docent" and cue.mc_after:
-                # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
-                # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
-                # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
-                # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
-                self._remember(f"사회자: {cue.mc_after}")
-                cmds = cmds + self._machine.speak(
-                    self._who("mc"), f"{cue.id}:after", cue.mc_after, gaze="audience"
+                return
+            with self._gen_lock:
+                stale = token != self._gen_token
+            if stale:
+                # 상태만으로는 못 잡는 틈이다: 대기 중 다음 큐가 시작되고 그
+                # 사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다.
+                # 그대로 얹으면 이전 섹션 해설이 나가고, 뒤이어 새 큐의
+                # 핸드오프가 불변식 ② 로 TurnError 를 맞는다.
+                self._warn(
+                    f"[{label}] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다"
                 )
-            self._emit(cmds)
+                return
+            self._remember(f"도슨트: {text}")
+            # 역할은 **여기서 다시 정한다.** 기다리는 사이에 상대가 끊겼으면 남은
+            # 한 대가 읽어야 한다(설계 §7). 1구간의 판단을 들고 가면 이미 끊긴
+            # 로봇에게 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고 버린다
+            # — 상태기계는 그 로봇이 말하는 중이라 믿으므로 `speaking_ended` 가
+            # 영영 오지 않고 tick 타임아웃까지 정적이 된다.
+            self._emit(
+                cmds
+                + self._machine.speak(
+                    self._who(role_pref), speak_cue_id, text, gaze="audience"
+                )
+            )
 
     def on_error(self, role: str, where: str, detail: str) -> None:
         with self._lock:
@@ -418,6 +479,12 @@ class Director:
         늦게 끝난 쪽은 어느 것이든 버려진다.
         """
         with self._gen_lock:
+            # **이전 세대를 기다리던 스레드를 깨운다.** 그 세대의 결과는 이제
+            # 버려지므로(`_generate_pending` 의 토큰 검사) 아무도 그 이벤트를
+            # 세팅해 주지 않는다 — 깨우지 않으면 `_await_pending` 이 유예시간
+            # 내내 좀비로 남고, 그 스레드는 커넥션 수신 루프라 그동안 그 로봇의
+            # 메시지가 밀린다.
+            self._pending_ready.set()
             self._pending_text = None
             self._pending_ready = threading.Event()
             self._gen_token += 1
@@ -451,24 +518,33 @@ class Director:
             ready = self._pending_ready
         ready.set()
 
-    def _speak_pending(self, role_pref: str, cue_id: str, fallback: str, label: str) -> list[Command]:
-        """생성된 대사를 도슨트에게 준다. 유예를 넘기면 폴백을 읽는다."""
-        if not self._pending_ready.wait(timeout=GENERATE_GRACE_S):
+    def _await_pending(
+        self, ready: threading.Event, token: int, fallback: str, label: str
+    ) -> str:
+        """생성된 대사를 기다린다 — **진입 락 밖에서.** 유예를 넘기면 폴백을 읽는다.
+
+        폴백을 `self._pending_text` 에 **쓰지 않는다.** 예전에는 여기서 `_gen_lock`
+        없이 써서, 유예가 끝나는 바로 그 순간에 생성 스레드가 막 넣은 진짜 대사를
+        폴백으로 덮어쓸 수 있었다. 돌려주기만 하면 그 경합 자체가 없다.
+
+        호출부(`on_speaking_ended`)가 사회자 몫과 구분되는 id(`:docent`/`:qa`)를
+        붙인다. 맨 `cue.id` 는 "사회자 몫이 끝났다" 판정에 그대로 쓰이므로, 도슨트
+        몫까지 같은 id 를 쓰면(리뷰 finding 1) 1인 모드에서 같은 로봇이 도슨트 몫을
+        끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로 오판돼 무한 반복한다.
+        """
+        if not ready.wait(timeout=GENERATE_GRACE_S):
             self._warn(f"[{label}] 대사 생성이 늦다 — 폴백")
-            self._pending_text = fallback
-        text = self._pending_text
+            return fallback
+        with self._gen_lock:
+            if token != self._gen_token:
+                # 다음 턴이 슬롯을 갈면서 깨워 준 것이다 — 이 값은 의미가 없다.
+                # 경고는 호출부가 한 번만 낸다(거기서 버리는 것이 확정된다).
+                return fallback
+            text = self._pending_text
         if not text:
             self._warn(f"[{label}] 대사가 비어 있다 — 폴백")
             text = fallback
-        self._remember(f"도슨트: {text}")
-        # 사회자 몫과 구분되는 id 를 쓴다(`:docent`/`:qa`). 맨 `cue.id` 는 "사회자
-        # 몫이 끝났다" 판정에 `on_speaking_ended` 가 그대로 쓰므로, 도슨트 몫까지
-        # 같은 id 를 쓰면(리뷰 finding 1) 1인 모드에서 같은 로봇이 도슨트 몫을
-        # 끝낸 speaking_ended 가 다시 "사회자 몫이 끝났다" 로 오판돼 무한 반복한다.
-        return self._machine.speak(self._who(role_pref), cue_id, text, gaze="audience")
-
-    def _speak_docent(self, cue: Cue) -> list[Command]:
-        return self._speak_pending("docent", f"{cue.id}:docent", cue.docent_brief, cue.id)
+        return text
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()

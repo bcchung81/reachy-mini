@@ -6,6 +6,7 @@
 import pathlib
 import sys
 import threading
+import time
 
 import pytest
 
@@ -197,6 +198,152 @@ def test_질문_응답_생성은_on_heard_를_막지_않는다():
     h.d.abort()                      # 락이 자유로워야 즉시 돌아온다
     assert time.monotonic() - t0 < 1.0
     gate.set()
+
+
+def _wait_state(h, state, timeout=2.0):
+    """감독이 그 상태에 닿을 때까지 기다린다 — 다른 스레드가 대기 구간에 들어갔는지 보는 눈.
+
+    `Director.state` 는 진입 락을 잡지 않고 읽으므로, 그 락을 쥔 스레드가 있어도
+    관찰된다. 그래서 고침 전후 양쪽에서 같은 지점을 잡을 수 있다.
+    """
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if h.d.state is state:
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_도슨트_생성_대기가_abort_를_막지_않는다():
+    """사회자 발화가 끝나고 도슨트 대사를 기다리는 구간에서도 콘솔 `a` 는 즉시 먹어야
+    한다. 예전에는 그 대기(`GENERATE_GRACE_S`, 최대 8초)가 **진입 락을 쥔 채**
+    일어나 비상정지가 그만큼 먹통이었다. 대장의 "락을 쥔 채 네트워크를 기다리지
+    않는다" 가 LLM *요청* 쪽(`_answer`)에만 적용돼 있던 나머지 구멍이다 —
+    큐 19개마다, 그리고 관람객 질문마다 한 번씩 더 돌아온다.
+    """
+    gate = threading.Event()
+
+    def slow(brief, history):
+        gate.wait(3.0)
+        return "도슨트 대사"
+
+    h = Harness(generate=slow)
+    h.d.start()
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    handoff.start()
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
+
+    t0 = time.monotonic()
+    h.d.abort()
+    elapsed = time.monotonic() - t0
+
+    gate.set()
+    handoff.join(timeout=5.0)
+    assert not handoff.is_alive(), "핸드오프 스레드가 안 끝났다(교착 의심)"
+    assert elapsed < 1.0, f"abort 가 도슨트 생성 대기에 묶였다({elapsed:.1f}초)"
+
+
+def test_대기_중_abort_가_나면_도슨트가_뒤늦게_말하지_않는다():
+    """비상정지가 빨라진 대신 **늦게 끝난 생성이 그 뒤에 말을 얹으면** 더 나쁘다 —
+    운영자는 멈췄다고 믿는데 도슨트가 입을 연다. 락을 놓고 기다리는 구조가 새로
+    들일 수 있는 경합이라 값으로 못박는다: 대기에서 깨어나면 상태를 다시 보고
+    물러난다.
+    """
+    gate = threading.Event()
+
+    def slow(brief, history):
+        gate.wait(3.0)
+        return "도슨트 대사"
+
+    h = Harness(generate=slow)
+    h.d.start()
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    handoff.start()
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
+
+    h.clear()
+    h.d.abort()
+    gate.set()                       # 늦게 끝난 생성이 돌아온다
+    handoff.join(timeout=5.0)
+    assert not handoff.is_alive(), "핸드오프 스레드가 안 끝났다(교착 의심)"
+    assert h.says() == [], f"비상정지 뒤에 대사가 나갔다: {h.says()}"
+    assert h.d.state is State.IDLE
+
+
+def test_대기_중_다음_큐가_돌아_LISTENING_이_돼도_옛_대사는_안_나간다():
+    """상태만 보는 판정으로는 못 잡는 틈. 대기 중 `n` 으로 다음 큐가 시작되고 그
+    사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다 — 그때 깨어난 옛
+    대기가 상태만 보면 "아직 내 차례" 로 오해해 **이전 섹션 해설**을 읽고, 뒤이어
+    새 큐의 핸드오프가 `TurnError` 를 맞는다. 세대 토큰(`_gen_token`)이 이것을
+    가른다 — `_generate_pending` 이 늦게 끝난 생성을 버릴 때 쓰는 것과 같은 장치다.
+    """
+    gates = {"첫 지시": threading.Event(), "둘째 지시": threading.Event()}
+
+    def slow(brief, history):
+        gates[brief].wait(3.0)
+        return f"[{brief} 해설]"
+
+    h = Harness(generate=slow)
+    errors: list[Exception] = []
+
+    def ended_in_thread(role, cue_id):
+        try:
+            h.ended(role, cue_id)
+        except Exception as exc:  # noqa: BLE001 — 스레드 밖으로 못 나가는 예외를 걷는다
+            errors.append(exc)
+
+    h.d.start()                                   # c1 사회자 발화 + 생성 ①
+    first = threading.Thread(target=ended_in_thread, args=("mc", "c1"), daemon=True)
+    first.start()
+    assert _wait_state(h, State.LISTENING), "첫 핸드오프가 대기에 들어가지 않았다"
+
+    h.d.next()                                    # c2 로 넘어간다 — 생성 ②, 세대가 오른다
+    assert h.d.state is State.MC_SPEAKING
+    second = threading.Thread(target=ended_in_thread, args=("mc", "c2"), daemon=True)
+    second.start()
+    assert _wait_state(h, State.LISTENING), "둘째 핸드오프가 대기에 들어가지 않았다"
+
+    gates["첫 지시"].set()                         # 옛 생성만 풀어 준다
+    first.join(timeout=5.0)
+    assert not first.is_alive(), "옛 핸드오프가 안 끝났다"
+
+    stale = [f for _, t, f in h.all_sent if t == "say" and f["cue_id"] == "c1:docent"]
+    assert not stale, f"이전 섹션 해설이 나갔다: {stale}"
+
+    gates["둘째 지시"].set()
+    second.join(timeout=5.0)
+    assert not errors, f"핸드오프에서 예외가 났다: {errors}"
+
+
+def test_대기_중_도슨트가_끊기면_남은_사회자가_그_대사를_읽는다():
+    """대기에서 깨어난 뒤 **역할을 다시 계산한다.** 1구간의 판단을 들고 가면 이미
+    끊긴 도슨트에게 대사를 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고
+    버린다 — 상태기계는 도슨트가 말하는 중이라 믿으므로 `speaking_ended` 가 영영
+    오지 않고 tick 타임아웃까지 정적이 된다. 남은 한 대가 양쪽을 읽어야 한다
+    (설계 §7 1인 모드).
+    """
+    gate = threading.Event()
+
+    def slow(brief, history):
+        gate.wait(3.0)
+        return "도슨트 대사"
+
+    h = Harness(generate=slow)
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    handoff.start()
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
+
+    h.d.on_disconnect("docent")       # 대기 중에 도슨트가 사라진다
+    assert h.d.solo_role == "mc"
+    gate.set()
+    handoff.join(timeout=5.0)
+    assert not handoff.is_alive(), "핸드오프 스레드가 안 끝났다(교착 의심)"
+
+    said = [(r, f["cue_id"]) for r, t, f in h.all_sent if t == "say"]
+    assert ("mc", "c1:docent") in said, f"남은 사회자가 도슨트 몫을 읽지 않았다: {said}"
 
 
 def test_확인_멘트는_돌아가며_쓴다():
