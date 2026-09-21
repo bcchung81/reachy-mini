@@ -158,7 +158,9 @@ def test_dry_run_은_부작용_명령을_하나도_부르지_않는다(tmp_path)
 # 함수만 정의되고(맨 끝의 BASH_SOURCE 검사), 그 위에 가짜 함수를 덮어써 **순서와 대상**을
 # 기록한다. 가짜로 덮는 것은 바깥(망·프로세스)에 닿는 자리뿐이고, 조립 로직은 진짜다.
 _SOURCE_ENV = (*_PLAN_ENV, "REACHY_DIRECTOR_URL", "REACHY_ROLE", "REACHY_ROBOT_HOST",
-               "REACHY_ROBOT_APP", "REACHY_PROMPT", "REACHY_AUDIO_OUT")
+               "REACHY_ROBOT_APP", "REACHY_PROMPT", "REACHY_AUDIO_OUT", "REACHY_DIRECTOR_HOST",
+               "REACHY_DAEMON_PORT", "REACHY_MC_AUDIO_OUT", "REACHY_DOCENT_AUDIO_OUT",
+               "TTS_QWEN_VOICE", "TTS_BACKEND", "STT_PYTHON", "PYTHONUNBUFFERED")
 
 # 로봇 쪽 호출을 기록하는 가짜. `$ROBOT_HOST` 를 같이 적어 **어느 로봇을 향했는지** 본다.
 _FAKE_ROBOT = r'''
@@ -171,7 +173,13 @@ rget() {
     /api/motors/status) echo '{"mode":"enabled"}' ;;
   esac
 }
-rpost() { echo "post $ROBOT_HOST $1" >> "$CALLS"; }
+rpost() {
+  echo "post $ROBOT_HOST $1" >> "$CALLS"
+  # 데몬의 start-app 은 성공하면 AppStatus 를 돌려준다(reachy_mini/apps/manager.py).
+  case "$1" in
+    /api/apps/start-app/*) echo '{"info":{"name":"voice_chat"},"state":"starting","error":null}' ;;
+  esac
+}
 rssh() {
   echo "ssh $ROBOT_HOST $*" >> "$CALLS"
   case "$*" in
@@ -188,7 +196,10 @@ def _source(script, tmp_path, env_extra=None):
     env.update({"CALLS": str(tmp_path / "calls.txt"), "WROTE": str(tmp_path / "wrote"),
                 "REACHY_PY": sys.executable})
     env.update(env_extra or {})
-    body = f'source ./reachy.sh\nLOG_DIR="{tmp_path}"\n{script}'
+    # 로그 경로는 source 할 때 LOG_DIR 에서 한 번 만들어진다 — 파생 경로까지 다시 잡지 않으면
+    # 테스트가 저장소의 진짜 .demo-logs 에 쓴다.
+    body = (f'source ./reachy.sh\nLOG_DIR="{tmp_path}"\nAPP_LOG="$LOG_DIR/app.log"\n'
+            f'START_DIRECTOR_LOG="$LOG_DIR/start-director.log"\n{script}')
     return subprocess.run(["bash", "-c", body], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=30)
 
@@ -199,18 +210,23 @@ def _calls(tmp_path):
 
 
 def test_정리는_이_실행이_띄운_프로세스와_그_자식만_내린다(tmp_path):
-    """이름 패턴(pkill -f)으로 쓸면 옆 터미널에서 손으로 띄운 앱까지 죽는다."""
+    """이름 패턴(pkill -f)으로 쓸면 옆 터미널에서 손으로 띄운 앱까지 죽는다.
+
+    자식은 **pid 파일로** 본다 — 전역 `pgrep -f` 는 병렬로 도는 다른 워크트리의 같은
+    테스트 자식까지 잡아 헛실패하고, 자식이 fork 되기 전에 부모를 죽이는 경쟁도 있다."""
     r = _source(r'''
 sleep 30 & mine=$!
-( sleep 31.7; true ) & sub=$!
+( sleep 30 & echo $! > "$LOG_DIR/kid.pid"; wait ) & sub=$!
 sleep 30 & other=$!
+n=0; while [ ! -s "$LOG_DIR/kid.pid" ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n+1)); done
+kid=$(cat "$LOG_DIR/kid.pid")
 START_PIDS=" $mine:데몬-mc $sub:브라우저대기"
 start_stop_pids 2>/dev/null
 kill -0 $mine 2>/dev/null && echo "살아있음 mine"
 kill -0 $sub  2>/dev/null && echo "살아있음 sub"
-sleep 0.3; pgrep -f "sleep 31.7" >/dev/null && echo "살아있음 자식"
+sleep 0.3; kill -0 $kid 2>/dev/null && echo "살아있음 자식"
 kill -0 $other 2>/dev/null && echo "살아있음 other"
-kill $other
+kill $other $kid 2>/dev/null
 ''', tmp_path)
     assert r.returncode == 0, r.stderr
     alive = [l for l in r.stdout.splitlines() if l.startswith("살아있음")]
@@ -317,3 +333,246 @@ cat "$LOG_DIR/start-app-mc.log" "$LOG_DIR/start-app-docent.log"
         "ROLE=docent PORT=8001 URL=ws://127.0.0.1:9777 OUT=[없음] "
         "ARGS=-u apps/voice_chat/voice_chat/main.py",
     ]
+
+
+# ── 시뮬 조립 — 감독 바인드·앱마다 역할/포트·포트 선점검 ──────────────
+# 가짜 파이썬 하나가 데몬·앱·감독 셋 다를 대신하며 **받은 환경과 인자**를 적는다.
+_RECORDING_PY = (
+    '#!/bin/sh\n'
+    'echo "py HOST=${REACHY_DIRECTOR_HOST-} PORT=${REACHY_DIRECTOR_PORT-} '
+    'ROLE=${REACHY_ROLE-} DPORT=${REACHY_DAEMON_PORT-} URL=${REACHY_DIRECTOR_URL-} '
+    'UNBUF=${PYTHONUNBUFFERED-} ARGS=$*" >> "$CALLS"\n'
+    'echo "감독 출력 줄 $1 $2"\n'
+    'exit "${FAKE_RC:-0}"\n'
+)
+
+
+def _recording_py(tmp_path):
+    p = tmp_path / "rec-py"
+    p.write_text(_RECORDING_PY)
+    p.chmod(0o755)
+    return str(p)
+
+
+def test_start_sim_은_감독을_루프백에_두고_앱마다_역할과_포트를_짝짓는다(tmp_path):
+    """인증 없는 감독을 망에 열지 않는다(127.0.0.1). 도슨트 앱이 사회자 포트로 붙으면 둘이
+    한 데몬을 두고 싸운다. 포트 선점검이 빠지면 남의 데몬·감독에 조용히 붙는다."""
+    r = _source(r'''
+start_ports_free()     { echo "ports $*" >> "$CALLS"; }
+start_llm_stt()        { echo "llm_stt $BIND_HOST" >> "$CALLS"; }
+start_tts()            { :; }
+up()                   { return 0; }
+robot_warmup()         { echo "warmup" >> "$CALLS"; }
+start_open_dashboard() { echo "dashboard $*" >> "$CALLS"; }
+start_sim 9777 9778 http://127.0.0.1:9778/; rc=$?
+wait
+exit $rc
+''', tmp_path, env_extra={"REACHY_PY": _recording_py(tmp_path)})
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert calls[:3] == ["ports 8000 8001 9777 9778", "llm_stt 127.0.0.1", "warmup"]
+    py = [c for c in calls if c.startswith("py ")]
+    # 뒤로 띄운 가짜들이 적는 순서는 경쟁이다 — 짝(포트↔역할)만 본다.
+    daemons = sorted(c.split("ARGS=")[1] for c in py if "reachy_mini.daemon" in c)
+    assert daemons == [
+        "-m reachy_mini.daemon.app.main --mockup-sim --headless --no-media "
+        "--fastapi-port 8000 --robot-name mc",
+        "-m reachy_mini.daemon.app.main --mockup-sim --headless --no-media "
+        "--fastapi-port 8001 --robot-name docent",
+    ]
+    apps = sorted(c for c in py if "voice_chat/main.py" in c)
+    assert [c.split(" UNBUF=")[0] for c in apps] == [
+        "py HOST= PORT= ROLE=docent DPORT=8001 URL=ws://127.0.0.1:9777",
+        "py HOST= PORT= ROLE=mc DPORT=8000 URL=ws://127.0.0.1:9777",
+    ]
+    director = [c for c in py if c.endswith("ARGS=-m stage")]
+    assert [c.split(" ROLE=")[0] for c in director] == ["py HOST=127.0.0.1 PORT=9777"]
+    assert "dashboard http://127.0.0.1:9778/" in calls
+    assert "도슨트 출력 장치가 지정되지 않았다" in r.stdout
+
+
+def test_포트를_쥔_것이_있으면_무엇인지_보여_주고_1을_돌려준다(tmp_path):
+    r = _source(r'''
+lsof() {
+  case "$*" in
+    *TCP:8777*) printf 'COMMAND   PID USER\npython3.1 4242 me    TCP 127.0.0.1:8777 (LISTEN)\n' ;;
+  esac
+}
+start_ports_free 8000 8777; echo "rc=$?"
+start_ports_free 8000 8001; echo "rc=$?"
+''', tmp_path)
+    out = r.stdout
+    first, second = out.split("rc=")[0], out.split("rc=")[1]
+    assert "rc=1" in out and "rc=0" in out
+    assert out.index("rc=1") < out.index("rc=0")
+    assert ":8777 를 이미 쥔 것이 있다" in first
+    assert "python3.1 4242" in first
+    assert ":8000 비어 있음" in first
+    # stop 이 감독을 안 쓸어낸다 — 8777/8778 을 쥔 감독은 그 터미널에서 q 로 끝낸다.
+    assert "그 감독 터미널에서 q" in first and "./reachy.sh stop" in first
+    assert "이미 쥔" not in second
+
+
+# ── 추론 서버가 LAN 에서 보이는지 (loopback 전용 재사용 방지) ─────────
+# macOS·리눅스는 0.0.0.0 으로의 connect 를 loopback 으로 보낸다. 그 동작을 가짜 `up` 에
+# 그대로 옮긴다: localhost·127.0.0.1·0.0.0.0 은 응답, LAN 주소(10.9.8.10)는 무응답 —
+# `start --sim`/`demo` 가 loopback 으로 띄워 남겨 둔 서버의 모양이다.
+_LOOPBACK_ONLY = r'''
+up() { case "$1" in http://10.9.8.10:*) return 1 ;; *) return 0 ;; esac; }
+lan_ip() { echo 10.9.8.10; }
+'''
+
+
+def test_추론_서버_가드는_0_0_0_0_을_LAN_주소로_두드린다(tmp_path):
+    r = _source(_LOOPBACK_ONLY + r'''
+BIND_HOST=0.0.0.0
+start_llm_stt; echo "llm_rc=$?"
+start_tts; echo "tts_rc=$?"
+''', tmp_path, env_extra={"TTS_QWEN_VOICE": "serena"})
+    assert "llm_rc=1" in r.stdout, r.stdout
+    assert "tts_rc=1" in r.stdout, r.stdout
+    assert r.stdout.count("loopback 전용") == 2
+
+
+def test_start_infer_는_TTS_바인드_거절에서_멈춘다(tmp_path):
+    """start_tts 가 1 을 주는 것은 loopback 전용 TTS 하나뿐이다 — 버리면 로봇이 말을 못 한다."""
+    r = _source(r'''
+start_llm_stt() { return 0; }
+start_tts()     { return 1; }
+start_infer; echo "rc=$? up=$START_INFER_UP"
+''', tmp_path)
+    assert "rc=1 up=0" in r.stdout, r.stdout + r.stderr
+
+
+def test_start_robot_은_loopback_전용_추론_서버면_로봇을_건드리기_전에_멈춘다(tmp_path):
+    r = _source(_FAKE_ROBOT + _LOOPBACK_ONLY + r'''
+start_ports_free() { :; }
+start_llm_stt()    { echo "llm_stt $BIND_HOST" >> "$CALLS"; }
+start_tts()        { :; }
+robot_warmup()     { echo "warmup" >> "$CALLS"; }
+start_director()   { echo "director $*" >> "$CALLS"; }
+start_robot 0.0.0.0 9777 9778 http://127.0.0.1:9778/ 10.9.8.21 10.9.8.22
+''', tmp_path)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "loopback 전용(start --sim/demo 가 띄운 것) — ./reachy.sh stop 후 다시" in r.stdout
+    assert _calls(tmp_path) == ["llm_stt 0.0.0.0"]
+
+
+# ── 이미 앱이 도는 로봇 (M8) ──────────────────────────────────────
+def test_로봇에_앱이_이미_돌면_멈추고_새_config_로_다시_띄운다(tmp_path):
+    """데몬은 "An app is already running" 으로 거절하고 옛 앱(옛 config)이 계속 돈다 —
+    응답을 버리면 성공처럼 보인다."""
+    r = _source(_FAKE_ROBOT + r'''
+rpost() {
+  echo "post $ROBOT_HOST $1" >> "$CALLS"
+  case "$1" in
+    /api/apps/start-app/*)
+      if [ -f "$LOG_DIR/stopped" ]; then
+        echo '{"info":{"name":"voice_chat"},"state":"starting","error":null}'
+      else
+        echo '{"detail":"An app is already running"}'
+      fi ;;
+    /api/apps/stop-current-app) touch "$LOG_DIR/stopped" ;;
+  esac
+}
+robot_bringup_one 10.9.8.21 mc 10.9.8.10; echo "rc=$?"
+echo "started [$ROBOT_APPS_STARTED]"
+''', tmp_path)
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert "started [ 10.9.8.21]" in r.stdout
+    posts = [c.split()[2] for c in _calls(tmp_path) if c.startswith("post ")]
+    assert posts[-3:] == ["/api/apps/start-app/voice_chat", "/api/apps/stop-current-app",
+                          "/api/apps/start-app/voice_chat"]
+    assert "이미 돌고 있다" in r.stdout
+
+
+def test_앱을_못_띄우면_소리_내서_실패하고_정리_목록에서_뺀다(tmp_path):
+    r = _source(_FAKE_ROBOT + r'''
+rpost() {
+  echo "post $ROBOT_HOST $1" >> "$CALLS"
+  case "$1" in
+    /api/apps/start-app/*) echo '{"detail":"The robot app slot is already in use"}' ;;
+  esac
+}
+robot_bringup_one 10.9.8.21 mc 10.9.8.10; echo "rc=$?"
+echo "started [$ROBOT_APPS_STARTED]"
+''', tmp_path)
+    assert "rc=1" in r.stdout, r.stdout + r.stderr
+    assert "started [ ]" in r.stdout or "started []" in r.stdout
+    assert "The robot app slot is already in use" in r.stdout
+
+
+# ── stop 의 앱 쓸기 패턴 (M3) ─────────────────────────────────────
+def test_stop_의_앱_쓸기는_파이썬_프로세스만_잡는다(tmp_path):
+    """`pkill -f` 는 argv 어디든 경로가 있으면 잡는다 — 그 파일을 연 편집기까지 kill -9."""
+    r = _source(r'''
+printf '%s\n' \
+  ".venv/bin/python -u apps/voice_chat/voice_chat/main.py" \
+  "/Users/x/reachy-mini/.venv/bin/python3.12 apps/voice_chat/voice_chat/main.py" \
+  "vim apps/voice_chat/voice_chat/main.py" \
+  "less /tmp/python-notes/apps/voice_chat/voice_chat/main.py" \
+  | grep -E "$APP_PROC_PAT"
+''', tmp_path)
+    assert r.stdout.splitlines() == [
+        ".venv/bin/python -u apps/voice_chat/voice_chat/main.py",
+        "/Users/x/reachy-mini/.venv/bin/python3.12 apps/voice_chat/voice_chat/main.py",
+    ]
+
+
+# ── 절대경로 인터프리터 (M6) ──────────────────────────────────────
+def test_STT_파이썬은_절대경로_인터프리터를_그대로_쓴다(tmp_path):
+    fake_ctl = tmp_path / "llamactl"
+    fake_ctl.write_text('#!/bin/sh\necho "STT_PYTHON=$STT_PYTHON" >> "$CALLS"\n')
+    fake_ctl.chmod(0o755)
+    r = _source(r'''
+up() { return 1; }
+wait_for() { return 0; }
+LLAMACTL="$FAKE_CTL"
+start_llm_stt; echo "rc=$?"
+''', tmp_path, env_extra={"REACHY_PY": "/opt/abs/bin/python", "FAKE_CTL": str(fake_ctl)})
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert _calls(tmp_path) == ["STT_PYTHON=/opt/abs/bin/python"]
+
+
+# ── start 의 로그 (M7) ─────────────────────────────────────────────
+def test_감독_출력은_터미널과_로그_파일_둘_다로_가고_종료코드를_지킨다(tmp_path):
+    r = _source(r'''
+start_open_dashboard() { :; }
+START_DIRECTOR_LOG="$LOG_DIR/start-director.log"
+start_director 127.0.0.1 9777 http://127.0.0.1:9778/; echo "rc=$?"
+''', tmp_path, env_extra={"REACHY_PY": _recording_py(tmp_path), "FAKE_RC": "3"})
+    assert "감독 출력 줄 -m stage" in r.stdout, r.stdout + r.stderr
+    assert "rc=3" in r.stdout
+    log = (tmp_path / "start-director.log").read_text()
+    assert "════════ 세션 시작" in log
+    assert "감독 출력 줄 -m stage" in log
+    # 파이프 뒤에서는 flush 없는 print 가 블록 버퍼링에 갇혀 콘솔에 안 보인다.
+    assert [c for c in _calls(tmp_path) if "ARGS=-m stage" in c][0].split("UNBUF=")[1] == (
+        "1 ARGS=-m stage")
+
+
+def test_logs_는_start_세션의_감독과_앱_로그를_보여_준다(tmp_path):
+    (tmp_path / "start-director.log").write_text(
+        "════════ 세션 시작 2026-09-21 10:00:00 ════════\n지난 세션 줄\n"
+        "════════ 세션 시작 2026-09-22 10:00:00 ════════\n[mc] 붙었다\n")
+    (tmp_path / "start-app-mc.log").write_text("역할: mc (환경변수)\n")
+    r = _source(r'''
+APP_LOG="$LOG_DIR/app.log"
+START_DIRECTOR_LOG="$LOG_DIR/start-director.log"
+show_logs --no-follow
+''', tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert "[mc] 붙었다" in r.stdout
+    assert "지난 세션 줄" not in r.stdout
+    assert "역할: mc (환경변수)" in r.stdout
+
+
+# ── 문서의 로봇 주소 (I1) ─────────────────────────────────────────
+def test_문서의_실기_주소_예시는_사회자_4_도슨트_5다():
+    """예시가 기본값과 다르면(.41/.42) 문서를 따라 친 한 줄이 맞는 기본값을 **덮어쓴다**."""
+    for name in ("docs/two-robot-setup.md", "docs/two-robot-offline-test.md", "docs/install.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "192.168.0.41" not in text and "192.168.0.42" not in text, name
+        assert "192.168.0.4" in text and "192.168.0.5" in text, name
+    offline = (ROOT / "docs/two-robot-offline-test.md").read_text(encoding="utf-8")
+    assert "\n./reachy.sh start --robot\n" in offline

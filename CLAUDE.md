@@ -91,6 +91,8 @@ open http://localhost:8000/docs         # REST API 문서 (OpenAPI)
 
 - `.demo-logs/app.log` — 앱(대화) 출력. 세션 구분자(`════ 세션 시작 …`)와 그때의 환경변수
   (`REACHY_AEC`/`REACHY_BARGE_IN`/임계값)가 함께 적힌다. `logs` 는 **마지막 세션만** 잘라 보여준다.
+- `.demo-logs/start-director.log`(무대감독, 세션 구분자로 누적)·`start-app-{mc,docent}.log` — `start` 로
+  띄운 시연 한 벌. `logs` 가 이것도 보여 주고, 더 최근에 돈 쪽(demo 또는 start)을 실시간으로 따라간다.
 - `.demo-logs/tts.log`·`sim.log` — 서버 쪽. `logs` 가 오류·경고 줄만 추려 준다.
 - "이상하다"는 보고를 받으면 순서는 하나다: **로그 확인 → 재현 → 원인 → 고침 → 테스트로 박제.**
   로그를 안 보고 추측으로 고치지 않는다. 이번 세션의 자기 목소리 루프도 로그의 한 줄

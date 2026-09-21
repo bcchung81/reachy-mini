@@ -11,7 +11,7 @@
 #   ./reachy.sh demo --no-robot        시뮬 없이 대화·음성만 — 최후 폴백
 #   ./reachy.sh demo --exit-clean      앱을 나갈 때 서버까지 함께 내린다
 #   ./reachy.sh serve                  추론 3종(LLM·STT·TTS)만 — 실기 배포용, LAN 에 연다
-#   ./reachy.sh robot up               실기 시연 기동: serve + config 동기화 + 예열 + 앱
+#   ./reachy.sh robot up               실기 1대 기동: 백엔드 확인 → serve → 예열 → config 동기화 → 기상 → 앱
 #   ./reachy.sh robot down [--keep-servers]   실기 정지 — 앱 + 맥 추론 3종·MCP 까지 정리
 #   ./reachy.sh robot deploy|logs|status|fix  실기 운영 — 재배포·실시간 로그·상태·복구
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
@@ -51,6 +51,9 @@ BIND_HOST="${REACHY_BIND_HOST:-127.0.0.1}"
 PY="${REACHY_PY:-.venv/bin/python}"
 LOG_DIR=".demo-logs"
 APP_LOG="$LOG_DIR/app.log"      # 앱(대화) 출력 — 세션 구분자와 함께 누적된다
+# `start` 의 무대감독 출력 — 세션 구분자와 함께 누적된다. 앱·데몬은 start-{app,daemon}-<역할>.log
+# (start 마다 새로 쓴다). `logs` 가 이것들도 본다.
+START_DIRECTOR_LOG="$LOG_DIR/start-director.log"
 SIM_PID_FILE="$LOG_DIR/sim.pid"
 TTS_PID_FILE="$LOG_DIR/tts.pid"
 SCENE="minimal"
@@ -230,10 +233,23 @@ sweep() {  # pattern label
   return 0
 }
 
+# 마지막 '세션 시작' 이후만 보여준다. 구분자가 없으면 꼬리만.
+last_session() {  # file n
+  if grep -q "════════ 세션 시작" "$1"; then
+    awk '/════════ 세션 시작/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$1" | tail -"$2"
+  else
+    tail -"$2" "$1"
+  fi
+}
+
 # **기본이 실시간이다.** 로그를 보는 이유는 대개 "지금 무슨 일이 나는지"를 보려는
 # 것인데, 한 번 찍고 끝나면 다시 치게 된다. 한 번만 보려면 --no-follow 다.
+#
+# `start` 세션도 본다. 예전에는 app.log(demo)만 봐서, 시연 한 벌을 `start` 로 띄운 날에는
+# "로그부터 읽는다"(CLAUDE.md) 가 빈손이었다 — 감독 출력은 터미널에만, 앱 출력은
+# start-app-*.log 에만 있었다.
 show_logs() {  # [줄수] [--no-follow]
-  local n=80 follow=1 a
+  local n=80 follow=1 a f
   for a in "$@"; do
     case "$a" in
       --no-follow|-n) follow=0 ;;
@@ -242,23 +258,38 @@ show_logs() {  # [줄수] [--no-follow]
     esac
   done
   if [ -f "$APP_LOG" ]; then
-    say_step "마지막 세션 (앱) — $APP_LOG"
-    # 마지막 '세션 시작' 이후만 보여준다. 없으면 꼬리만.
-    if grep -q "════════ 세션 시작" "$APP_LOG"; then
-      awk '/════════ 세션 시작/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' "$APP_LOG" | tail -"$n"
-    else
-      tail -"$n" "$APP_LOG"
-    fi
-  else
-    echo "   ${c_dim}앱 로그가 없다 — 아직 ./reachy.sh demo 를 돌린 적이 없다${c_off}"
+    say_step "마지막 세션 (demo 앱) — $APP_LOG"
+    last_session "$APP_LOG" "$n"
   fi
-  for f in "$LOG_DIR/tts.log" "$LOG_DIR/sim.log"; do
+  if [ -f "$START_DIRECTOR_LOG" ]; then
+    say_step "마지막 start 세션 (무대감독) — $START_DIRECTOR_LOG"
+    last_session "$START_DIRECTOR_LOG" "$n"
+    for f in "$LOG_DIR/start-app-mc.log" "$LOG_DIR/start-app-docent.log"; do
+      [ -f "$f" ] || continue
+      say_step "$(basename "$f") 끝부분 ${c_dim}(start 마다 새로 쓴다)${c_off}"
+      tail -"$n" "$f"
+    done
+  fi
+  if [ ! -f "$APP_LOG" ] && [ ! -f "$START_DIRECTOR_LOG" ]; then
+    echo "   ${c_dim}앱 로그가 없다 — 아직 ./reachy.sh demo 도 start 도 돌린 적이 없다${c_off}"
+  fi
+  for f in "$LOG_DIR/tts.log" "$LOG_DIR/sim.log" \
+           "$LOG_DIR/start-daemon-mc.log" "$LOG_DIR/start-daemon-docent.log"; do
     [ -f "$f" ] || continue
     say_step "$(basename "$f") 끝부분"
     grep -iE "error|traceback|경고|실패|warn" "$f" | tail -10 || tail -5 "$f"
   done
 
-  if [ "$follow" = "1" ] && [ -f "$APP_LOG" ]; then
+  [ "$follow" = "1" ] || return 0
+  # 더 최근에 돈 쪽을 따라간다. app.log 가 없으면 `-nt` 는 참이다.
+  if [ -f "$START_DIRECTOR_LOG" ] && [ "$START_DIRECTOR_LOG" -nt "$APP_LOG" ]; then
+    set -- "$START_DIRECTOR_LOG"
+    for f in "$LOG_DIR/start-app-mc.log" "$LOG_DIR/start-app-docent.log"; do
+      [ -f "$f" ] && set -- "$@" "$f"
+    done
+    say_step "실시간 (start: 감독·앱) — 새 줄이 나오는 대로 이어 붙는다 ${c_dim}(Ctrl-C 로 종료)${c_off}"
+    tail -f "$@"
+  elif [ -f "$APP_LOG" ]; then
     say_step "실시간 — 새 줄이 나오는 대로 이어 붙는다 ${c_dim}(Ctrl-C 로 종료)${c_off}"
     tail -f "$APP_LOG"
   fi
@@ -281,9 +312,15 @@ stop_all() {
   # `start --sim` 이 뒤로 띄운 앱 2대. 보통은 `start` 의 trap 이 내리지만, 그 셸이 kill -9
   # 로 죽거나 터미널째 날아가면 trap 이 못 돈다 — 앱이 마이크를 쥔 채 남는다. 예전에는
   # `scripts/sim2.sh stop` 이 이 자리였다(모의 데몬은 위의 daemon.app.main 이 쓸어낸다).
-  sweep "apps/voice_chat/voice_chat/main.py" "앱"
+  sweep "$APP_PROC_PAT" "앱"
   rm -f "$LOG_DIR"/start-*.pid
 }
+
+# 앱 프로세스를 찾는 패턴 — **파이썬이 그 파일을 돌리는 것만.** 경로만 보면 `pgrep -f` 가
+# argv 어디든 그 경로가 든 프로세스를 잡는다(그 파일을 연 `vim` 까지). sweep 은 안 죽으면
+# kill -9 로 올리므로 편집 중인 버퍼가 날아간다. `robot down`·`demo --exit-clean` 도 여기를 지난다.
+# (pgrep 의 패턴은 확장 정규식이다 — tests/test_reachy_start.py 가 grep -E 로 같은 식을 본다.)
+APP_PROC_PAT='python[^ ]* .*apps/voice_chat/voice_chat/main\.py'
 
 # 기동 도중 Ctrl-C 나 실패로 빠져나갈 때, **이 실행이 띄운 것만** 정리한다.
 STARTED_TTS=0
@@ -300,16 +337,38 @@ cleanup_partial() {
 # 한쪽만 고쳐지고 시연장에서 어긋난다 — main.py 가 생성 템플릿인 채로 방치됐던
 # 것과 같은 종류의 사고다.
 
+# 이미 떠 있는 서버가 BIND_HOST 로 **실제로** 듣는지 두드릴 주소를 준다.
+#
+# 0.0.0.0 은 두드릴 주소가 아니다 — macOS·리눅스는 0.0.0.0 으로의 connect 를 loopback 으로
+# 보내서, loopback 전용으로 떠 있는 서버도 "0.0.0.0 에서 응답한다" 로 보인다. 예전 가드가
+# 그랬다: `start --sim`(loopback)으로 띄워 남겨 둔 서버를 `start --robot`·`robot up` 이 그대로
+# 재사용하고, 로봇마다 ":8080 — 로봇에서 안 보인다" 로 떨어져 원인이 방화벽처럼 보였다
+# (리뷰 I2). LAN 주소로 두드려야 가려진다. 주소를 못 찾으면 1 — 확인을 못 했다고 말한다.
+bind_probe_addr() {
+  if [ "$BIND_HOST" = "0.0.0.0" ]; then lan_ip; else echo "$BIND_HOST"; fi
+}
+
+# 떠 있는 서버(포트들)가 BIND_HOST 로 듣는지. 0 = 듣는다(또는 loopback 바인드라 볼 것이 없다).
+already_up_binds_right() {  # label port...
+  local label="$1" addr p; shift
+  [ "$BIND_HOST" = "127.0.0.1" ] && return 0
+  if ! addr="$(bind_probe_addr)" || [ -z "$addr" ]; then
+    say_warn "LAN 주소를 못 찾아, 떠 있는 $label 가 $BIND_HOST 로 듣는지 확인하지 못했다"
+    return 0
+  fi
+  for p in "$@"; do
+    up "http://$addr:$p/health" && continue
+    say_bad "이미 떠 있는 $label 가 $BIND_HOST 로 듣지 않는다 (loopback 전용 — $addr:$p 무응답) — ./reachy.sh stop 후 다시"
+    return 1
+  done
+}
+
 start_llm_stt() {
   say_step "LLM(:8080) · STT(:8090) — bind $BIND_HOST"
   if up http://localhost:8080/health && up http://localhost:8090/health; then
     # 떠 있다고 원하는 주소로 듣는다는 보장이 없다. loopback 으로 떠 있던 것을
     # 그대로 두면 로봇에서 조용히 못 붙는다.
-    if [ "$BIND_HOST" != "127.0.0.1" ] \
-       && ! ( up "http://$BIND_HOST:8080/health" && up "http://$BIND_HOST:8090/health" ); then
-      say_bad "이미 떠 있는 LLM/STT 가 $BIND_HOST 로 듣지 않는다 (loopback 전용) — ./reachy.sh stop 후 다시"
-      return 1
-    fi
+    already_up_binds_right "LLM/STT" 8080 8090 || return 1
     echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
     return 0
   fi
@@ -320,8 +379,13 @@ start_llm_stt() {
   # REACH_HOME 도 함께 넘긴다 — llamactl 의 기본값 ~/workspace/reach-mini 는
   # **존재하지 않는 경로**라 STT 가 "python 없음" 으로 죽는다. 이 저장소가 그 자리다.
   # 사용자가 환경변수로 지정했으면 그쪽이 이긴다.
+  #
+  # STT_PYTHON 은 절대경로여야 한다(llamactl 이 다른 디렉토리에서 부른다). PY 가 이미
+  # 절대경로면(REACHY_PY) 앞에 $PWD 를 붙이면 `/repo//opt/…` 로 깨진다.
+  local py_abs="$PY"
+  case "$PY" in /*) ;; *) py_abs="$PWD/$PY" ;; esac
   REACH_HOME="${REACH_HOME:-$PWD}" \
-  STT_PYTHON="${STT_PYTHON:-$PWD/$PY}" \
+  STT_PYTHON="${STT_PYTHON:-$py_abs}" \
   STT_SERVER="${STT_SERVER:-$PWD/stt_server.py}" \
   LLM_HOST="$BIND_HOST" STT_HOST="$BIND_HOST" \
     "$LLAMACTL" reach-llm || { say_bad "LLM/STT 기동 실패"; return 1; }
@@ -334,10 +398,7 @@ start_tts() {
     resolve_tts_voice
     say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS, bind $BIND_HOST"
     if up "http://localhost:$TTS_PORT/health"; then
-      if [ "$BIND_HOST" != "127.0.0.1" ] && ! up "http://$BIND_HOST:$TTS_PORT/health"; then
-        say_bad "이미 떠 있는 TTS 가 $BIND_HOST 로 듣지 않는다 (loopback 전용) — ./reachy.sh stop 후 다시"
-        return 1
-      fi
+      already_up_binds_right "TTS" "$TTS_PORT" || return 1
       echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
     elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
       # 자산이 없다고 시연을 막지 않는다 — say 로 물러나 계속 진행한다
@@ -569,7 +630,7 @@ robot_reachable() {
 # 로봇 위의 앱은 그 값을 못 본다. 파일 단이 실기에서 유일하게 닿는 길이다.
 #
 #   REACHY_ROLE=mc ./reachy.sh robot up        # 사회자 로봇
-#   REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
+#   REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot up
 #
 # 병합 로직은 scripts/robot_config_merge.py 에 있다 — 테스트로 박제하기 위해서다.
 robot_sync_config() {
@@ -784,7 +845,10 @@ robot_bringup_one() {  # host role mac_ip   (role 이 비면 1대 모드 — 로
   # 정리(`start --robot` 의 trap)가 이 로봇의 앱을 내리도록 **띄우기 전에** 적는다 —
   # 아래 14초 대기 중에 Ctrl-C 가 와도 앱이 로봇에 남지 않는다.
   ROBOT_APPS_STARTED="$ROBOT_APPS_STARTED $ROBOT_HOST"
-  rpost "/api/apps/start-app/$ROBOT_APP" 40 >/dev/null
+  if ! robot_start_app; then
+    robot_forget_started "$ROBOT_HOST"   # 띄운 것이 없다 — 정리가 남의 앱을 멈추지 않게
+    return 1
+  fi
   sleep 14
 
   # **앱이 올라온 뒤에 한 번 더 본다.** 기상과 앱 기동 사이에 절전으로 빠지면
@@ -797,10 +861,35 @@ robot_bringup_one() {  # host role mac_ip   (role 이 비면 1대 모드 — 로
   return 0
 }
 
+# 앱을 띄우고 **응답을 본다.** 데몬은 앱이 이미 돌고 있으면 400 `{"detail":"An app is
+# already running"}` 으로 거절하고, 옛 앱이 **옛 config**(지난 시연의 역할·감독 주소)로 계속
+# 돈다 — 응답을 버리던 예전 코드는 그것을 성공으로 찍었다(리뷰 M8). 이미 돌면 멈추고 한 번
+# 더 띄운다. 성공 응답은 AppStatus(`"state":"starting"|"running"`)다(reachy_mini/apps/manager.py).
+robot_start_app() {
+  local resp
+  resp="$(rpost "/api/apps/start-app/$ROBOT_APP" 40)"
+  if printf '%s' "$resp" | grep -q 'An app is already running'; then
+    say_warn "로봇($ROBOT_HOST)에 앱이 이미 돌고 있다 — 옛 config 로 도는 것이라 멈추고 다시 띄운다"
+    rpost /api/apps/stop-current-app 25 >/dev/null 2>&1
+    sleep 3
+    resp="$(rpost "/api/apps/start-app/$ROBOT_APP" 40)"
+  fi
+  printf '%s' "$resp" | grep -Eq '"state": ?"(starting|running)"' && return 0
+  say_bad "앱을 띄우지 못했다 ($ROBOT_HOST): $(printf '%s' "${resp:-응답 없음}" | head -c 200)"
+  echo "   ${c_dim}./reachy.sh robot fix 로 되살리거나 REACHY_ROBOT_HOST=$ROBOT_HOST ./reachy.sh robot logs 를 본다${c_off}"
+  return 1
+}
+
+robot_forget_started() {  # host — ROBOT_APPS_STARTED 에서 뺀다(연관 배열 없이, bash 3.2)
+  local x rest=""
+  for x in $ROBOT_APPS_STARTED; do [ "$x" = "$1" ] || rest="$rest $x"; done
+  ROBOT_APPS_STARTED="$rest"
+}
+
 # ── 5. 예열 (앱과 같은 프롬프트로) ────────────────────────────
 # 로봇별 단계에서 떼어 냈다 — 맥의 추론 3종을 데우는 일이라 로봇이 두 대여도 한 번이면
 # 된다. **앱 기동 전에만** 끝나면 되므로 로봇별 단계 앞에 둔다(예전 `robot up` 은 기상과
-# 앱 기동 사이에 뒀다 — 앞으로 옮기면 기상→앱 사이가 짧아져 그 틈에 절전으로 빠질 여지도 준다).
+# 앱 기동 사이에 뒀다 — 앞으로 옮기면 기상→앱 사이가 짧아져 그 틈에 절전으로 빠질 여지를 줄인다).
 robot_warmup() {
   say_step "예열${REACHY_PROMPT:+ — $REACHY_PROMPT}"
   "$PY" scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다${c_off}"
@@ -908,13 +997,19 @@ start_ports_free() {  # port...
     fi
   done
   [ "$bad" = "0" ] && return 0
-  echo "   ${c_dim}위 프로세스를 내린 뒤 다시 — 이 저장소가 띄운 것이면 ./reachy.sh stop 이 쓸어낸다${c_off}"
+  # `stop` 은 감독(`python -m stage`)을 **쓸지 않는다** — `robot down` 도 stop 을 지나는데,
+  # 시연 중 한 대를 내렸다 올리려다 옆 터미널의 감독 콘솔까지 죽이면 안 된다. 그래서
+  # 8777/8778 은 stop 으로 안 비워진다고 바로 말한다(예전 문구는 stop 이 다 쓴다고 했다).
+  echo "   ${c_dim}위 프로세스를 내린 뒤 다시 — 데몬·앱(8000/8001)이면 ./reachy.sh stop 이 쓸어낸다.${c_off}"
+  echo "   ${c_dim}감독·대시보드(8777/8778)는 stop 이 건드리지 않는다 — 그 감독 터미널에서 q, 터미널이 없으면 위 PID 를 kill${c_off}"
   return 1
 }
 
-# 이 실행이 띄운 프로세스만 내린다. 늦게 띄운 것부터(앱 → 데몬) — 앱이 먼저
-# 떨어져야 데몬이 끊긴 연결로 경고를 쏟지 않는다. 뒤로 띄운 것은 SIGINT 를 무시한 채
-# 시작되므로(비대화형 셸의 `&`) Ctrl-C 가 닿지 않는다 — 여기서 TERM 을 보내야 내려간다.
+# 이 실행이 띄운 프로세스만 내린다. TERM 은 **한꺼번에** 보낸다 — 앱에는 TERM 처리가
+# 없어(파이썬 기본 동작, finally 없이 즉시 끝난다) 데몬보다 먼저 내려 얻는 것이 없다.
+# 역순(늦게 띄운 것부터)은 "내림" 줄의 순서일 뿐이다. (SDK 의 우아한 정지는 SIGINT 인데,
+# 뒤로 띄운 것은 SIGINT 를 무시한 채 시작된다 — 비대화형 셸의 `&`. 그래서 Ctrl-C 도
+# 안 닿는다 — 여기서 TERM 을 보내야 내려간다.)
 start_stop_pids() {
   local e pid rev="" kids="" n=0 alive
   [ -n "$START_PIDS" ] || return 0
@@ -988,11 +1083,13 @@ start_traps() {
 # ① 추론 3종 — 없는 것만. LLM 없이는 시연할 수 없으므로 여기서 실패하면 전체를 멈춘다.
 start_infer() {
   start_llm_stt || {
-    say_bad "추론 서버가 뜨지 않았다 — LLM·STT 없이는 시연할 수 없어 멈춘다"
+    say_bad "추론 서버를 쓸 수 없다 — LLM·STT 없이는 시연할 수 없어 멈춘다"
     echo "   ${c_dim}로그: /tmp/llamactl-8080.log (LLM) · /tmp/llamactl-stt-8090.log (STT) · $LOG_DIR/tts.log${c_off}"
     return 1
   }
-  start_tts
+  # start_tts 가 1 을 주는 것은 "떠 있는 TTS 가 원하는 주소로 안 듣는다" 하나뿐이다(자산
+  # 없음·기동 실패는 say 로 물러나고 0). 그 경우는 이유를 이미 찍었다 — 여기서 멈춘다.
+  start_tts || return 1
   STARTED_TTS=0        # 여기부터는 기동이 끝났다 — 서버를 남겨 두는 것이 정상이다
   START_INFER_UP=1
   # 앱(시뮬)·예열이 같은 백엔드를 쓰도록 물려준다 — say 로 물러났으면 그것까지.
@@ -1028,13 +1125,36 @@ start_open_dashboard() {  # url
 }
 
 # ⑦ 무대감독 — 전면. 돌아오면 그 종료코드로 끝난다(EXIT trap 이 정리한다).
+#
+# 출력을 **로그 파일에도** 남긴다($START_DIRECTOR_LOG, `./reachy.sh logs` 가 본다). 예전에는
+# 터미널에만 나가서 "로그부터 읽는다"(CLAUDE.md) 가 start 세션에서는 빈손이었다(리뷰 M7).
+# 콘솔은 그대로 산다 — 표준입력은 터미널 그대로이고, 표준출력만 tee 를 지난다:
+#   · PYTHONUNBUFFERED=1 — 출력이 파이프가 되면 flush 없는 print 가 블록 버퍼에 갇혀
+#     콘솔에 안 보인다(프롬프트 `무대감독> ` 은 input() 이 스스로 flush 한다).
+#   · tee 는 SIGINT 를 무시한다 — Ctrl-C 가 tee 를 먼저 죽이면 감독이 정리하며 찍는 줄이
+#     깨진 파이프로 사라진다. 감독이 끝나 파이프가 닫히면 tee 도 끝난다.
+#   · 종료코드는 감독 것이다(pipefail — tee 는 0 이다).
+# 파이프 뒤라 줄 편집(방향키)은 안 된다 — 콘솔은 한 글자 명령이라 잃는 것이 없다.
 start_director() {  # bind port dashboard_url
   say_step "무대감독 + 대시보드 — 이 터미널이 콘솔이다"
   start_open_dashboard "$3"
   echo "   ${c_ok}로봇이 붙으면 아래에 '붙었다' 가 뜬다. 그 뒤 s(또는 대시보드의 시작)로 시작한다.${c_off}"
   echo "   ${c_dim}s 시작 · n 다음 · p 이전 · a 비상정지 · r 재시작 · q 종료(이 실행이 띄운 것도 함께 내린다)${c_off}"
+  echo "   ${c_dim}감독 출력은 $START_DIRECTOR_LOG 에도 남는다 (./reachy.sh logs)${c_off}"
   echo
-  REACHY_DIRECTOR_HOST="$1" REACHY_DIRECTOR_PORT="$2" "$PY" -m stage
+  # 무한정 쌓이지 않게 — 2MB 넘으면 한 세대만 남기고 넘긴다(app.log 와 같다)
+  if [ -f "$START_DIRECTOR_LOG" ] && [ "$(wc -c < "$START_DIRECTOR_LOG")" -gt 2000000 ]; then
+    mv "$START_DIRECTOR_LOG" "$START_DIRECTOR_LOG.1"
+  fi
+  {
+    echo
+    echo "════════ 세션 시작 $(date '+%Y-%m-%d %H:%M:%S') ════════"
+    echo "start: 감독 $1:$2 | 대시보드 $3 | TTS_BACKEND=$TTS_BACKEND"
+    echo "환경: REACHY_AUDIENCE_LEVEL=${REACHY_AUDIENCE_LEVEL:-기본}" \
+         "REACHY_MC_UNIT=${REACHY_MC_UNIT:-없음} REACHY_DOCENT_UNIT=${REACHY_DOCENT_UNIT:-없음}"
+  } >> "$START_DIRECTOR_LOG"
+  REACHY_DIRECTOR_HOST="$1" REACHY_DIRECTOR_PORT="$2" PYTHONUNBUFFERED=1 \
+    "$PY" -m stage 2>&1 | ( trap '' INT; exec tee -a "$START_DIRECTOR_LOG" )
 }
 
 # ── --sim: 이 맥 한 대에 모의 데몬 2대 + 앱 2대 (구 scripts/sim2.sh) ──────────
@@ -1142,6 +1262,17 @@ start_robot() {  # bind director_port dashboard_port dashboard_url mc_host docen
   fi
 
   ip="$(lan_ip)" || { say_bad "맥의 LAN 주소를 찾지 못했다 — 전용 공유기 망에 붙어 있는지 확인한다"; exit 1; }
+
+  # **로봇이 붙을 바로 그 주소로** 맥에서 먼저 두드려 본다. `start --sim`·`demo` 가
+  # loopback 으로 띄워 남겨 둔 서버를 재사용하면 로봇마다 ":8080 — 로봇에서 안 보인다" 로
+  # 떨어져 원인이 방화벽처럼 보인다(리뷰 I2). 위 가드(already_up_binds_right)가 같은 것을
+  # 보지만, 로봇 config 에 써 넣을 주소가 이 $ip 이므로 마지막 확인은 이 주소로 한다.
+  local p
+  for p in 8080 8090 "$TTS_PORT"; do
+    up "http://$ip:$p/health" && continue
+    say_bad "추론 서버가 $ip:$p 에서 안 보인다 — loopback 전용(start --sim/demo 가 띄운 것) — ./reachy.sh stop 후 다시"
+    exit 1
+  done
 
   # 로봇에 넣는 감독 주소는 **이 실행이 띄우는 감독**이어야 한다. 운영자 셸에 시뮬 때의
   # REACHY_DIRECTOR_URL(ws://127.0.0.1:…)이 남아 있으면 robot_sync_config 가 그것을
