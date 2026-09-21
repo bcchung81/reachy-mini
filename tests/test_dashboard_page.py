@@ -59,3 +59,21 @@ def test_콘솔과_같은_명령_문자열을_보낸다():
     src = _src()
     for c in ['"p"', '"r"', '"n"', '"s"', '"a"', '"g "']:
         assert c in src, c
+
+
+def test_키_자동반복은_거른다():
+    """N 을 길게 누르면 브라우저가 keydown 을 반복 발화한다 — 거르지 않으면 sendCmd
+    가 여러 번 불려 섹션이 여러 개 건너뛴다(P1, 스펙 결정 2 "실수 한 번이 진행을
+    깨지 않는다" 위반)."""
+    assert "ev.repeat" in _src()
+
+
+def test_키_매핑은_물리_코드를_쓴다():
+    """`ev.key` 는 한글 입력기(IME)가 켜진 상태면 `ㄴ`·`ㅜ` 같은 자모가 되어 단축키가
+    조용히 안 먹는다 — 입력기 상태와 무관한 `ev.code`(KeyN 등)로 매핑한다(P1).
+
+    `ev.code` 라는 글자만 보면 설명 주석에도 나와 코드를 되돌려도 안 걸린다 —
+    실제로 그 값을 찾아 쓰는 자리(`KEY_CMD[ev.code]`)를 리터럴로 본다."""
+    src = _src()
+    assert "KEY_CMD[ev.code]" in src
+    assert '"KeyN"' in src
