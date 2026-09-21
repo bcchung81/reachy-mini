@@ -66,6 +66,45 @@ def history_for(role: str, history: list[dict]) -> list[dict]:
     return out
 
 
+# 경고에 싣는 잘린 조각의 최대 길이. 넘으면 **가운데를** 줄인다 — 앞만 남기면
+# 사회자 받아치기의 질문처럼 **마지막 문장**에 있는 것이 로그에서 빠진다. 그
+# 질문이 상한에 잘렸다는 것이, 감독의 "질문 유도가 없다" 경고의 원인을 가르는
+# 유일한 단서다(`Director` 의 질문 유도 가드 주석 참고).
+_WARN_CLIP = 60
+
+
+def _clip(s: str, n: int = _WARN_CLIP) -> str:
+    if len(s) <= n:
+        return s
+    half = n // 2
+    return s[:half] + "…" + s[-half:]
+
+
+def _stripped_parts(raw: str, clean: str) -> str:
+    """이름표 정리가 **무엇을 걷었는지** — 앞머리에서 뗀 것과 뒤에서 자른 것.
+
+    `strip_speaker_labels` 의 결과는 원문(앞뒤 공백 제거)의 **연속된 부분 문자열**
+    이다(앞머리를 떼고 뒤를 자를 뿐 가운데를 고치지 않는다). 그래서 그 위치를
+    찾으면 앞뒤로 걷힌 것이 나온다. `find` 는 첫 위치를 준다 — 정리된 텍스트가
+    통째로 이름 글자로만 된 병적인 경우("사회자: 사회자")에만 앞뒤 구분이
+    어긋나고, 그때도 걷힌 글자 자체는 빠짐없이 보인다. 뒤쪽(상대 턴)에 같은
+    문장이 되풀이되는 흔한 경우를 틀리지 않으려고 `rfind` 가 아니라 `find` 다.
+    남은 것이 없으면(원문이 이름표뿐) 앞뒤를 가를 수 없으니 통째로 보인다 — 빈
+    결과는 감독이 따로 "빈 문자열 — 폴백" 으로 경고한다.
+    """
+    s = raw.strip()
+    if not clean:
+        return f"남은 것 없이 전부 걷었다 {_clip(s)!r}"
+    i = s.find(clean)
+    head, tail = s[:i].strip(), s[i + len(clean):].strip()
+    parts = []
+    if head:
+        parts.append(f"앞에서 뗀 것 {_clip(head)!r}")
+    if tail:
+        parts.append(f"뒤에서 자른 것 {_clip(tail)!r}")
+    return ", ".join(parts)
+
+
 def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     """LLM 호출 하나. **직렬화한다.**
 
@@ -107,14 +146,29 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
             c.history = hist
             raw = "".join(c.chat_stream(brief, None))
         text, stripped = strip_speaker_labels(raw)
+        # 경고는 **걷어낸 부분**을 보여 준다. 예전에는 `raw[:60]`(원문 앞)을 찍어,
+        # 상대 턴이 60자 뒤에 붙은 실측 모양(docent:106)에서는 정작 새어 든 부분이
+        # 로그에 안 보였다(Task 2 리뷰 #5).
         if stripped:
-            warn(f"[{role}] 생성문에 화자 이름표/상대 턴이 섞여 걷어냈다: {raw[:60]!r}")
+            warn(
+                f"[{role}] 생성문에 화자 이름표/상대 턴이 섞여 걷어냈다 — "
+                f"{_stripped_parts(raw, text)}"
+            )
         max_sentences, max_chars = limits[role]
+        before = text
         text, capped = cap_length(text, max_sentences, max_chars)
+        # 원래→잘린 길이와 **잘린 뒷부분**을 함께 찍는다. 상한은 감독의 두 가드보다
+        # 앞에 걸린다 — 사회자의 마지막 질문 문장이 잘리면 질문 유도 가드가 "질문
+        # 유도가 없다" 고, 첫 문장만 남은 도슨트 해설은 `_warn_if_short` 가 "너무
+        # 짧다" 고 경고한다. 원인은 모델이 아니라 상한인데, 이 줄이 무엇을 잘랐는지
+        # 말하지 않으면 로그만 보고는 그 둘을 잇지 못한다(Task 2 리뷰). 잘린
+        # 뒷부분은 `cap_length` 결과가 원문의 앞부분(접두)이라 뺄셈으로 나온다.
         if capped:
+            dropped = before[len(text):].strip()
             warn(
                 f"[{role}] 생성문이 분량 상한({max_sentences}문장/{max_chars}자)을 "
-                "넘어 문장 경계에서 잘랐다"
+                f"넘어 문장 경계에서 잘랐다({len(before)}자→{len(text)}자) — "
+                f"잘린 뒷부분 {_clip(dropped)!r}"
             )
         return text
 
