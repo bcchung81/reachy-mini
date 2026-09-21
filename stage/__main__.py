@@ -10,7 +10,8 @@
     REACHY_AUDIENCE_LEVEL  관람객 수준 — 초등/중고등/일반/전문가 (기본 일반)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
     REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
-    REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만)
+    REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만.
+                           빈 값은 모든 망이 되므로 127.0.0.1 로 두고 경고한다)
     REACHY_DASHBOARD_PORT  기본 8778 (틀린 값이면 경고하고 대시보드만 빼고 돈다)
 """
 
