@@ -84,16 +84,35 @@ BARGE_IN_WAKE_MIN_SPEECH = int(os.environ.get("REACHY_BARGE_IN_WAKE_MIN_SPEECH",
 BARGE_IN_WAKE_MIN_WINDOW = int(os.environ.get("REACHY_BARGE_IN_WAKE_MIN_WINDOW", "20"))
 
 # Whisper 가 무음·잡음에서 습관적으로 뱉는 말들. 반복 토막 검사로는 안 걸린다.
+# 비교는 `_flatten()` 한 모양(공백·구두점 제거, 소문자)으로 한다 — 항목도 그
+# 모양으로 적는다. ~~"감사합니다" 와 "감사합니다." 를 따로 적는다~~ — 구두점을
+# 걷고 비교하면서 중복 항목과 "。"/"." 항목이 필요 없어졌다(빈 문자열이 된다).
 _WHISPER_FILLER = {
-    "감사합니다", "감사합니다.", "시청해주셔서감사합니다", "구독과좋아요부탁드립니다",
-    "thankyou", "thankyou.", "thanksforwatching", "you", "。", ".",
+    "감사합니다", "시청해주셔서감사합니다", "구독과좋아요부탁드립니다",
+    "thankyou", "thanksforwatching", "you",
+    # 실기 2대 리허설(2026-09-21): 마이크 최대 0.002(사실상 무음)에서 나와 관람객
+    # 질문으로 처리됐다 — 도슨트가 "다음 영상에서 다시 만나 뵙기를…" 로 답했다.
+    # "다음" 이 들어 있지만 진행 키워드 "다음" 자체는 이 목록과 **정확 일치**해야
+    # 걸리므로 막히지 않는다(tests/test_stt_filler.py).
+    "다음영상에서만나요",
+    # 같은 리허설: 한국어 관람객 앞에서 영어 한 단어로 나와 질문이 됐다.
+    "come",
 }
 
 
+def _flatten(text: str) -> str:
+    """공백·구두점을 걷고 소문자로 — 상용구 비교용. 한글은 `\\w` 라 남는다."""
+    return re.sub(r"[\W_]+", "", text.lower())
+
+
 def _filler(text: str) -> bool:
-    """내용 없는 상용구 — 무음에 가까운 입력에서 나오는 환각이다."""
-    flat = "".join(text.split()).lower()
-    return flat in _WHISPER_FILLER
+    """내용 없는 상용구 — 무음에 가까운 입력에서 나오는 환각이다.
+
+    구두점만 남는 전사(`!`, `.`)도 여기서 버린다 — 2026-09-09 실기에서 `!` 가
+    그대로 통과해 로봇이 엉뚱한 답을 했다.
+    """
+    flat = _flatten(text)
+    return not flat or flat in _WHISPER_FILLER
 
 
 def _hallucinated(text: str) -> bool:
