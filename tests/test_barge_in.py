@@ -812,6 +812,28 @@ def test_호출어_확인도_자기_목소리를_거른다(monkeypatch):
     assert hit.is_set(), "진짜 호출어가 걸리지 않았다"
 
 
+def test_호출어_확인의_빈_전사는_조용히_넘어간다(monkeypatch, capsys):
+    """전체 리뷰 M6 — `_filler` 가 이제 빈 문자열도 상용구로 본다(구두점까지
+    걷고 비교하도록 넓힌 결과, `_flatten("") == ""` 라 `not flat` 에 걸린다).
+    그 필터 앞에 빈 전사 가드가 없으면 무음 구간마다(끼어들기 호출어 확인은
+    항상 백그라운드에서 돈다) `[호출어 확인 — 상용구 무시] ''` 가 새로 찍힌다
+    — 예전에는 조용했다. 상용구(빈 문자열이 아닌 것)는 그대로 로그가 남아야
+    한다는 짝을 함께 둔다."""
+    import voice_loop as vl
+
+    importlib.reload(vl)
+    hit, busy = threading.Event(), threading.Event()
+
+    monkeypatch.setattr(vl, "transcribe", lambda utt: "")
+    vl._check_wake(np.zeros(1600, dtype=np.float32), hit, busy)
+    assert "호출어 확인" not in capsys.readouterr().out
+    assert not hit.is_set()
+
+    monkeypatch.setattr(vl, "transcribe", lambda utt: "감사합니다.")
+    vl._check_wake(np.zeros(1600, dtype=np.float32), hit, busy)
+    assert "[호출어 확인 — 상용구 무시]" in capsys.readouterr().out
+
+
 def test_호출어가_들리면_에너지가_모자라도_끊는다(monkeypatch):
     """에너지 임계에 못 미치는 작은 소리여도 '미니야' 가 확인되면 끊어야 한다.
     실측에서 사용자 목소리가 0.020 으로만 잡혀 에너지 판정이 아슬아슬했다."""

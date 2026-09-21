@@ -249,6 +249,15 @@ def _check_wake(audio, hit: threading.Event, busy: threading.Event, speaker=None
     """백그라운드에서 호출어를 확인한다. 마이크 루프는 그동안 계속 듣는다."""
     try:
         said = transcribe(audio)
+        # **빈 전사는 `_filler` 검사 앞에서 조용히 돌아간다.** `_filler` 가
+        # 구두점까지 걷고 비교하도록 넓어지면서(`_flatten("") == ""`) 빈
+        # 문자열도 `not flat` 에 걸려 상용구로 잡힌다 — 그 결과 무음 구간마다
+        # (끼어들기 호출어 확인은 항상 백그라운드에서 돈다) `[호출어 확인 —
+        # 상용구 무시] ''` 가 새로 찍힌다. 예전에는 `_has_wake("")` 가 거짓,
+        # `said.strip()` 도 거짓이라 아래 `elif` 까지 가도 아무 로그 없이
+        # 돌아갔다 — 그 "조용한 반환"과 같은 동작으로 되돌린다.
+        if not said.strip():
+            return
         if _filler(said):
             print(f"  [호출어 확인 — 상용구 무시] '{said.strip()}'", flush=True)
             return
