@@ -356,7 +356,8 @@ class Director:
             # 한 번 더 찍힌다 — 상태 검사에만 기대면 이런 자리가 조용히 는다.
             self._question_deadline = None
             if is_advance(text):
-                self._next_locked()
+                # 관람객이 넘겨 달라고 **말했다** — 마지막 큐라 못 넘기면 알려준다.
+                self._next_locked(quiet_if_last=False)
                 return
             self._answer(text)
 
@@ -644,16 +645,31 @@ class Director:
         — 운영자가 망가진 섹션을 건너뛸 길이 없었다(리뷰 A7b).
         """
         with self._lock:
-            self._next_locked()
+            self._next_locked(quiet_if_last=False)
 
-    def _next_locked(self) -> None:
+    def _next_locked(self, *, quiet_if_last: bool) -> None:
+        """다음 큐로 간다. **마지막 큐에서 무엇을 할지는 부른 쪽이 정한다.**
+
+        `quiet_if_last` 에 기본값을 두지 않는다 — 세 호출부가 각자 뜻을 밝히게
+        강제한다. 기본값을 두면 나중에 생긴 호출부가 배선을 빠뜨린 채 조용히
+        돌아(대장 「기본값 있는 인자는 배선이 끊겨도 조용히 돈다」) 경고 정책이
+        한쪽으로 새어 나간다.
+
+        - `False`(콘솔 `n`, 관람객의 "다음"): **누가 넘겨 달라고 했는데 못 넘겼다.**
+          요청한 사람에게 알려줘야 한다.
+        - `True`(침묵 자동 진행): 마지막 큐에서의 침묵은 **시연이 끝났다**는 뜻이다.
+          완전 정상 종료라 경고할 것이 없다 — 여기에 경고를 달면 19-closing 이
+          끝나고 8초 뒤 **매 시연마다** 찍혀서, 이 파일이 아끼는 진짜 신호
+          (`_ensure_visitor_cue` 의 "질문 유도가 빠졌다" 같은 것)가 그 안에 묻힌다.
+        """
         if self._machine.state in SPEAKING:
             raise TurnError(
                 f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
             )
         nxt = self._sheet.advance()
         if nxt is None:
-            self._warn("마지막 큐다 — 더 진행할 곳이 없다")
+            if not quiet_if_last:
+                self._warn("마지막 큐다 — 더 진행할 곳이 없다")
             return
         self._begin_cue(nxt)
 
@@ -706,13 +722,15 @@ class Director:
             ):
                 # 침묵이 한도를 넘었다 — 다음 섹션으로 간다. **경고하지 않는다**:
                 # 정상 동작이고, 여기에 경고를 달면 섹션마다 찍혀서 바로 위의
-                # 진짜 신호("응답이 없다")가 그 안에 묻힌다.
+                # 진짜 신호("응답이 없다")가 그 안에 묻힌다. 마지막 큐에서의
+                # 침묵도 마찬가지라 `quiet_if_last=True` 다 — 시연이 끝난 것이지
+                # 아무도 뭘 요청한 적이 없다.
                 #
-                # 먼저 끄고 부른다 — 마지막 큐면 `_next_locked()` 가 "마지막
-                # 큐다" 만 경고하고 상태를 안 바꾸므로, 안 끄면 그 경고가
-                # tick 마다(0.5초에 한 번) 반복된다.
+                # 기한은 **부르기 전에 끈다.** 마지막 큐면 `_next_locked()` 가
+                # 상태를 안 바꾸고 돌아오므로, 안 끄면 이 갈래가 tick 마다
+                # (0.5초에 한 번) 시연이 끝날 때까지 계속 돈다.
                 self._question_deadline = None
-                self._next_locked()
+                self._next_locked(quiet_if_last=True)
 
     def abort(self) -> None:
         with self._lock:

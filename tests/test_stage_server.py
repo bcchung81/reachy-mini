@@ -488,3 +488,41 @@ def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달�
     finally:
         srv.shutdown()
         t.join(timeout=2)
+
+
+def test_tick_이_터져도_감시_루프는_계속_돌고_소리를_낸다():
+    """**감시 루프는 한 번 터졌다고 죽지 않는다.**
+
+    예전에는 `tick_forever` 가 무방비였다. `director.tick()` 이 `force_listening`
+    + `_emit` 뿐이던 동안에는 잃는 것이 타임아웃 복구 하나였지만, 침묵 자동
+    진행이 들어오면서 이 루프가 **진행의 임계경로**가 됐다 — 침묵 갈래는
+    `_next_locked()` → `_begin_cue()` 까지 돌며 `_warn`(기본값이 `print` 라
+    stdout 이 닫히면 `ValueError`), `_spawn_generate` → `Thread().start()`
+    (`RuntimeError: can't start new thread`), `_emit` 을 거친다.
+
+    스레드가 죽으면 **타임아웃 복구와 침묵 자동 진행이 동시에 영구 정지**하고,
+    관람객은 "다음" 이라는 낱말을 모르므로 시연이 그 자리에서 굳는다 — 자동
+    진행이 없애려던 바로 그 상태다. 그래서 삼키되 **반드시 소리 낸다**.
+
+    루프가 안 죽는 것(횟수)과 소리를 내는 것(경고)을 **둘 다** 본다. 경고 없이
+    삼키기만 하면 조용히 감시가 헛도는 것을 아무도 모른다.
+    """
+    calls: list[int] = []
+    warnings: list[str] = []
+    s = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 대사",
+        warn=warnings.append,
+    )
+
+    def boom():
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("can't start new thread")
+
+    s.director.tick = boom
+    # `interval_s=0` — 잠들지 않는다. 멈춤 조건이 호출 횟수라 무한 루프가 아니다.
+    s.tick_forever(0.0, lambda: len(calls) >= 3)
+
+    assert len(calls) >= 3, f"첫 예외에서 감시 루프가 죽었다(호출 {len(calls)}회)"
+    assert any("tick 에서 오류" in w and "RuntimeError" in w for w in warnings), warnings

@@ -199,6 +199,27 @@ class StageServer:
         return _ws_serve(self.handler, host, port)
 
     def tick_forever(self, interval_s: float, should_stop: Callable[[], bool]) -> None:
+        """감시 루프. **한 번 터졌다고 죽지 않는다.**
+
+        예전에는 무방비였다. `director.tick()` 이 하는 일이 `force_listening` +
+        `_emit` 뿐이던 동안에는 잃는 것이 타임아웃 복구 하나였는데, 침묵 자동
+        진행이 들어오면서 이 루프가 **진행의 임계경로**가 됐다 — 침묵 갈래는
+        `_next_locked()` → `_begin_cue()` 까지 돌며 캐시 조회, `_warn`(기본값이
+        `print` 라 stdout 이 닫히면 `ValueError`), `_remember`,
+        `_spawn_generate` → `Thread().start()`(`RuntimeError: can't start new
+        thread`), `_emit` 을 거친다.
+
+        여기서 예외가 새면 스레드가 죽고 **타임아웃 복구와 자동 진행이 동시에
+        영구 정지한다.** 관람객은 "다음" 이라는 낱말을 모르므로 시연이 그 자리에서
+        굳는다 — 자동 진행이 없애려던 바로 그 상태다. 그래서 삼키되 **반드시
+        소리 낸다**: 조용히 성능이 떨어진 채 도는 것이 가장 나쁘다.
+        """
         while not should_stop():
-            self.director.tick()
+            try:
+                self.director.tick()
+            except Exception as exc:
+                self._warn(
+                    f"tick 에서 오류({type(exc).__name__}: {exc}) — "
+                    "감시 루프는 계속 돈다(타임아웃 복구·침묵 진행을 잃지 않는다)"
+                )
             time.sleep(interval_s)

@@ -2076,40 +2076,62 @@ def test_유령_발화_종료는_침묵_기한을_끄지_않는다():
     assert h.says() == [("mc", "사회자 둘째 대사")], h.says()
 
 
-def test_마지막_큐에서_침묵이_이어져도_경고는_한_번뿐이다():
-    """마지막 큐에서는 넘어갈 데가 없다 — 그래도 서버 루프는 0.5초마다 tick 한다.
-    기한을 끄지 않고 `_next_locked()` 를 부르면 "마지막 큐다" 가 초당 두 번씩
-    찍혀 로그가 쓸모없어진다(그 로그로 시연 중 문제를 찾는다)."""
-    h = Harness()
+def _마지막_큐_듣기까지(h):
+    """기본 2큐 시트에서 마지막 큐(c2)의 LISTENING 까지 몰고 간다."""
     h.d.start()
     h.ended("mc", "c1"); h.ended("docent", "c1:docent")
-    h.d.on_heard("다음")                    # c2 — 기본 시트의 마지막 큐
+    h.d.on_heard("다음")
     h.ended("mc", "c2"); h.ended("docent", "c2:docent")
+    assert h.d.state is State.LISTENING
+
+
+def test_마지막_큐에서_침묵으로_끝나면_경고하지_않는다():
+    """19-closing 이 끝나고 8초 뒤는 **완전 정상 종료**다 — 아무도 뭘 요청한
+    적이 없다. 여기에 경고를 달면 **매 시연마다** 찍혀서, 이 파일이 아끼는
+    진짜 신호("질문 유도가 빠졌다" 같은 것)가 그 안에 묻힌다.
+
+    **부정 단언이지만 공허하지 않다** — 바로 아래 짝 테스트
+    (`test_마지막_큐에서_콘솔_n_은_여전히_경고한다`)가 그 경고 경로가 살아 있고
+    도달 가능함을 값으로 증명한다. 둘이 같이 있어야 "갈랐다" 가 박힌다.
+    """
+    h = Harness()
+    _마지막_큐_듣기까지(h)
     h.clear()
     h.warnings.clear()
     h.clock.t = 8.1
     h.d.tick()
     assert h.says() == [], h.says()
+    assert not any("마지막" in w for w in h.warnings), h.warnings
+    # 기한을 소비했는지 값으로 본다. 안 끄면 이 갈래가 tick 마다(0.5초에 한 번)
+    # 시연이 끝날 때까지 계속 도는데, 마지막 큐에서는 경고가 사라져 **밖으로는
+    # 아무 흔적도 안 남는다** — 그래서 필드를 직접 본다.
+    assert h.d._question_deadline is None, "침묵 갈래가 기한을 소비하지 않았다"
     h.clock.t = 30.0
     h.d.tick()
-    assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
+    assert not any("마지막" in w for w in h.warnings), h.warnings
+
+
+def test_마지막_큐에서_콘솔_n_은_여전히_경고한다():
+    """운영자가 눌렀는데 아무 일도 안 일어났다 — 그건 알려줘야 한다.
+    침묵 자연 종료와 **다른 사건**이라 같은 `_next_locked()` 를 다르게 부른다."""
+    h = Harness()
+    _마지막_큐_듣기까지(h)
+    h.warnings.clear()
+    h.d.next()
+    assert any("마지막" in w for w in h.warnings), h.warnings
 
 
 def test_마지막_큐에서_진행_신호를_받으면_침묵_기한도_꺼진다():
-    """`_next_locked()` 는 마지막 큐에서 경고만 하고 **상태를 안 바꾼다** —
-    LISTENING 에 그대로 머무는 갈래다. `on_heard` 가 기한을 안 끄면 관람객이
-    "다음" 이라고 말한 8초 뒤에 같은 경고가 한 번 더 찍힌다."""
+    """`on_heard` 의 `is_advance` 갈래는 마지막 큐에서 **LISTENING 에 그대로
+    머문 채** 돌아온다 — `on_heard` 를 지나고도 상태가 안 바뀌는 유일한 자리다.
+    기한을 끄는 줄이 `is_advance` 검사 **위**에 있어야 이 갈래까지 덮는다."""
     h = Harness()
-    h.d.start()
-    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
-    h.d.on_heard("다음")
-    h.ended("mc", "c2"); h.ended("docent", "c2:docent")
+    _마지막_큐_듣기까지(h)
     h.warnings.clear()
     h.d.on_heard("다음")                    # 마지막 큐 — 경고 한 번
     assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
-    h.clock.t = 8.1
-    h.d.tick()
-    assert len([w for w in h.warnings if "마지막" in w]) == 1, h.warnings
+    assert h.d.state is State.LISTENING     # 상태가 안 바뀌었다
+    assert h.d._question_deadline is None, "진행 신호를 받고도 침묵 기한이 살아 있다"
 
 
 def test_타임아웃_복구_뒤에도_침묵이_이어지면_다음_큐로_간다():
@@ -2205,7 +2227,12 @@ def test_질문_응답이_끝나면_사회자가_다시_묻는다():
     assert h.says() == [("mc", QUESTION_PROMPTS[0])], h.says()
     assert h.d.state is State.MC_SPEAKING
     # 불변식 ① — 다시 묻는 동안에는 어느 마이크도 열리지 않는다.
-    assert all(open_ is False for _, open_ in h.mics()), h.mics()
+    #
+    # **`all(...)` 로 쓰지 않는다.** 마이크 지시가 하나도 안 나가면 그 단언은
+    # 공허하게 참이 된다(대장 「부정·공허 단언은 죽은 코드를 못 잡는다」) —
+    # `cmds` 의 마이크 열기를 `coalesce` 가 덮는지가 정확히 이 테스트의 관심사인데,
+    # 지시가 통째로 사라져도 통과해 버린다. 나간 것을 값으로 못박는다.
+    assert h.mics() == [("mc", False), ("docent", False)], h.mics()
 
 
 def test_다시_묻는_말이_끝나야_듣기로_가고_침묵_기한이_걸린다():
@@ -2263,6 +2290,36 @@ def test_다시_묻는_말은_돌아가며_쓴다():
         seen.append(h.says()[0][1])
         h.ended("mc", "c1:reask")
     assert seen[0] != seen[1], seen
+
+
+def test_받아치기_안내와_다시_묻는_말이_커서를_함께_쓴다():
+    """**한 섹션 안에서 같은 문장이 두 번 나가면 안 된다.**
+
+    두 자리가 모두 `QUESTION_PROMPTS` 에서 꺼낸다: 받아치기에 질문 유도가 빠졌을
+    때 붙이는 것(`_ensure_visitor_cue`)과 도슨트 답 뒤에 다시 묻는 것(`:reask`).
+    커서(`_q_i`)를 따로 두면 둘 다 0번을 집어, 관람객은 받아치기 끝에
+    "궁금한 점 있으실까요?" 를 듣고 질문에 답을 들은 직후 **똑같은 문장**을 또
+    듣는다 — 돌아가며 쓰는 이유(녹음처럼 들린다)가 바로 이 자리에서 무너진다.
+    """
+    from stage.cues import QUESTION_PROMPTS
+
+    h = Harness(generate=lambda role, brief, hist: "그렇군요. 저도 놀랐습니다.",
+                after=("고정 받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.clear()
+    h.ended("docent", "c1:docent")            # 받아치기 — 창구 안내가 붙는다
+    after_line = [t for r, t in h.says() if r == "mc"][0]
+    used = [q for q in QUESTION_PROMPTS if q in after_line]
+    assert len(used) == 1, (after_line, used)  # 안내가 실제로 붙었다
+    h.ended("mc", "c1:after")
+    h.d.on_heard("마르코니가 누구예요")
+    h.ended("mc", "c1:ack")
+    h.clear()
+    h.ended("docent", "c1:qa")                # 다시 묻기
+    reask = h.says()[0][1]
+    assert reask in QUESTION_PROMPTS, reask
+    assert reask != used[0], (after_line, reask)
 
 
 def test_다시_묻는_말도_이력에_남는다():
