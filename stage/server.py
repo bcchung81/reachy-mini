@@ -27,10 +27,15 @@ class StageServer:
         mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
         docent_min_chars: int = MIN_CHARS,
+        hub=None,
     ) -> None:
         self._warn = warn
         self._conns: dict[str, object] = {}
         self._lock = threading.Lock()
+        # 대시보드 허브 — **덕 타이핑**(`publish(kind, **fields)`만 있으면 된다).
+        # `None`(기본값)이면 아무것도 안 한다 — 하브 도입 전 호출부·테스트가
+        # 그대로 통과해야 한다.
+        self._hub = hub
         # `mc_lines`/`level_name`/`docent_min_chars` 를 그대로 `Director` 로
         # 흘려보낸다 — 여기서 기본값으로 삼키면(예: 인자를 받고 안 넘기면)
         # `Director` 는 늘 기본값(빈 캐시·"일반"·40자)으로 돌고, `main()` 이
@@ -43,6 +48,12 @@ class StageServer:
             docent_min_chars=docent_min_chars,
         )
 
+    def _publish(self, kind: str, **fields) -> None:
+        """대시보드 허브로 흘린다. **감독이 락을 쥔 채 부르는 자리**(`_send`)에서도
+        불리므로 허브는 쌓기만 한다(`stage/dashboard_hub.py`). 허브가 없으면 아무것도 안 한다."""
+        if self._hub is not None:
+            self._hub.publish(kind, **fields)
+
     # ── 전송 ──────────────────────────────────────────────────────
     def _send(self, role: str, cmd: Command) -> None:
         with self._lock:
@@ -53,6 +64,9 @@ class StageServer:
             return
         try:
             ws.send(encode(cmd.type, **cmd.fields))
+            # 성공한 뒤에만 흘린다 — 실패하면 위 경고가 이미 남고, 허브에 "보냈다"고
+            # 잘못 남기지 않는다(감독이 락을 쥔 채 부르는 자리라 여기서는 publish 만 한다).
+            self._publish("sent", role=role, type=cmd.type, fields=dict(cmd.fields))
         except Exception as exc:
             self._warn(f"[{role}] 전송 실패({type(exc).__name__}: {exc})")
 
@@ -113,6 +127,7 @@ class StageServer:
                         except Exception as exc:  # noqa: BLE001
                             self._warn(f"[{role}] 옛 연결을 닫지 못했다: {exc}")
                     self._warn(f"[{role}] 붙었다 (version={msg.get('version')})")
+                    self._publish("connect", role=role, version=msg.get("version"))
                     self.director.on_connect(role)
                     continue
 
@@ -130,6 +145,7 @@ class StageServer:
                     if is_current:
                         del self._conns[role]
                 if is_current:
+                    self._publish("disconnect", role=role)
                     self.director.on_disconnect(role)
                 self._warn(f"[{role}] 연결이 끊어졌다")
 
@@ -176,12 +192,18 @@ class StageServer:
             text = self._str_field(role, msg, "text")
             if text is None:
                 return
+            # 검증을 통과해 감독에게 넘기기 **직전**에 남긴다 — 사회자가
+            # LISTENING 이 아니어서 감독이 이 heard 를 버리더라도(위 listener
+            # 게이트는 이미 통과했다) 운영자는 무엇이 들렸는지 대시보드에서
+            # 봐야 한다.
+            self._publish("recv", role=role, type="heard", fields={"text": text})
             self.director.on_heard(text)
         elif t in ("speaking_ended", "speaking_started"):
             cue_id = self._str_field(role, msg, "cue_id")
             seq, ok = self._seq_field(role, msg)
             if cue_id is None or not ok:
                 return
+            self._publish("recv", role=role, type=t, fields={"cue_id": cue_id, "seq": seq})
             if t == "speaking_ended":
                 self.director.on_speaking_ended(role, cue_id, seq)
             else:
@@ -191,7 +213,9 @@ class StageServer:
                 # 든 시간이 전부 발화 예산에서 깎였다(리뷰 I3).
                 self.director.on_speaking_started(role, cue_id, seq)
         elif t == "error":
-            self.director.on_error(role, str(msg.get("where", "")), str(msg.get("detail", "")))
+            where, detail = str(msg.get("where", "")), str(msg.get("detail", ""))
+            self._publish("recv", role=role, type="error", fields={"where": where, "detail": detail})
+            self.director.on_error(role, where, detail)
         else:
             self._warn(f"[{role}] 로봇이 보낼 수 없는 메시지다: {t}")
 

@@ -543,3 +543,99 @@ def test_tick_이_터져도_감시_루프는_계속_돌고_소리를_낸다():
 
     assert len(calls) >= 3, f"첫 예외에서 감시 루프가 죽었다(호출 {len(calls)}회)"
     assert any("tick 에서 오류" in w and "RuntimeError" in w for w in warnings), warnings
+
+
+# ── Task 3 — 로봇 서버의 송수신·접속을 대시보드 허브로 흘린다 ──────────────
+
+
+class 기록허브:
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    def publish(self, kind, **fields):
+        self.events.append((kind, fields))
+
+    def kinds(self):
+        return [k for k, _ in self.events]
+
+
+@pytest.fixture
+def server_hub():
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    hub = 기록허브()
+    s = StageServer(sheet, generate=lambda role, brief, history: "도슨트 대사",
+                     warn=lambda m: None, hub=hub)
+    s.hub = hub
+
+    from websockets.sync.server import serve as ws_serve
+    srv = ws_serve(s.handler, "127.0.0.1", 0)
+    s.port = srv.socket.getsockname()[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    yield s
+    srv.shutdown()
+    t.join(timeout=2)
+
+
+def test_허브에_접속과_보낸_지시가_남는다(server_hub):
+    with connect(url_of(server_hub)) as ws:
+        hello(ws, "mc")                       # 접속 직후 mic 재동기화 한 통
+        assert ("connect", {"role": "mc", "version": "1.9.0"}) in server_hub.hub.events
+        sent = [f for k, f in server_hub.hub.events if k == "sent"]
+        assert sent and sent[-1]["role"] == "mc" and sent[-1]["type"] == "mic"
+        assert sent[-1]["fields"] == {"open": False}
+
+
+def test_허브에_받은_관람객_발화와_발화_종료가_남는다(server_hub):
+    """발화 흐름은 이 파일의 기존 종단 테스트(시작 → 사회자 say → ended)를 따라 만든다.
+    heard 는 사회자가 LISTENING 일 때만 감독에게 가지만, **허브에는 검증을 통과한
+    순간 남는다**(감독이 버려도 운영자는 무엇이 들렸는지 봐야 한다)."""
+    with connect(url_of(server_hub)) as mc, connect(url_of(server_hub)) as docent:
+        start_and_drain(server_hub, mc, docent)
+        seq = _LAST_SAY_SEQ[id(mc)]
+        ended(mc)
+
+        for _ in range(60):
+            if any(k == "recv" and f.get("type") == "speaking_ended"
+                   for k, f in server_hub.hub.events):
+                break
+            time.sleep(0.05)
+        recv_ = [f for k, f in server_hub.hub.events if k == "recv"]
+        assert {"role": "mc", "type": "speaking_ended",
+                "fields": {"cue_id": "c1", "seq": seq}} in recv_
+
+        # 사회자 마이크가 열릴 때까지 흐름을 이어간다(도슨트 몫 완료) —
+        # heard 는 LISTENING 에서만 감독에게 가지만 허브 기록은 검증만 통과하면
+        # 남으므로, 실제로 그 자리까지 가서 관람객 발화 한 건을 넣어 본다.
+        drain(docent, 3)
+        drain(mc, 1)
+        ended(docent, "c1:docent")
+        drain(mc, 1)                          # 사회자 마이크가 열렸다
+
+        mc.send(json.dumps({"type": "heard", "text": "마르코니가 누구예요"}))
+        for _ in range(60):
+            if any(k == "recv" and f.get("type") == "heard"
+                   for k, f in server_hub.hub.events):
+                break
+            time.sleep(0.05)
+        recv_ = [f for k, f in server_hub.hub.events if k == "recv"]
+        assert {"role": "mc", "type": "heard",
+                "fields": {"text": "마르코니가 누구예요"}} in recv_
+        drain(mc, 3)                          # 확인 멘트(mic·gaze·say) 소비
+        drain(docent, 1)
+
+
+def test_허브에_끊김이_남는다(server_hub):
+    with connect(url_of(server_hub)) as ws:
+        hello(ws, "mc")
+    for _ in range(50):
+        if "disconnect" in server_hub.hub.kinds():
+            break
+        time.sleep(0.02)
+    assert ("disconnect", {"role": "mc"}) in server_hub.hub.events
+
+
+def test_허브가_없어도_지금처럼_돈다(server):
+    """`hub=None`(기본값) — 기존 fixture 그대로. 한 번 붙었다 떨어져도 예외가 없다."""
+    with connect(url_of(server)) as ws:
+        hello(ws, "mc")
