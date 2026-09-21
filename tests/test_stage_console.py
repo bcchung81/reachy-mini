@@ -218,3 +218,33 @@ def test_발화_중_n_은_중단하고_다음으로_간다():
     h = Harness()
     h.run(["s", "n", "q"])
     assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_g_는_먼저_멈추고_그_큐로_간다():
+    import stage.console as console
+    calls = []
+
+    class 가짜감독:
+        def abort(self):
+            calls.append("abort")
+
+        def goto(self, cue_id):
+            calls.append(("goto", cue_id))
+
+    console.dispatch(가짜감독(), "g 07-maritime", out=lambda m: None)
+    assert calls == ["abort", ("goto", "07-maritime")]
+
+
+def test_dispatch_는_콘솔과_같은_n_경로다():
+    import stage.console as console
+    calls = []
+
+    class 가짜감독:
+        def abort(self):
+            calls.append("abort")
+
+        def next(self):
+            calls.append("next")
+
+    console.dispatch(가짜감독(), "n", out=lambda m: None)
+    assert calls == ["abort", "next"]

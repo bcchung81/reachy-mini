@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.cues import Cue, CueSheet
 from stage.director import CHARS_PER_SEC, TIMEOUT_MARGIN_S, Director, UnitMismatch
-from stage.machine import State
+from stage.machine import State, TurnError
 from stage.mc_cache import cache_key
 
 
@@ -2434,3 +2434,89 @@ def test_다시_묻는_말도_이력에_남는다():
     said = h.says()[0][1]
     assert h.d.history[-1] == {"role": "assistant", "content": f"사회자: {said}"}
     assert said in QUESTION_PROMPTS, said
+
+
+# ── (E) 대시보드가 쓰는 조회·이동 ─────────────────────────────────────
+
+
+def test_스냅샷은_현재_큐와_상태와_수준을_준다():
+    h = Harness(level_name="초등")          # 기본값 "일반" 이 아닌 값 — 함정 3
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    s = h.d.snapshot()
+    assert (s["cue_id"], s["cue_index"], s["cue_count"]) == ("c1", 0, 2)
+    assert (s["state"], s["speaking_role"]) == ("mc_speaking", "mc")
+    assert s["connected"] == ["docent", "mc"] and s["solo_role"] is None
+    assert s["level"] == "초등"
+    assert s["question_wait_s"] is None      # 말하는 중에는 침묵 기한이 없다
+    assert s["rejected"] == []
+
+
+def test_스냅샷의_침묵_남은_시간은_듣는_중에만_센다():
+    """`test_침묵이_한도를_넘으면_다음_큐로_간다` 의 준비 과정을 그대로 따라
+    LISTENING + 침묵 기한이 걸린 상태를 만든 뒤, 시계를 3초 민다.
+    기대값은 리터럴(8.0 - 3.0) — QUESTION_WAIT_S 를 import 하지 않는다(함정 5)."""
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")       # 받아치기 없는 큐 → 곧장 듣기, 기한 0 + 8.0
+    assert h.d.state is State.LISTENING
+    h.clock.t += 3.0
+    s = h.d.snapshot()
+    assert s["state"] == "listening"
+    assert s["question_wait_s"] == pytest.approx(5.0)
+    assert s["question_wait_total_s"] == pytest.approx(8.0)
+    # **멈춘 뒤에는 세지 않는다.** `abort()` 는 발화 기한만 끄고 침묵 기한은
+    # 남기지만, `tick()` 은 LISTENING 에서만 그것을 보므로 실제로는 안 걸린
+    # 기한이다. 상태 조건을 빼면 멈춘 화면에 "침묵 5초 뒤 다음 큐로" 가 뜬다.
+    h.d.abort()
+    s = h.d.snapshot()
+    assert s["state"] == "idle"
+    assert s["question_wait_s"] is None
+
+
+def test_큐_목록은_id_와_제목과_주제를_순서대로_준다():
+    """기본 시트는 선택 필드 `topic` 을 비워 둔다 — 그러면 `topic` 은 `title` 로 채운다."""
+    h = Harness()
+    assert h.d.cue_list() == [
+        {"id": "c1", "title": "첫째", "topic": "첫째"},
+        {"id": "c2", "title": "둘째", "topic": "둘째"},
+    ]
+
+
+def test_큐_목록은_주제가_있으면_제목과_따로_준다():
+    """`topic` 이 채워진 큐는 폴백하지 않는다 — 제목과 주제가 서로 다른 값으로 나온다."""
+    h = Harness(sheet=CueSheet([
+        Cue("a", "짧은이름", "m", "d", "partner", topic="긴 주제 문장"),
+    ]))
+    assert h.d.cue_list() == [{"id": "a", "title": "짧은이름", "topic": "긴 주제 문장"}]
+
+
+def test_goto_는_그_큐의_여는_대사부터_다시_시작한다():
+    h = Harness()
+    h.d.start()
+    h.d.abort()
+    h.clear()
+    h.d.goto("c2")
+    assert h.says() == [("mc", "사회자 둘째 대사")]
+    assert h.d.snapshot()["cue_id"] == "c2"
+
+
+def test_goto_는_말하는_중이면_커서를_옮기기_전에_거절한다():
+    h = Harness()
+    h.d.start()                              # 사회자가 c1 을 말하는 중
+    with pytest.raises(TurnError):
+        h.d.goto("c2")
+    assert h.d.snapshot()["cue_id"] == "c1"  # 커서가 안 움직였다
+
+
+def test_goto_모르는_큐는_경고하고_아무것도_하지_않는다():
+    h = Harness()
+    h.d.start()
+    h.d.abort()
+    h.clear()
+    h.warnings.clear()
+    h.d.goto("없는큐")
+    assert h.says() == []
+    assert any("모르는 큐" in w for w in h.warnings), h.warnings

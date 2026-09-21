@@ -704,6 +704,75 @@ class Director:
                 return
             self._begin_cue(prev)
 
+    def goto(self, cue_id: str) -> None:
+        """지정한 큐로 가서 처음부터 진행한다 — 대시보드 런다운의 이동(수동 오버라이드).
+
+        콘솔 `g` 가 `n`·`p`·`r` 처럼 먼저 `abort()` 한다. **커서를 옮기기 전에
+        거절한다**: `previous()` 는 커서를 먼저 옮긴 뒤 `_begin_cue` 에서 거절당해
+        커서만 움직인 채 남을 수 있는데, 이 메서드에는 그 틈을 만들지 않는다.
+        """
+        with self._lock:
+            if self._machine.state in SPEAKING:
+                raise TurnError(
+                    f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
+                )
+            i = self._sheet.find(cue_id)
+            if i is None:
+                self._warn(f"모르는 큐다: {cue_id!r} — 이동하지 않는다")
+                return
+            self._begin_cue(self._sheet.seek(i))
+
+    def cue_list(self) -> list[dict]:
+        """런다운용 큐 목록. 큐시트는 기동 뒤 바뀌지 않으므로 락이 필요 없다.
+
+        **키가 둘인 이유**: `title` 은 `load_cues` 가 비어 있지 않은 문자열로
+        강제하는 짧은 이름(“해상무선통신”)이라 런다운 한 줄에 맞는다. `topic` 은
+        스펙의 `hello.cues: [{id, topic}]` 계약 키이고, 큐시트에서는 조사 주제
+        문장(최대 50자 남짓)이다 — 둘은 다른 값이라 하나로 합치지 않는다.
+
+        **`topic` 이 비면 `title` 로 채운다.** `topic` 은 큐시트의 **선택** 필드라
+        (`load_cues` 가 빠지면 `""` 로 둔다) 그대로 주면 런다운·헤더에 빈 칸이
+        생긴다 — 운영자가 어느 큐인지 못 읽는다. 품질이 떨어지는 폴백이 아니라
+        스키마가 허용한 상태를 표시하는 방법이므로 경고하지 않는다(대시보드가
+        붙을 때마다 부르므로 경고를 달면 접속마다 같은 줄이 찍힌다).
+        """
+        return [
+            {"id": c.id, "title": c.title, "topic": c.topic or c.title}
+            for c in self._sheet.cues()
+        ]
+
+    def snapshot(self) -> dict:
+        """대시보드가 그릴 현재 상태 — **락을 잠깐 쥐고** 한 시점의 값을 모은다.
+
+        ⚠️ 감독이 락을 쥔 채 부르는 자리(`StageServer._send`, 경고 콜백)에서
+        부르면 교착이다(`threading.Lock` 은 재진입이 안 된다). 대시보드 서버의
+        펌프 스레드가 락 밖에서 주기적으로 부른다.
+
+        침묵 남은 시간은 **LISTENING 일 때만** 준다 — `abort()` 는 발화 기한만
+        끄므로 멈춘 뒤에도 `_question_deadline` 이 남을 수 있는데, 그 값은
+        `tick()` 이 LISTENING 에서만 보므로 실제로는 안 걸린 기한이다.
+        """
+        with self._lock:
+            wait = None
+            if (
+                self._question_deadline is not None
+                and self._machine.state is State.LISTENING
+            ):
+                wait = max(0.0, self._question_deadline - self._now())
+            return {
+                "cue_index": self._sheet.index,
+                "cue_id": self._sheet.current().id,
+                "cue_count": len(self._sheet.cues()),
+                "state": self._machine.state.value,
+                "speaking_role": self._machine.speaking_role,
+                "question_wait_s": wait,
+                "question_wait_total_s": QUESTION_WAIT_S,
+                "connected": sorted(self._connected),
+                "solo_role": self.solo_role,
+                "rejected": sorted(self._rejected),
+                "level": self._level_name,
+            }
+
     def tick(self) -> None:
         """기한 감시. 서버 루프가 주기적으로 부른다. **기한은 두 종류다.**
 

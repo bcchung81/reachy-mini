@@ -596,3 +596,38 @@ def test_위치_지시어는_고정_안내_문구에도_없다():
     for line in (*QUESTION_PROMPTS, ADVANCE_HINT, *QA_ACK_LINES):
         for w in _DEIXIS:
             assert w not in line, f"{line!r} 에 위치 지시어 {w!r}"
+
+
+# ── 대시보드 런다운이 쓰는 조회·이동 ────────────────────────────────
+
+
+def _시트3():
+    return CueSheet([
+        Cue("a", "가", "m", "d", "partner"),
+        Cue("b", "나", "m", "d", "partner"),
+        Cue("c", "다", "m", "d", "partner"),
+    ])
+
+
+def test_큐_id_로_위치를_찾는다():
+    s = _시트3()
+    assert s.find("c") == 2
+    assert s.find("없음") is None
+
+
+def test_seek_는_커서를_옮기고_그_큐를_준다():
+    s = _시트3()
+    assert s.seek(2).id == "c"
+    assert s.index == 2 and s.current().id == "c"
+
+
+def test_seek_범위_밖이면_소리_내서_실패하고_커서는_그대로다():
+    s = _시트3()
+    s.seek(1)
+    with pytest.raises(IndexError):
+        s.seek(3)
+    assert s.index == 1
+
+
+def test_cues_는_전체를_순서대로_준다():
+    assert [c.id for c in _시트3().cues()] == ["a", "b", "c"]

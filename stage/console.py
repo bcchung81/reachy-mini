@@ -11,6 +11,7 @@ from stage.director import Director
 HELP = """
   n  다음 큐로   |  p  이전 큐로     |  r  현재 큐 다시  |  s  시작
   a  즉시 중단   |  ?  도움말        |  q  종료
+  g <큐id>  그 큐로 이동
 """
 
 
@@ -43,7 +44,7 @@ def run_console(director: Director, read=input, out=print, block=block_forever) 
         if cmd in ("q", "quit"):
             return
         try:
-            _dispatch(director, cmd, out)
+            dispatch(director, cmd, out)
         except Exception as exc:  # noqa: BLE001
             # **여기서 예외가 새면 무대감독이 통째로 죽는다.**
             # `__main__.main()` 의 finally 가 서버를 내리기 때문이다. 가장
@@ -54,7 +55,8 @@ def run_console(director: Director, read=input, out=print, block=block_forever) 
             out(f"  거절됨: {exc}")
 
 
-def _dispatch(director: Director, cmd: str, out) -> None:
+def dispatch(director: Director, cmd: str, out) -> None:
+    """콘솔 명령 하나 — **대시보드도 이 함수를 부른다**, 명령 경로를 하나로 둔다."""
     if cmd == "s":
         director.start()
     elif cmd == "n":
@@ -74,6 +76,10 @@ def _dispatch(director: Director, cmd: str, out) -> None:
         director.start()
     elif cmd == "a":
         director.abort()
+    elif cmd.startswith("g "):
+        # 대시보드 런다운의 이동. `n`·`p`·`r` 과 같은 모양으로 먼저 멈춘다.
+        director.abort()
+        director.goto(cmd[2:].strip())
     elif cmd == "?":
         out(HELP)
     elif cmd:

@@ -320,3 +320,22 @@ class CueSheet:
 
     def reset(self) -> None:
         self._i = 0
+
+    def cues(self) -> tuple[Cue, ...]:
+        """전체 큐 — 대시보드 런다운이 목록을 그린다. 바깥에서 못 바꾸게 튜플로 준다."""
+        return tuple(self._cues)
+
+    def find(self, cue_id: str) -> int | None:
+        """큐 id 의 위치. 없으면 None — 호출자가 경고한다."""
+        for i, c in enumerate(self._cues):
+            if c.id == cue_id:
+                return i
+        return None
+
+    def seek(self, index: int) -> Cue:
+        """커서를 옮긴다. 범위 밖이면 IndexError 이고 **커서는 그대로다** — 조용히
+        끝에 붙이면 엉뚱한 섹션이 시작돼도 아무도 모른다."""
+        if not 0 <= index < len(self._cues):
+            raise IndexError(f"큐 위치 {index} 는 0..{len(self._cues) - 1} 밖이다")
+        self._i = index
+        return self._cues[index]
