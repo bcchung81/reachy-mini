@@ -34,6 +34,10 @@
     overflow-y: auto;
   }
   button { font-family: inherit; cursor: pointer; }
+  /* 단독 모드에서 잠기는 버튼들(진행 제어·확인 바·런다운 행) 공통 시각 표시.
+     `disabled` 하나로 클릭도 막히고(브라우저 기본) 눈에도 "지금 못 누른다"가 보여야
+     한다 — 안 그러면 운영자가 왜 안 먹히는지 화면만 봐서는 모른다. */
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
   .mono, .cue-label, .cue-topic, .cue-num, .cue-tag, .log-time, .log-text,
   kbd, .cam-label, .mic, .auto-head span {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -61,6 +65,21 @@
     font-size: 12px; color: #6B7684; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; max-width: 320px;
   }
+  /* 운영 모드 토글(팟캐스트/단독) — 제목 바로 옆(헤더 왼쪽)에 둔다. 전환이 발화를
+     멈추는 무거운 조작이라 오른쪽의 관람객 수준 버튼(가벼운 조작, 다음 큐부터 적용)과
+     헷갈리지 않게 자리를 뗀다. 레벨 버튼과 같은 배지 크기로 헤더 56px 를 넘지 않는다. */
+  .mode-group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  /* [hidden] 만으로는 위 flex 규칙에 밀린다 — .level-pending-text[hidden] 과 같은 이유로
+     명시한다. hello.modes 가 없는 구버전 서버에서는 이 컨테이너 자체를 숨긴다. */
+  .mode-group[hidden] { display: none; }
+  .mode-btn {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; line-height: 1.3;
+  }
+  .mode-btn.applied { background: #4CC3D9; border-color: #4CC3D9; color: #05070A; }
+  .mode-note { font-size: 11px; color: #F0A64A; white-space: nowrap; flex: 0 0 auto; }
+  .mode-note[hidden] { display: none; }
+
   .level-group { display: flex; align-items: center; gap: 6px; }
   /* #level 은 버튼 4개의 컨테이너다(구버전 서버 폴백일 때만 평문 이름 하나). 헤더가
      56px 로 고정이라 버튼은 배지 크기(11px/패딩 3~9px)로 작게 잡는다 — 그래도 1280px
@@ -86,6 +105,16 @@
   }
   .conn.connected { background: #2B6E39; }
   .conn.disconnected { background: #E5484D; }
+
+  /* 단독 모드 안내 배너 — 헤더 "안"이 아니라 헤더 바로 아래 별도 줄에 둔다(헤더는
+     56px 고정을 지켜야 하므로 안에 넣으면 그 제약이 깨진다). 팟캐스트에서는 항상
+     [hidden] 이라 레이아웃에 아무 영향이 없고, 단독일 때만 나타나 그만큼을
+     `.lower`(flex:1 1 auto)가 줄어들며 나눠 가진다 — 페이지 스크롤은 생기지 않는다. */
+  .solo-banner {
+    flex: 0 0 auto; padding: 8px 24px; background: #10262B; color: #8FDCEA;
+    font-size: 13px; font-weight: 700; border-bottom: 1px solid #1D3A40;
+  }
+  .solo-banner[hidden] { display: none; }
 
   .monitors { flex: 0 0 auto; padding: 16px 24px 0; display: flex; gap: 24px; flex-wrap: wrap; }
   .monitor-col { flex: 1 1 420px; min-width: 320px; display: flex; flex-direction: column; }
@@ -215,6 +244,13 @@
 <header>
   <div class="left">
     <span class="app-title">무대감독 · 조정실</span>
+    <!-- 버튼 2개는 JS 가 hello.modes 로 짓는다(계약 순서: podcast, solo — 재접속마다
+         비우고 다시 짓는다, buildLevelControl 과 같은 이유). modes 가 없으면(구버전
+         서버) 이 컨테이너 자체를 숨긴다 — 던지지 않는다(계약: never throw). -->
+    <span id="mode" class="mode-group" hidden></span>
+    <!-- 단독을 못 켜는 이유 안내("단독: 로봇 앱 업데이트 후") — snapshot.solo_available
+         이 거짓이고 지금 모드가 solo 가 아닐 때만 채워진다. -->
+    <span id="mode-note" class="mode-note" hidden></span>
     <span id="cue-label" class="cue-label">CUE — / —</span>
     <span id="cue-topic" class="cue-topic"></span>
   </div>
@@ -231,6 +267,10 @@
     <span id="conn" class="conn">연결 중…</span>
   </div>
 </header>
+
+<!-- 단독일 때만 보인다(팟캐스트면 hidden) — 문구는 고정이라 서버에서 오지 않는다,
+     그래서 여기 정적으로 심어 두고 JS 는 hidden 만 켜고 끈다. -->
+<div id="solo-banner" class="solo-banner" hidden>단독 모드 — 사회자 로봇이 관람객 질문에 답합니다</div>
 
 <div class="monitors">
   <section class="monitor-col" aria-label="사회자 모니터">
@@ -327,6 +367,13 @@ var levelButtons = {};    // name -> button 엘리먼트. hello.levels 로 지�
 var levelButtonsMode = false; // hello.levels 가 있어야 true. 없으면(구버전 서버) #level 은
                                // 버튼 없이 snapshot.level 이름만 평문으로 보여준다(폴백 —
                                // 절대 안 터진다. 계약: level-switch-contract.md).
+var modeButtons = {};     // name("podcast"/"solo") -> button 엘리먼트. hello.modes 로
+                           // 지을 때만 채워진다(레벨과 같은 패턴).
+var modeButtonsMode = false; // hello.modes 가 있어야 true. 없으면(구버전 서버) 토글 전체를
+                              // 숨긴다 — 절대 안 던진다(계약).
+var MODE_LABEL = { podcast: "팟캐스트", solo: "단독" }; // 계약이 고정한 두 값만 안다.
+                              // 모르는 이름이 와도(4단계 전까지는 안 온다) 이름 그대로
+                              // 보여주지 죽지 않는다(아래 buildModeControl).
 var latestSnapshot = null;
 var selectedCueId = null; // 런다운 줄을 클릭해 "선택만" 된 큐 — 확인 전에는 이동하지 않는다
 var lastScrolledCueIdx = -1; // 런다운을 마지막으로 스크롤해 보여 준 현재 큐 — 바뀔 때만 스크롤한다
@@ -433,6 +480,8 @@ function renderHello(msg) {
   // hello.levels 도 연결마다 다시 온다 — buildRundown 과 같은 이유로 매번 새로 짓는다
   // (안 그러면 재접속마다 레벨 버튼이 두 배로 쌓인다).
   buildLevelControl(msg.levels);
+  // hello.modes 도 마찬가지로 연결마다 다시 온다 — 같은 이유로 매번 새로 짓는다.
+  buildModeControl(msg.modes);
 
   // 이력은 appendLogFor 가 아니라 handleMessage 로 흘린다 — 그래야 실시간과 같은
   // 길을 타서 sent say/mic 이 자막·MIC 표시에도 반영된다. appendLogFor 만 부르면
@@ -475,6 +524,7 @@ function renderSnapshot(s) {
   topicEl.title = topic;   // 잘려도 마우스오버로 전문을 본다
 
   renderLevelState(s);
+  renderModeState(s);
 
   var connected = new Set(Array.isArray(s.connected) ? s.connected : []);
   var rejected = new Set(Array.isArray(s.rejected) ? s.rejected : []);
@@ -722,6 +772,92 @@ function renderLevelState(s) {
   } else {
     pendingText.hidden = true;
   }
+}
+
+// ── 운영 모드 토글(팟캐스트/단독) ────────────────────────────────
+function buildModeControl(modes) {
+  // hello 는 연결마다 다시 온다 — buildLevelControl 과 같은 이유로 컨테이너를 먼저
+  // 비우고 다시 짓는다(안 비우면 재접속마다 버튼이 두 배로 쌓인다).
+  var root = document.getElementById("mode");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  modeButtons = {};
+  // hello.modes 가 없는 구버전 서버에서는 토글 전체를 숨긴다 — 계약이 없는 서버에
+  // 명령을 보내 봐야 감독이 모른다. 버튼을 하나도 안 짓고 던지지도 않는다.
+  modeButtonsMode = Array.isArray(modes) && modes.length > 0;
+  root.hidden = !modeButtonsMode;
+  if (!modeButtonsMode) return;
+
+  modes.forEach(function (name) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mode-btn";
+    btn.dataset.mode = name;
+    // 서버가 준 이름은 "podcast"/"solo" 고정(계약) — 한국어 라벨을 붙이되, 모르는
+    // 이름이 오면(4단계 전까지는 안 오지만 방어적으로) 이름 그대로 보여준다.
+    btn.textContent = MODE_LABEL[name] || name;
+    btn.addEventListener("click", function () {
+      // 확인 단계 없이 바로 보낸다 — 팟캐스트→단독도 마찬가지다. 런다운 두 단계
+      // 이동(goto-bar)과 달리 이 버튼은 (1) 단독 쪽은 solo_available 일 때만
+      // 눌리고(로봇 앱이 지원할 때만), (2) 되돌리기(단독→팟캐스트)가 버튼 한 번이라
+      // 실수의 대가가 낮다 — "실수 한 번이 진행을 깨지 않는다"(스펙 결정 2)를 해치는
+      // 정도가 런다운 이동보다 작다고 판단해 확인 바를 쓰지 않는다(task-2 브리프 판정).
+      var current = latestSnapshot ? latestSnapshot.mode : null;
+      if (name === current) return;   // 이미 그 모드 — 감독도 "바꿀 것이 없다"로 경고만 한다
+      sendCmd("m " + name);
+    });
+    root.appendChild(btn);
+    modeButtons[name] = btn;
+  });
+}
+
+function renderModeState(s) {
+  var note = document.getElementById("mode-note");
+  if (!modeButtonsMode) {
+    // 구버전 서버 폴백 — 토글이 이미 숨어 있으니 안내문도 비워 둔다.
+    note.textContent = "";
+    note.hidden = true;
+    applySoloLockdown(false);
+    return;
+  }
+  Object.keys(modeButtons).forEach(function (name) {
+    var btn = modeButtons[name];
+    btn.classList.remove("applied");
+    if (name === s.mode) btn.classList.add("applied");
+  });
+  // 단독 버튼은 사회자 로봇 앱이 caps 로 단독을 알리지 않았거나(구버전 앱) 사회자가
+  // 붙어 있지 않으면 잠근다(계약: solo_available). 이미 단독 모드라면(잠깐이라도
+  // solo_available 이 흔들려도) 잠그지 않는다 — 잠그면 팟캐스트로 되돌아갈 버튼까지
+  // 막히는 게 아니라 단독 버튼 자체가 "지금 상태"를 보여주는 자리라, 눌러도 감독이
+  // 어차피 "이미 solo 모드다"로 무시하지만 disabled 로 만들면 지금 모드가 무엇인지
+  // 시각적으로 헷갈린다.
+  var soloLocked = !s.solo_available && s.mode !== "solo";
+  if (modeButtons.solo) modeButtons.solo.disabled = soloLocked;
+  if (soloLocked) {
+    note.textContent = "단독: 로봇 앱 업데이트 후";
+    note.hidden = false;
+  } else {
+    note.textContent = "";
+    note.hidden = true;
+  }
+
+  applySoloLockdown(s.mode === "solo");
+}
+
+function applySoloLockdown(isSolo) {
+  // 단독에서는 감독이 팟캐스트 진행 명령을 거절한다(계약: "단독 모드에서는 팟캐스트
+  // 진행(...)을 하지 않는다 — 먼저 m podcast"). 페이지에서도 눌러 봐야 소용없다는 것을
+  // 미리 보여준다 — 안 그러면 운영자가 눌렀는데 로그에 거절 경고만 쌓이는 것을 보고야
+  // 안다. 런다운 행·확인 바도 같은 이유로 잠근다. 즉시 중단(abort)만은 살려 둔다 —
+  // 단독 중에도 사회자가 이상 동작을 하면 멈출 유일한 손잡이라서다(계약에도 단독
+  // 진행 가드 목록에 abort 는 없다).
+  ["btn-prev", "btn-restart", "btn-next", "btn-start"].forEach(function (id) {
+    document.getElementById(id).disabled = isSolo;
+  });
+  document.getElementById("goto-confirm").disabled = isSolo;
+  document.getElementById("goto-cancel").disabled = isSolo;
+  rundownRows.forEach(function (row) { row.btn.disabled = isSolo; });
+
+  document.getElementById("solo-banner").hidden = !isSolo;
 }
 
 // ── 큐 이동 확인 바 — 클릭은 선택만, 확인해야 이동한다 ─────────────

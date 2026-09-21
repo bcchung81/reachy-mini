@@ -188,3 +188,16 @@ def test_자막은_고정_높이에서_스크롤해_하단을_창_밖으로_밀�
     assert "height: clamp(" in rule
     assert "overflow-y: auto" in rule
     assert "min-height" not in rule
+
+
+def test_모드_토글이_있고_m_명령을_보낸다():
+    """운영 모드(팟캐스트/단독) 토글 — 계약: hello.modes, snapshot.mode/solo_available,
+    명령 "m <모드>". 요소 id 3개(컨테이너·안내문·단독 배너)가 있어야 하고, 명령 접두
+    `"m "`(sendCmd("m " + name))·감독이 새로 보내는 두 필드를 실제로 읽는 코드가 있어야
+    구버전 서버에서도 안 던지고, 단독을 지원하지 않는 로봇 앱에서 버튼이 잠긴다."""
+    src = _src()
+    for i in ("mode", "mode-note", "solo-banner"):
+        assert f'id="{i}"' in src, i
+    assert '"m "' in src          # sendCmd("m " + name)
+    assert "solo_available" in src
+    assert "msg.modes" in src
