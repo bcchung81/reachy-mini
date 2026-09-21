@@ -52,7 +52,7 @@
 
 | kind | 필드 |
 |---|---|
-| `hello` | `cues: [{id, topic}]`, `history: [이벤트…]`, `snapshot: {…}` |
+| `hello` | `cues: [{id, title, topic}]` (title = 짧은 이름 — 런다운 줄, topic = 긴 주제 문장, 없으면 title), `history: [이벤트…]`, `snapshot: {…}` |
 | `snapshot` | `cue_index, cue_id, cue_count, state(idle/mc_speaking/docent_speaking/listening), speaking_role, question_wait_s(침묵 자동 진행까지 남은 초, LISTENING 이 아니거나 기한이 없으면 null), question_wait_total_s, connected[], solo_role, rejected[], level` |
 | `sent` | `t, role, type, fields` |
 | `recv` | `t, role, type, fields` |
@@ -64,7 +64,8 @@
 
 - `goto(cue_id)`: **발화 중이면 커서를 옮기기 전에 거절**(TurnError). 모르는 큐면 경고만.
   콘솔 `g` 가 `n`·`p`·`r` 처럼 먼저 `abort()` 한다. (`previous()` 는 커서를 먼저 옮긴 뒤
-  거절당할 수 있는데, 그 틈을 `goto` 에서는 만들지 않는다.)
+  거절당할 수 있는데, 그 틈을 `goto` 에서는 만들지 않는다.) 단 **모르는 id 면 `abort()` 전에
+  경고만 하고 진행을 건드리지 않는다** — 시연 중 오타 한 번이 공연을 멈추면 안 된다(결정 2와 같은 원칙).
 - `snapshot()`: 락을 잠깐 쥐고 한 시점의 값을 모은다. 전송 탭 안에서 부르면 안 된다.
 
 ## 오류 처리 (저장소 규약: 소리 내서 실패)
