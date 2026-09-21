@@ -19,6 +19,10 @@
 3. **구현 방식**: 무대감독 프로세스 안에, 로봇용(8777)과 **다른 포트**(기본 8778)로.
    새 의존성·로봇 프로토콜 변경 없음. 실행은 여전히 `python -m stage` 하나.
 4. 터미널 콘솔은 그대로 산다 — 문서화된 비상 폴백이다.
+5. **관람객 수준 실시간 전환**(2026-09-21 추가): 적용은 **다음 큐부터**. 지금 큐는 원래 수준으로
+   끝까지 간다 — 한 큐 안에서 사회자·도슨트 수준이 섞이지 않는다. 바로 적용하려면 운영자가
+   "이 큐 다시(R)" 를 누른다. UI 는 헤더의 4개 버튼(적용된 수준은 채운 색, 대기 중인 수준은 테두리
+   강조). 한 번 누르면 바로 선택된다 — 되돌릴 수 있고 적용은 어차피 다음 큐라 확인 단계가 없다.
 
 ## 구성 요소
 
@@ -28,10 +32,10 @@
 | `stage/dashboard.py` `DashboardServer`, `start_dashboard` | `GET /` 페이지, `/ws` 실시간 소켓. 허브 이벤트 + 주기 스냅샷을 보내고 버튼 명령을 콘솔과 같은 경로로 실행 | 허브, 감독, 콘솔 |
 | `stage/dashboard_page.html` | 시안 B 를 순수 HTML·CSS·JS 로. 빌드·외부 리소스 없음 | `/ws` 메시지 형식 |
 | `stage/server.py` (수정) | `_send`·`_dispatch`·접속/끊김을 허브에 흘린다. `hub=None` 이면 지금과 같다 | 허브(덕 타이핑) |
-| `stage/director.py` (수정) | `snapshot()`, `cue_list()`, `goto(cue_id)` | 큐시트 |
+| `stage/director.py` (수정) | `snapshot()`, `cue_list()`, `goto(cue_id)`, `set_level(name)`, `level_names()` | 큐시트 |
 | `stage/cues.py` (수정) | `CueSheet.cues()`, `find(cue_id)`, `seek(index)` | — |
-| `stage/console.py` (수정) | `_dispatch` → 공개 `dispatch`, `g <큐id>` 명령 추가 | 감독 |
-| `stage/__main__.py` (수정) | 허브 생성, 경고를 터미널+허브로, 대시보드 기동(포트가 막히면 경고만) | 전부 |
+| `stage/console.py` (수정) | `_dispatch` → 공개 `dispatch`, `g <큐id>`·`l <수준>` 명령 추가 | 감독 |
+| `stage/__main__.py` (수정) | 허브 생성, 경고를 터미널+허브로, 대시보드 기동(포트가 막히면 경고만), 수준별 생성기 전환기(`LevelSwitch`) | 전부 |
 
 ## 데이터 흐름
 
@@ -44,16 +48,17 @@
 - **허브 → 페이지**: 접속 시 `hello`(큐 목록·최근 이벤트·스냅샷), 이후 이벤트는 오는 대로,
   스냅샷은 0.5초마다. 연결 하나에 **보내는 스레드는 하나**(펌프) — 명령 결과도 허브 이벤트로
   흘려 같은 펌프가 보낸다.
-- **페이지 → 감독**: `{"cmd": "s"|"n"|"p"|"r"|"a"|"g <큐id>"}` — 콘솔 명령 문자열 그대로.
+- **페이지 → 감독**: `{"cmd": "s"|"n"|"p"|"r"|"a"|"g <큐id>"|"l <수준>"}` — 콘솔 명령 문자열 그대로.
   `console.dispatch` 가 실행한다(콘솔과 같은 길). 결과는 `command` 이벤트(ok·lines)로
-  모든 대시보드에 보인다.
+  모든 대시보드에 보인다. 서버는 명령을 `.lower()` 한다 — 한글 수준 이름(`l 초등`)에는 영향이 없다.
+  `l` 의 결과(바꿈·취소·거절)는 `lines` 가 아니라 감독 경고(`warn`)로 한 줄씩 온다.
 
 ### 메시지 형식 (서버 → 페이지, JSON)
 
 | kind | 필드 |
 |---|---|
-| `hello` | `cues: [{id, title, topic}]` (title = 짧은 이름 — 런다운 줄, topic = 긴 주제 문장, 없으면 title), `history: [이벤트…]`, `snapshot: {…}` |
-| `snapshot` | `cue_index, cue_id, cue_count, state(idle/mc_speaking/docent_speaking/listening), speaking_role, question_wait_s(침묵 자동 진행까지 남은 초, LISTENING 이 아니거나 기한이 없으면 null), question_wait_total_s, connected[], solo_role, rejected[], level` |
+| `hello` | `cues: [{id, title, topic}]` (title = 짧은 이름 — 런다운 줄, topic = 긴 주제 문장, 없으면 title), `levels: [수준 이름…]` (levels.yaml 순서 — 초등, 중고등, 일반, 전문가. 헤더 버튼 순서. `Director.level_names()`), `history: [이벤트…]`, `snapshot: {…}` |
+| `snapshot` | `cue_index, cue_id, cue_count, state(idle/mc_speaking/docent_speaking/listening), speaking_role, question_wait_s(침묵 자동 진행까지 남은 초, LISTENING 이 아니거나 기한이 없으면 null), question_wait_total_s, connected[], solo_role, rejected[], level(지금 **적용된** 수준), level_pending(다음 큐부터 적용될 수준, 없으면 null)` |
 | `sent` | `t, role, type, fields` |
 | `recv` | `t, role, type, fields` |
 | `connect` / `disconnect` | `t, role` (+ `version`) |
@@ -67,6 +72,34 @@
   거절당할 수 있는데, 그 틈을 `goto` 에서는 만들지 않는다.) 단 **모르는 id 면 `abort()` 전에
   경고만 하고 진행을 건드리지 않는다** — 시연 중 오타 한 번이 공연을 멈추면 안 된다(결정 2와 같은 원칙).
 - `snapshot()`: 락을 잠깐 쥐고 한 시점의 값을 모은다. 전송 탭 안에서 부르면 안 된다.
+- `set_level(name)`(콘솔·페이지 `l <수준>`, 결정 5): **발화 중에도 거절하지 않는다**(적용이 다음
+  큐라 지금 발화를 안 건드린다 — 그래서 콘솔 `l` 은 `n`·`g` 와 달리 `abort()` 하지 않는다).
+  결과는 전부 감독 경고 한 줄이다(페이지 로그에 그대로 뜬다):
+
+  | 경우 | 상태 | 경고 |
+  |---|---|---|
+  | 모르는 이름 | 그대로(대기도) | `모르는 관람객 수준이다: '유치원' — 바꾸지 않는다(고를 수 있는 것: 초등, 중고등, 일반, 전문가)` |
+  | 적용된 수준 + 대기 있음 | 대기 취소 | `관람객 수준 일반 → 초등 대기를 취소했다 — 일반 그대로 간다` |
+  | 적용된 수준 + 대기 없음 | 그대로 | `관람객 수준은 이미 일반 이다 — 바꿀 것이 없다` |
+  | 그 밖 | `level_pending = name` | `관람객 수준 일반 → 초등 — 다음 큐부터 적용(바로 하려면 r)` |
+  | (적용 — 아래) | `level = name`, 대기 비움 | `관람객 수준을 초등(으)로 바꿨다 — 03-theory 부터` |
+
+- **적용 지점은 큐를 시작하는 한 곳**(`_begin_cue`) — start·next·previous·goto·관람객의 "다음"·침묵
+  자동 진행, 콘솔 `r`(abort + start)이 모두 지난다. 발화 중 거절 검사 **뒤**(거절된 시작이 대기를
+  먹지 않게), 브리프·캐시 키·도슨트 사전 생성 **앞**이다. 순서: 대기 비움 → 생성기 전환 훅 →
+  `_level_name`·도슨트 하한(`level.min_chars`) 교체 → 경고 → 그 큐의 브리프·캐시 키를 새 수준으로.
+  **훅이 터져도 큐는 시작한다 — 옛 수준으로**: 경고 `관람객 수준 초등 전환 실패(RuntimeError: …) —
+  일반 그대로 간다` 를 남기고 대기를 버린다. 예외를 올리면 큐를 시작할 때마다 같은 예외가 나고,
+  침묵 자동 진행은 커서를 옮긴 뒤 터지므로 시연이 굳는다.
+- 훅은 감독 락 안에서 불린다 — `_send`·경고와 같은 규칙(감독 상태를 읽지 않고 블로킹하지 않는다).
+  실제 훅 `LevelSwitch.select` 는 대입 하나다.
+- **생성기**: `stage/__main__.py::LevelSwitch` 가 수준별 `build_generate(level, warn)` 를 **처음 쓸 때
+  한 번씩** 만들고(처음 수준만 기동에서 바로 — 페르소나가 깨져 있으면 시연 전에 죽는다) 지금 수준의
+  것으로 넘긴다. 호출 전체를 락 하나로 묶어 수준을 바꿔도 LLM 호출은 한 번에 하나다. 앞 큐의 늦은
+  생성은 원래대로 세대 검사에 걸려 버려진다.
+- 배선: `main()` → `StageServer(level_min_chars=이름→하한, on_level_change=LevelSwitch.select)` →
+  `Director`. 목록을 받았는데 훅이 없으면 `Director` 가 기동에서 `ValueError`(반쪽 전환 방지).
+  `REACHY_AUDIENCE_LEVEL` 은 **처음** 수준이다.
 
 ## 오류 처리 (저장소 규약: 소리 내서 실패)
 
@@ -104,10 +137,15 @@
 - 생산자↔소비자 계약은 통합 테스트 하나로 묶는다(`tests/test_dashboard_e2e.py`): 진짜
   `StageServer`·`Director` + 진짜 대시보드 + 가짜 로봇 하나. 양쪽이 각자의 가짜와만 맞춰져
   있으면 이벤트 필드나 스냅샷 키가 바뀌어도 둘 다 통과한다.
+- 관람객 수준 전환: 감독 단위 테스트가 큐를 시작하는 여섯 길 모두에서 적용을 보고, 배선은
+  `main()` → 진짜 `StageServer` → 진짜 `Director` 를 한 줄로 잇는 테스트
+  (`tests/test_stage_main.py::test_main_에서_감독까지_수준_전환이_끝까지_이어진다`)가, 페이지 계약
+  (`hello.levels`·`snapshot.level_pending`·`l`·경고 문구)은 `tests/test_dashboard_e2e.py` 가 지킨다.
 - 페이지는 정적 검사(필수 id, `/ws`, 외부 URL 없음, `innerHTML` 없음) + 최종 검증에서
   시뮬 2대 위에 실제 브라우저로 띄워 버튼·실시간 갱신을 확인한다.
 
 ## 범위 밖
 
-- 카메라 영상(실기). 관람객 수준 실시간 전환(지금은 기동 때 고정). 침묵 자동 진행 켜고 끄기.
-  콘솔에서 친 명령을 대시보드 로그에 싣는 것.
+- 카메라 영상(실기). ~~관람객 수준 실시간 전환(지금은 기동 때 고정).~~ → 2026-09-21 범위에
+  들어왔다(결정 5, "감독 쪽 새 동작"). 침묵 자동 진행 켜고 끄기. 콘솔에서 친 명령을 대시보드 로그에
+  싣는 것(단 `l` 의 결과는 감독 경고라 대시보드 로그에도 뜬다).
