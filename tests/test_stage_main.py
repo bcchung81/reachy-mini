@@ -734,6 +734,45 @@ def test_수준_전환기는_수준이_달라도_LLM_호출을_하나씩만_보�
     assert 순서 == ["중고등 시작", "중고등 끝", "전문가 시작", "전문가 끝"]
 
 
+def test_select는_진행_중인_LLM_호출_뒤에서_기다리지_않는다():
+    """수준 리뷰 Minor 1 — `LevelSwitch.select` 는 **대입 하나**여야 한다(docstring).
+    `Director._begin_cue` 가 `Director._lock` 을 쥔 채 이 훅을 부르므로, `select`
+    안에 `self._lock` 을 넣어(`__call__` 이 생성 내내 쥐고 있는 락) 생성과 얽히면
+    진행 중인 LLM 호출이 끝날 때까지 감독 락이 통째로 묶인다 — 콘솔 `a`(즉시 중단)·
+    tick·대시보드 스냅샷이 그동안 전부 멈춘다. 감독 락을 직접 흉내 낼 필요는 없다 —
+    `select` 가 `LevelSwitch` 자신의 락 뒤에서 기다리는지만 보면 같은 불변식을 지킨다
+    (감독 락이든 이 락이든, "대입 하나" 가 깨지면 여기서 걸린다).
+
+    생성기 하나를 `release` 가 풀릴 때까지 멈춰 두고, 그 생성이 `__call__` 의 락을
+    쥔 채로 도는 동안 다른 스레드에서 `select` 를 부른다 — 대입 하나면 즉시
+    돌아오고, 락을 잡으면 `release.set()` 전까지 못 돌아온다.
+    """
+    levels = load_levels()
+    inside, release = threading.Event(), threading.Event()
+
+    def build(level, warn=print):
+        def gen(role, brief, history):
+            inside.set()
+            release.wait(3)
+            return "x"
+        return gen
+
+    sw = stage_main.LevelSwitch(levels, levels["중고등"], build, warn=print)
+    t = threading.Thread(target=sw, args=("docent", "앞 큐", []))
+    t.start()
+    try:
+        assert inside.wait(3), "생성기가 시작되지 않았다"
+        done = threading.Event()
+        threading.Thread(target=lambda: (sw.select("전문가"), done.set())).start()
+        assert done.wait(0.5), (
+            "select 가 진행 중인 생성 뒤에서 블로킹했다 — "
+            "감독 락과 얽힐 수 있는 자리다(Director._begin_cue 가 그 락을 쥔 채 부른다)"
+        )
+    finally:
+        release.set()
+        t.join(3)
+
+
 def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_넘긴다(monkeypatch):
     """배선 하나라도 빠지면 `l` 이 반쯤만 돈다: 하한 목록이 빠지면 네 수준 중 지금
     것만 알아 나머지는 "모르는 수준", 훅이 빠지면 감독이 기동에서 막고(ValueError),

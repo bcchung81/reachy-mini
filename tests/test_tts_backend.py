@@ -262,6 +262,68 @@ def test_qwen_실패마다_TTS_폴백_로그를_이유와_함께_남긴다(monke
         importlib.reload(tts_mod)
 
 
+class EmptyPcmStub(BaseHTTPRequestHandler):
+    """헤더는 PCM 스트림이라 밝히지만 본문은 0바이트 — 연결·요청 자체는 성공했는데
+    합성 결과가 없는 경우다. `_open_qwen` 의 "첫 청크가 비었다" 갈래(연결 거부와는
+    다른 실패 경로, `_qwen_synth`/타임아웃과도 다르다)는 지금까지 아무 테스트도
+    안 봤다(목소리 리뷰 Important — F4)."""
+
+    requests: list = []
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        EmptyPcmStub.requests.append(body)
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/pcm")
+        self.send_header("X-Sample-Rate", "24000")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        # 본문을 아예 안 쓴다 — `read(_PCM_CHUNK)` 가 첫 호출에서 바로 b"" 를 받는다.
+
+    def log_message(self, *a):
+        pass
+
+
+def _serve_empty_pcm():
+    srv = HTTPServer(("127.0.0.1", 0), EmptyPcmStub)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{srv.server_port}"
+
+
+def test_qwen_첫_청크가_비면_폴백_로그에_그_이유가_실린다(monkeypatch, tmp_path, capsys):
+    """`_open_qwen` 마지막 분기 — 응답은 200 이고 헤더도 PCM 스트림이라 밝히지만
+    본문이 0바이트면 `self._qwen_open_error = "첫 청크가 비었다"` 를 남기고 None 을
+    준다. 지금까지 있던 테스트(`test_qwen_이_죽으면_say_로_떨어진다` 등)는 전부
+    연결 자체가 실패하는 갈래(URLError)만 본다 — "서버는 응답했는데 소리가 없다" 는
+    이 갈래는 아무도 안 봤다.
+
+    폴백(가짜 명령)이 불리는지와, `[TTS 폴백]` 로그 줄에 정확히 "첫 청크가 비었다"
+    라는 문구가 실리는지를 함께 본다 — 이유 대입 한 줄이 지워지면(뮤턴트) 이유가
+    기본값 "빈 응답" 으로 떨어져 이 문구가 로그에서 사라진다.
+    """
+    base = _serve_empty_pcm()
+    EmptyPcmStub.requests.clear()
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", f"{base}/v1/audio/speech")
+    importlib.reload(tts_mod)
+    try:
+        out = tmp_path / "log"
+        fallback = ["/bin/sh", "-c", f'echo "$0" >> {out}']
+        s = tts_mod.Speaker(fallback_cmd=fallback, play=lambda b: None)
+        s.speak("빈 응답 문장입니다.")
+        s.wait_idle(timeout=5)
+        assert len(EmptyPcmStub.requests) == 1  # 요청은 실제로 서버에 닿았다(연결 실패가 아니다)
+        printed = capsys.readouterr().out
+        lines = [ln for ln in printed.splitlines() if "[TTS 폴백]" in ln]
+        assert len(lines) == 1, lines
+        assert "첫 청크가 비었다" in lines[0], lines
+        assert out.read_text().strip() == "빈 응답 문장입니다."  # 폴백(가짜)이 실제로 불렸다
+    finally:
+        monkeypatch.delenv("TTS_QWEN_URL")
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
 class StreamStub(BaseHTTPRequestHandler):
     """chunked PCM 을 흘리는 서버 흉내 — 청크 사이에 지연을 준다."""
 
