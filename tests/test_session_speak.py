@@ -90,3 +90,52 @@ def test_category_를_안_주면_문장으로_고른다():
     sp, pl = FakeSpeaker(), FakePlayer()
     session.speak("1912년 4월 타이타닉호가 침몰할 때 잭 필립스가 구조를 요청했습니다.", sp, pl)
     assert pl.played == [("no", False)]
+
+
+# ── 무대 발화를 문장 단위 요청으로(voice-fix-brief V1) ─────────────────────
+#
+# 원인: 무대 모드는 감독 대사(최대 280자, 40~90초 분량) 전체를 speaker.speak()
+# 하나(=TTS 요청 하나)로 보냈다. Qwen3-TTS 서버는 요청을 하나씩 순서대로 처리
+# 하고 클라이언트가 연결을 끊어도 끊긴 요청을 끝까지 합성한다(실측 65.3초).
+# 그래서 다음 요청이 QWEN_TIMEOUT(90초)을 넘겨 로컬 합성기(실기 Linux 는
+# espeak-ng — 남성 기계음)로 폴백했다. 요청을 문장 단위로 쪼개면 끊었을 때
+# 서버가 붙잡는 시간이 문장 하나로 준다.
+
+
+def test_문장이_둘_이상이면_speak_many_로_나간다():
+    # 감독 대사는 문장 사이에 공백이 없다("…입니다.주파수란…") — split_sentences
+    # 가 나눈 문장 리스트가 그대로 speak_many 에 실려야 한다.
+    sp, pl = FakeSpeaker(), FakePlayer()
+    text = "빛은 초당 30만km를 이동합니다.주파수란 초당 진동수를 말합니다."
+    session.speak(text, sp, pl)
+    assert sp.spoken == []
+    assert sp.many == [
+        ["빛은 초당 30만km를 이동합니다.", "주파수란 초당 진동수를 말합니다."]
+    ]
+
+
+def test_한_문장이면_기존처럼_speak_로_나간다():
+    # 기존 테스트(test_텍스트를_말한다 등)가 이미 이 경로를 지키지만,
+    # 문장 분리가 끼어든 뒤에도 회귀하지 않는지 명시적으로 다시 잡는다.
+    sp, pl = FakeSpeaker(), FakePlayer()
+    session.speak("이 신호는 2.4GHz 대역을 씁니다.", sp, pl)  # 소수점 — 안 나뉜다
+    assert sp.spoken == ["이 신호는 2.4GHz 대역을 씁니다."]
+    assert sp.many == []
+
+
+def test_연도로_시작하는_문장도_나뉜다():
+    sp, pl = FakeSpeaker(), FakePlayer()
+    text = "무선통신을 실용화했습니다.1901년에는 대서양을 건넜습니다."
+    session.speak(text, sp, pl)
+    assert sp.many == [
+        ["무선통신을 실용화했습니다.", "1901년에는 대서양을 건넜습니다."]
+    ]
+
+
+def test_문장_분리가_돼도_모션은_발화_전체에_한_번이다():
+    # split_sentences 는 TTS 요청 단위만 바꾼다 — 모션은 지금처럼 전체 텍스트
+    # 기준으로 한 번만 고르고 재생한다(문장마다 모션이 다시 튀면 안 된다).
+    sp, pl = FakeSpeaker(), FakePlayer()
+    text = "빛은 초당 30만km를 이동합니다.주파수란 초당 진동수를 말합니다."
+    session.speak(text, sp, pl)
+    assert len(pl.played) == 1

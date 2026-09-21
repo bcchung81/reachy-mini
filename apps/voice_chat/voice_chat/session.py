@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import emotions
 import selfintro
 import vision
+from clauses import split_sentences
 from driver import RobotDriver
 from idler import Idler
 from llm import LLMClient
@@ -150,6 +151,16 @@ def speak(text: str, speaker, player, category: str | None = None) -> None:
     **재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
     끼어들기 판정이 한 번도 돌지 않는다 — 재생 중 마이크를 어떻게 다룰지는
     호출부가 정한다(`voice_loop` 의 게이팅, `stage_client` 의 mic 지시).
+
+    **문장이 둘 이상이면 문장 단위로 나눠 `speak_many()` 로 보낸다** — 무대 모드
+    감독 대사(최대 280자, 40~90초 분량)를 통째로 `speak()` 하나(=TTS 요청 하나)
+    로 보내던 것이 목소리가 남자 기계음으로 바뀌는 결함의 원인이었다: Qwen3-TTS
+    서버는 요청을 하나씩 처리하고 클라이언트가 끊어도 끝까지 합성하므로(실측
+    65.3초), 그 뒤에 밀린 다음 요청이 `QWEN_TIMEOUT`(90초)을 넘겨 로컬
+    합성기(실기 Linux 는 espeak-ng — 남성 기계음)로 폴백했다. 요청 단위를
+    문장으로 좁히면 끊었을 때 서버가 붙잡는 시간이 문장 하나(+선요청 하나)로
+    준다. 모션은 지금처럼 **발화 전체**를 보고 한 번만 고른다 — 문장마다 다시
+    고르면 한 발화 안에서 모션이 튄다.
     """
     text = (text or "").strip()
     if not text:
@@ -160,7 +171,11 @@ def speak(text: str, speaker, player, category: str | None = None) -> None:
         name = player.play_for(category)
         print(f"  [모션 {category}/{name}]")
     print(f"미니> {text}")
-    speaker.speak(text)
+    sentences = split_sentences(text)
+    if len(sentences) > 1:
+        speaker.speak_many(sentences)
+    else:
+        speaker.speak(text)
 
 
 def respond(user: str, llm: LLMClient, speaker: Speaker, player) -> None:

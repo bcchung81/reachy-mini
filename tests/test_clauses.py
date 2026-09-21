@@ -2,7 +2,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
-from clauses import ClauseBuffer
+from clauses import ClauseBuffer, split_sentences
 
 
 def test_구두점에서_절이_끊긴다():
@@ -52,3 +52,49 @@ def test_토큰_단위_공급에도_동작한다():
         out += cb.feed(tok)
     out += [c for c in [cb.flush()] if c]
     assert out == ["오늘 날씨가 좋네요.", "산책 갈까요?"]
+
+
+# ── split_sentences — 무대 발화 텍스트 문장 분리기(브리프 V1) ──────────────
+#
+# ClauseBuffer 와 다른 문제다: ClauseBuffer 는 LLM 스트림 델타를 "지금까지 온
+# 만큼"에서 자르는 누적기고, split_sentences 는 이미 완성된 문자열 하나를
+# 한 번에 문장 리스트로 쪼갠다(무대감독 대사 40~90초 분량을 TTS 요청 단위로
+# 잘게 쪼개기 위함). 감독 대사는 문장 사이에 공백이 없다("…입니다.주파수란…").
+
+
+def test_공백_없는_문장을_경계에서_나눈다():
+    text = "빛은 초당 30만km를 이동합니다.주파수란 초당 진동수를 말합니다."
+    assert split_sentences(text) == [
+        "빛은 초당 30만km를 이동합니다.",
+        "주파수란 초당 진동수를 말합니다.",
+    ]
+
+
+def test_소수점은_문장_경계가_아니다():
+    # 마침표 앞이 ASCII 영숫자이고 뒤가 숫자일 때만 소수점으로 본다.
+    assert split_sentences("이 신호는 2.4GHz 대역을 씁니다.") == [
+        "이 신호는 2.4GHz 대역을 씁니다."
+    ]
+    assert split_sentences("속도가 1.5배로 빨라집니다.") == ["속도가 1.5배로 빨라집니다."]
+
+
+def test_한글_문장_끝_뒤_연도는_문장_경계다():
+    # 마침표 앞이 한글이면 영숫자가 아니므로 뒤가 숫자여도 소수점 예외에 안 걸린다.
+    text = "무선통신을 실용화했습니다.1901년에는 대서양을 건넜습니다."
+    assert split_sentences(text) == [
+        "무선통신을 실용화했습니다.",
+        "1901년에는 대서양을 건넜습니다.",
+    ]
+
+
+def test_종결부호가_없으면_한_문장이다():
+    assert split_sentences("종결부호 없는 말") == ["종결부호 없는 말"]
+
+
+def test_빈_조각은_버린다():
+    # 종결부호가 연달아 오거나(...) 끝에 붙으면 빈 조각이 생길 수 있다 — 버려야 한다.
+    assert split_sentences("정말요?! 그렇군요.") == ["정말요?!", "그렇군요."]
+
+
+def test_빈_문자열은_빈_리스트다():
+    assert split_sentences("") == []
