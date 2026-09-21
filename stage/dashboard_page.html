@@ -115,6 +115,8 @@
   .cue-row.done { color: #6B7684; }
   .cue-row.now { background: #3A1D21; color: #FFFFFF; font-weight: 700; }
   .cue-row.now .cue-tag { color: #FF8A8E; }
+  /* .cue-row.todo 는 일부러 규칙이 없다 — 시안 B 목업도 미래 큐를 기본 .cue-row 색 그대로 두고
+     "NEXT" 태그만 달았다(강조는 지금 큐 하나뿐이어야 런다운에서 눈이 한 곳에만 간다). */
   .cue-row.selected { outline: 1px solid #4CC3D9; outline-offset: -1px; }
 
   .goto-bar {
@@ -492,7 +494,7 @@ function buildRundown(cues) {
 
     var num = document.createElement("span");
     num.className = "cue-num";
-    num.textContent = String(i + 1).padStart(2, "0");
+    num.textContent = pad2(i + 1);
 
     var titleSpan = document.createElement("span");
     titleSpan.className = "cue-title";
