@@ -228,6 +228,8 @@ def test_g_는_먼저_멈추고_그_큐로_간다():
     calls = []
 
     class 가짜감독:
+        mode = "podcast"          # 단독이 아니므로 먼저 멈춘다(`_stop_first`)
+
         def cue_list(self):
             return [{"id": "07-maritime", "title": "해상무선통신", "topic": "해상무선통신"}]
 
@@ -262,6 +264,8 @@ def test_dispatch_는_콘솔과_같은_n_경로다():
     calls = []
 
     class 가짜감독:
+        mode = "podcast"          # 단독이 아니므로 먼저 멈춘다(`_stop_first`)
+
         def abort(self):
             calls.append("abort")
 
@@ -318,6 +322,42 @@ def test_도움말에_m_이_있다():
     h = Harness()
     h.run(["?", "q"])
     assert any("m <모드>  운영 모드 바꾸기(podcast/solo)" in m for m in h.out), h.out
+
+
+@pytest.mark.parametrize(
+    "cmd, 무엇",
+    [("n", "다음"), ("p", "이전"), ("r", "시작"), ("g c2", "이동")],
+    ids=["n", "p", "r", "g"],
+)
+def test_단독에서_거절될_진행_명령은_먼저_멈추지도_않는다(cmd, 무엇):
+    """진짜 감독으로 본다. 단독에서 `n`·`p`·`r`·`g` 는 감독이 거절하는데, 콘솔이 그 앞에서
+    `abort()` 를 보내면 거절될 명령이 말하던 것을 끊는다 — 4단계에서는 사회자의 단독
+    답변이 그것이다. `g` 는 **아는 큐**(c2)로 본다: 모르는 큐는 원래도 멈추지 않는다."""
+    import stage.console as console
+
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.set_mode("solo")
+    assert h.d.mode == "solo"                  # 전제: 단독으로 바뀌었다
+    h.sent.clear()
+    h.warnings.clear()
+    console.dispatch(h.d, cmd, out=h.out.append)
+    assert h.sent == []
+    assert h.warnings == [f"단독 모드에서는 팟캐스트 진행({무엇})을 하지 않는다 — 먼저 m podcast"]
+
+
+def test_단독에서도_a_는_멈춘다():
+    """거절될 명령만 멈추지 않는 것이지 중단 자체가 막힌 것이 아니다(설계 §1-2)."""
+    import stage.console as console
+
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.set_mode("solo")
+    h.sent.clear()
+    h.warnings.clear()
+    console.dispatch(h.d, "a", out=h.out.append)
+    assert [(r, t) for r, t, _ in h.sent] == [("mc", "abort"), ("docent", "abort")]
+    assert h.warnings == []
 
 
 def test_l_뒤_r_은_대기_수준을_바로_적용한다():

@@ -57,6 +57,22 @@ def run_console(director: Director, read=input, out=print, block=block_forever) 
             out(f"  거절됨: {exc}")
 
 
+def _stop_first(director: Director) -> None:
+    """진행 명령(`n`·`p`·`r`·`g`) 앞의 "먼저 멈춘다". **단독 모드에서는 멈추지 않는다.**
+
+    단독에서 이 넷은 감독이 거절한다(`Director._refused_in_solo`). 거절될 명령 때문에
+    말하던 것을 끊으면 안 된다 — 4단계에서는 그것이 사회자의 단독 답변이다. `g` 가
+    모르는 큐에서 멈추지 않는 것과 같은 이유다(이동은 안 됐는데 시연만 멈춘 꼴). `a` 는
+    이 헬퍼를 거치지 않으므로 단독에서도 그대로 멈춘다.
+
+    모드를 락 밖에서 읽고 멈춘다 — 그 사이에 다른 화면이 단독으로 바꾸면 전환 직후에
+    중단이 한 번 더 나가는 틈이 남는다. 운영자 둘이 같은 순간에 눌러야 생기고, 전환이
+    방금 멈춘 자리라 끊을 것이 거의 없어 받아들인다.
+    """
+    if director.mode != "solo":
+        director.abort()
+
+
 def dispatch(director: Director, cmd: str, out) -> None:
     """콘솔 명령 하나 — **대시보드도 이 함수를 부른다**, 명령 경로를 하나로 둔다."""
     if cmd == "s":
@@ -64,17 +80,17 @@ def dispatch(director: Director, cmd: str, out) -> None:
     elif cmd == "n":
         # 콘솔은 STT 판정기를 거치지 않는다. `on_heard("다음")` 을 흉내내면
         # LISTENING 이 아닐 때(`a` 뒤, 발화 중) 거부된다 — `p`·`r` 과 같은
-        # 모양으로 먼저 멈추고 간다(리뷰 A7b).
-        director.abort()
+        # 모양으로 먼저 멈추고 간다(리뷰 A7b). 단독이면 멈추지 않는다(`_stop_first`).
+        _stop_first(director)
         director.next()
     elif cmd == "p":
         # 오인식으로 섹션이 넘어가 버렸을 때 되돌리는 유일한 길이다(설계 §7).
         # `r` 와 같은 모양으로 중단부터 한다 — 대개 잘못 넘어간 대사가
         # 흐르는 중에 누르기 때문이다.
-        director.abort()
+        _stop_first(director)
         director.previous()
     elif cmd == "r":
-        director.abort()
+        _stop_first(director)
         director.start()
     elif cmd == "a":
         director.abort()
@@ -87,10 +103,10 @@ def dispatch(director: Director, cmd: str, out) -> None:
         # 두기 위해서고, `goto` 가 모르는 id 를 발화 검사보다 먼저 보므로 말하는
         # 중이어도 거절 대신 경고 한 줄로 끝난다. id 확인에 `cue_list()` 를 쓰는
         # 것은 대시보드가 이미 쓰는 공개 조회라 가짜 감독이 새 메서드를 흉내 낼
-        # 필요가 없어서다.
+        # 필요가 없어서다. 아는 큐여도 단독이면 멈추지 않는다(`_stop_first`).
         cue_id = cmd[2:].strip()
         if any(c["id"] == cue_id for c in director.cue_list()):
-            director.abort()
+            _stop_first(director)
         director.goto(cue_id)
     elif cmd.startswith("l "):
         # 관람객 수준(초등/중고등/일반/전문가) — **다음 큐부터** 적용된다. `n`·`g` 와

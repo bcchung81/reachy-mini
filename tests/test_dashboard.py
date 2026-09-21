@@ -22,6 +22,9 @@ from stage.machine import TurnError
 
 
 class 가짜감독:
+    # 콘솔 `n`·`g` 는 단독이 아닐 때만 먼저 멈춘다(`stage/console.py::_stop_first`).
+    mode = "podcast"
+
     def __init__(self):
         self.calls = []
         self.fail_next = False

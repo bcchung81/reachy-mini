@@ -3005,6 +3005,29 @@ def test_단독에서는_이전_큐로도_되돌리지_않는다():
     assert "단독 모드에서는 팟캐스트 진행(이전)을 하지 않는다 — 먼저 m podcast" in h.warnings
 
 
+def test_단독에서도_중단은_된다():
+    """단독에서 막는 것은 팟캐스트 **진행**뿐이다 — `a` 는 된다(설계 §1-2). 중단까지 막으면
+    4단계에서 단독으로 답하는 사회자를 멈출 길이 없다."""
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    _모드(h, "solo")
+    h.clear()
+    h.warnings.clear()
+    h.d.abort()
+    assert ("mc", "abort") in h.types()
+    assert h.warnings == []                                 # 단독 거절 경고가 없다
+
+
+def test_단독에서도_관람객_수준은_바꿀_수_있다():
+    """`l` 도 단독에서 된다(설계 §1-2). 처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③)."""
+    h = _수준_감독()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    _모드(h, "solo")
+    h.d.set_level("초등")
+    s = h.d.snapshot()
+    assert (s["mode"], s["level"], s["level_pending"]) == ("solo", "중고등", "초등")
+
+
 def test_모르는_모드와_같은_모드는_경고만():
     h = Harness()
     _모드(h, "karaoke"); _모드(h, "podcast")

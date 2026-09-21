@@ -341,7 +341,11 @@ class Director:
 
     @property
     def solo_role(self) -> str | None:
-        """한 대만 붙어 있으면 그 역할. 둘 다거나 둘 다 없으면 None."""
+        """한 대만 붙어 있으면 그 역할. 둘 다거나 둘 다 없으면 None.
+
+        이것은 **1인 모드**(한 대가 끊겼을 때 남은 한 대가 양쪽 대사를 읽는 폴백)다 —
+        운영 모드 `solo`(단독, `mode`/`set_mode`)와 이름만 닮았지 다른 것이다.
+        """
         if len(self._connected) == 1:
             return next(iter(self._connected))
         return None
@@ -394,6 +398,10 @@ class Director:
             self._connected.discard(role)
             # 능력은 **그 연결의** 것이다 — 다시 붙는 앱은 새 hello 로 다시 알린다.
             self._caps.pop(role, None)
+            # 4단계: 단독 모드(`self._mode == "solo"`)에서 사회자가 끊기면 어떻게 할지 정한다.
+            # 지금은 모드가 solo 로 남고(`solo_available` 만 꺼진다) 아래 경고가 "1인 모드로
+            # 내려간다 — 도슨트가 양쪽 대사를 읽는다" 라고 찍히는데, 단독에는 읽을 대사가
+            # 없어 오해를 부른다. 1단계에서는 단독에 들어갈 로봇이 없어 닿지 않는 자리다.
             if self.solo_role is not None:
                 self._warn(
                     f"[{role}] 이 끊겼다 — 1인 모드로 내려간다. "
@@ -902,14 +910,9 @@ class Director:
                 self._warn(f"이미 {name} 모드다 — 바꿀 것이 없다")
                 return
             if name == "solo":
-                if "mc" not in self._connected:
-                    self._warn("단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다")
-                    return
-                if "solo" not in self._caps.get("mc", ()):
-                    self._warn(
-                        "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다"
-                        "(로봇 앱 업데이트 뒤에 켜진다)"
-                    )
+                refusal = self._solo_refusal_locked()
+                if refusal is not None:
+                    self._warn(refusal)
                     return
             # **말하던 것을 먼저 멈춘다 — 락 안에서, 내부 구현으로.** 공개 `abort()` 를
             # 여기서 부르면 `threading.Lock` 이 재진입을 안 받아 그 자리에서 영영 멈춘다
@@ -926,6 +929,23 @@ class Director:
             old, self._mode = self._mode, name
             # 4단계: 여기서 로봇에게 mode 를 보낸다(앱이 단독 루프로 전환)
             self._warn(f"모드를 {old} → {name} 로 바꿨다")
+
+    def _solo_refusal_locked(self) -> str | None:
+        """지금 단독을 켤 수 **없는** 이유(경고 문구 그대로). 켤 수 있으면 None.
+        **`self._lock` 을 쥔 채** 부른다.
+
+        `set_mode("solo")` 의 거절과 스냅샷의 `solo_available` 이 **이 한 곳**을 본다.
+        두 자리에 같은 식을 따로 적으면 한쪽만 고쳐졌을 때 페이지의 단독 버튼은 켜졌는데
+        누르면 거절되거나(또는 그 반대) — 화면과 감독이 어긋나도 둘 다 제 테스트는 통과한다.
+        """
+        if "mc" not in self._connected:
+            return "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다"
+        if "solo" not in self._caps.get("mc", ()):
+            return (
+                "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다"
+                "(로봇 앱 업데이트 뒤에 켜진다)"
+            )
+        return None
 
     def _refused_in_solo(self, what: str) -> bool:
         """단독이면 팟캐스트 진행 명령을 거절하고 True. **`self._lock` 을 쥔 채** 부른다.
@@ -993,10 +1013,10 @@ class Director:
                 "level": self._level_name,
                 "level_pending": self._level_pending,
                 # 운영 모드와 **단독을 지금 켤 수 있는가**. 뒤의 것은 `set_mode("solo")` 의
-                # 거절 조건과 같은 식이다 — 페이지가 단독 버튼을 켜 놓았는데 누르면 거절되는
-                # 어긋남이 없게. 사회자가 끊기면 꺼진다(능력도 끊길 때 지운다).
+                # 거절과 같은 판정(`_solo_refusal_locked`)을 쓴다 — 페이지가 단독 버튼을 켜
+                # 놓았는데 누르면 거절되는 어긋남이 없게. 사회자가 끊기면 꺼진다.
                 "mode": self._mode,
-                "solo_available": "mc" in self._connected and "solo" in self._caps.get("mc", ()),
+                "solo_available": self._solo_refusal_locked() is None,
             }
 
     def tick(self) -> None:
