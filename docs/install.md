@@ -110,19 +110,20 @@ Web Bluetooth 로 붙어 핫스팟을 리셋할 수 있다.
 공유기 관리페이지에서 **MAC 기준 DHCP 고정 IP** 를 배정한다.
 
 ```
-사회자  192.168.0.41
-도슨트  192.168.0.42
+사회자  192.168.0.4
+도슨트  192.168.0.5
 노트북  192.168.0.10
 ```
 
-주소는 예시다. 실제 대역에 맞춰 정하고 **적어둔다.** 이 뒤로 두 로봇을 가르는 것은
-IP 하나뿐이다. MAC 주소는 여기서만 쓰고 다시 볼 일이 없다.
+사회자·도슨트 두 주소가 `./reachy.sh start --robot` 의 **기본값**이다. 대역이 달라 다른 주소를
+주면 **적어두고** 기동할 때 `REACHY_MC_HOST`/`REACHY_DOCENT_HOST` 로 덮어쓴다. 이 뒤로 두 로봇을
+가르는 것은 IP 하나뿐이다. MAC 주소는 여기서만 쓰고 다시 볼 일이 없다.
 
 확인:
 
 ```bash
-curl -s http://192.168.0.41:8000/api/daemon/status | head -c 200
-curl -s http://192.168.0.42:8000/api/daemon/status | head -c 200
+curl -s http://192.168.0.4:8000/api/daemon/status | head -c 200
+curl -s http://192.168.0.5:8000/api/daemon/status | head -c 200
 ```
 
 둘 다 JSON 이 나와야 한다.
@@ -139,15 +140,15 @@ curl -s http://192.168.0.42:8000/api/daemon/status | head -c 200
 매번 치게 되고, 같은 명령 안의 `rssh` 단계에서 어차피 막힌다. 키를 넣는 것이 맞다.)
 
 ```bash
-ssh-copy-id pollen@192.168.0.41
-ssh-copy-id pollen@192.168.0.42
+ssh-copy-id pollen@192.168.0.4
+ssh-copy-id pollen@192.168.0.5
 ```
 
 비밀번호는 `root` 다. 확인:
 
 ```bash
-ssh -o BatchMode=yes pollen@192.168.0.41 echo ok     # ok 가 나와야 한다
-ssh -o BatchMode=yes pollen@192.168.0.42 echo ok
+ssh -o BatchMode=yes pollen@192.168.0.4 echo ok     # ok 가 나와야 한다
+ssh -o BatchMode=yes pollen@192.168.0.5 echo ok
 ```
 
 빠뜨리면 `robot up` 이 설정 동기화 단계에서 "config 를 쓰지 못했다" 로 멈춘다.
@@ -161,8 +162,8 @@ ssh -o BatchMode=yes pollen@192.168.0.42 echo ok
 시연장에서 "왜 얘가 저 대사를 하지" 를 추적하는 것보다 기동에서 막는 게 싸다.
 
 ```bash
-curl -s http://192.168.0.41:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
-curl -s http://192.168.0.42:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+curl -s http://192.168.0.4:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+curl -s http://192.168.0.5:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
 ```
 
 나온 값을 적어둔다. §8 의 `REACHY_MC_UNIT` / `REACHY_DOCENT_UNIT` 에 들어간다.
@@ -190,7 +191,7 @@ sysfs 를 읽으므로 시뮬에서는 언제나 `null` 이지만 실기에서�
 어긋나지 않는다.
 
 ```bash
-ssh pollen@192.168.0.41
+ssh pollen@192.168.0.4
 /venvs/mini_daemon/bin/python -c "from importlib.metadata import version; print(version('reachy-mini'))"
 ```
 
@@ -206,8 +207,8 @@ exit
 
 ```bash
 rsync -az --exclude '__pycache__/' --exclude 'build/' --exclude '*.egg-info/' \
-  apps/voice_chat/ pollen@192.168.0.41:/home/pollen/voice_chat/
-ssh pollen@192.168.0.41 "/venvs/apps_venv/bin/pip install /home/pollen/voice_chat"
+  apps/voice_chat/ pollen@192.168.0.4:/home/pollen/voice_chat/
+ssh pollen@192.168.0.4 "/venvs/apps_venv/bin/pip install /home/pollen/voice_chat"
 ```
 
 데몬은 `reachy_mini_apps` 엔트리포인트로 앱을 찾는다. `pyproject.toml` 이 선언한다 —
@@ -216,8 +217,8 @@ ssh pollen@192.168.0.41 "/venvs/apps_venv/bin/pip install /home/pollen/voice_cha
 ### 6.3 확인
 
 ```bash
-curl -s http://192.168.0.41:8000/api/apps/list-available/installed
-ssh pollen@192.168.0.41 "ls -d /venvs/apps_venv/lib/python*/site-packages/voice_chat"
+curl -s http://192.168.0.4:8000/api/apps/list-available/installed
+ssh pollen@192.168.0.4 "ls -d /venvs/apps_venv/lib/python*/site-packages/voice_chat"
 ```
 
 목록에 `voice_chat` 이 보여야 한다. 그리고 두 번째 명령이 찍는 경로가 **`python3.12`**
@@ -233,7 +234,7 @@ ssh pollen@192.168.0.41 "ls -d /venvs/apps_venv/lib/python*/site-packages/voice_
 
 ## 7. startup-app 비우기 (두 대 모두)
 
-로봇 브라우저 대시보드(`http://192.168.0.41:8000`)에서 **자동 시작 앱을 없음**으로 둔다.
+로봇 브라우저 대시보드(`http://192.168.0.4:8000`)에서 **자동 시작 앱을 없음**으로 둔다.
 
 LAN 으로 붙는 SDK 클라이언트는 로봇의 앱 락을 우회한다. 온보드 앱이 켜져 있으면 우리
 앱과 모터를 두고 싸운다.
@@ -277,8 +278,8 @@ export REACHY_DIRECTOR_PORT=8777
 ```bash
 .venv/bin/python -m stage          # 무대감독 — 이 터미널이 콘솔이다
 
-REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
-REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
+REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot up
+REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot up
 ```
 
 `robot up` 하나가 **백엔드 확인 → 추론 3종 → 예열 → config 동기화 → 로봇→맥 도달 확인 → 기상 →
@@ -305,8 +306,8 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 대상은 **환경변수 하나**로 갈린다. 두 대를 각각 부른다.
 
 ```bash
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot deploy   # 사회자
-REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot deploy   # 도슨트
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot deploy   # 사회자
+REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot deploy   # 도슨트
 ```
 
 채널은 둘이다. 용도에 따라 다른 길로 간다.
@@ -326,19 +327,19 @@ REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot deploy   # 도슨트
 ### 관리자 콘솔
 
 ```bash
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot logs      # 실시간 로그
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot status    # 데몬·모터·앱 상태
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot fix       # 복구
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot down      # 정지
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot logs      # 실시간 로그
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot status    # 데몬·모터·앱 상태
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot fix       # 복구
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot down      # 정지
 ```
 
 직접 붙으려면 평범한 SSH 다.
 
 ```bash
-ssh pollen@192.168.0.41
+ssh pollen@192.168.0.4
 ```
 
-브라우저로는 `http://192.168.0.41:8000` 이 대시보드, `http://192.168.0.41:8000/docs` 가
+브라우저로는 `http://192.168.0.4:8000` 이 대시보드, `http://192.168.0.4:8000/docs` 가
 REST API 문서다.
 
 ### 무대감독 콘솔 (노트북)

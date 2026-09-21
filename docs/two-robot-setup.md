@@ -53,18 +53,20 @@
 공유기 관리페이지에서 **MAC 기준 DHCP 고정 IP**를 배정한다.
 
 ```
-사회자  192.168.0.41
-도슨트  192.168.0.42
+사회자  192.168.0.4
+도슨트  192.168.0.5
 노트북  192.168.0.10        (무대감독·추론 3종이 여기)
 ```
 
-주소는 예시다. 실제 대역에 맞춰 정하고 **적어둔다** — 다음 단계에서 쓴다.
+이 두 주소가 `./reachy.sh start --robot` 의 **기본값**이다(§7). 대역이 달라 다른 주소를 주면
+**적어두고** 기동할 때 `REACHY_MC_HOST`/`REACHY_DOCENT_HOST` 로 덮어쓴다 — 안 그러면 기본값
+주소로 엉뚱한 기기를 찾는다.
 
 ### 확인
 
 ```bash
-curl -s http://192.168.0.41:8000/api/daemon/status | head -c 200
-curl -s http://192.168.0.42:8000/api/daemon/status | head -c 200
+curl -s http://192.168.0.4:8000/api/daemon/status | head -c 200
+curl -s http://192.168.0.5:8000/api/daemon/status | head -c 200
 ```
 
 둘 다 JSON이 나와야 한다. 안 나오면 IP가 틀렸거나 같은 망이 아니다.
@@ -78,8 +80,8 @@ curl -s http://192.168.0.42:8000/api/daemon/status | head -c 200
 추적하는 것보다 기동에서 막는 게 싸다.
 
 ```bash
-curl -s http://192.168.0.41:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
-curl -s http://192.168.0.42:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+curl -s http://192.168.0.4:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+curl -s http://192.168.0.5:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
 ```
 
 나온 값을 적어둔다. **`null` 이 나오면** 그 로봇은 Wireless 가 아니거나 오디오 장치가
@@ -169,8 +171,8 @@ export REACHY_DIRECTOR_PORT=8777
 로봇의 `~/.config/reachy-mini-voice-chat/config.json` 에 들어간다.
 
 ```bash
-REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
-REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
+REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot up
+REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot up
 ```
 
 `REACHY_ROLE` 없이 돌리면 그 로봇의 역할 설정을 **지운다**(1대 모드로 되돌린다).
@@ -179,7 +181,7 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 확인:
 
 ```bash
-ssh pollen@192.168.0.41 cat .config/reachy-mini-voice-chat/config.json
+ssh pollen@192.168.0.4 cat .config/reachy-mini-voice-chat/config.json
 # {"REACHY_LLM_URL": ..., "REACHY_ROLE": "mc", "REACHY_DIRECTOR_URL": "ws://192.168.0.10:8777"}
 ```
 
@@ -206,14 +208,20 @@ PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 로봇에서 손으로
 ```
 ① 공유기 켜기
 ② 로봇 2대 켜고 WiFi 붙는 것 확인 (curl 로 status 200)
-③ 한 줄로 전부     REACHY_MC_HOST=… REACHY_DOCENT_HOST=… ./reachy.sh start --robot
+③ 한 줄로 전부     ./reachy.sh start --robot
 ```
 
 `start --robot` 이 **추론 3종(LAN) → 예열 → 사회자·도슨트 각각(도달 확인 → 백엔드 상태/복구 →
 config 동기화 → 로봇→맥 도달 → 기상 → 앱) → 무대감독(0.0.0.0, 이 터미널이 콘솔) + 대시보드**
-를 순서대로 한다. 로봇 주소를 안 주면 `192.168.0.4` / `192.168.0.5` 다(§2 에서 정한 주소가 다르면 준다).
+를 순서대로 한다. 로봇 주소 기본값은 §2 의 `192.168.0.4`(사회자) / `192.168.0.5`(도슨트)다 —
+§2 에서 다른 주소를 줬을 때만 `REACHY_MC_HOST=… REACHY_DOCENT_HOST=…` 로 덮어쓴다.
 먼저 `--dry-run` 으로 계획만 찍어 볼 수 있다.
 
+- **추론 서버가 LAN 에서 안 보이면 멈춘다** — `start --sim`/`demo` 가 loopback 으로 띄워 남긴
+  서버를 재사용하면 로봇이 못 붙는다(`loopback 전용 … ./reachy.sh stop 후 다시`).
+- **TTS 가 안 떠도 멈춘다** — 로봇 앱은 이 노트북의 TTS 로만 말한다. 시뮬처럼 say 로 물러나는
+  길이 로봇에는 없다(`tail -30 .demo-logs/tts.log`).
+- 로봇에 앱이 이미 돌고 있으면(지난 시연의 옛 config) 멈추고 새 config 로 다시 띄운다 — 경고가 뜬다.
 - 한 대가 안 닿으면 **경고하고 건너뛴다** — 감독은 남은 한 대로 뜬다(1인 모드, 아래 ⚠️).
 - 무대감독·대시보드 포트(8777·8778)를 누가 쥐고 있으면 그게 무엇인지 보여 주고 멈춘다.
 - 콘솔 `q`(또는 Ctrl-C)로 끝내면 **두 로봇의 앱만** 멈춘다. 추론 3종은 남는다 — 전부 내리려면 `./reachy.sh stop`.

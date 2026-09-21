@@ -31,17 +31,18 @@
 
 두 로봇의 hostname 이 **둘 다 `reachy-mini`** 라 `.local` 은 못 믿는다.
 
-1. 공유기 관리 페이지에서 MAC 기준 DHCP 고정 IP 를 준다. 예: 사회자 `.41`, 도슨트 `.42`, 노트북 `.10`.
+1. 공유기 관리 페이지에서 MAC 기준 DHCP 고정 IP 를 준다: 사회자 `.4`, 도슨트 `.5`, 노트북 `.10`.
+   `./reachy.sh start --robot` 의 기본값이 이 두 주소다 — 다르게 주면 ⑤ 에서 덮어써야 한다.
 2. 확인:
    ```bash
-   curl -s http://192.168.0.41:8000/api/daemon/status | head -c 200
-   curl -s http://192.168.0.42:8000/api/daemon/status | head -c 200
+   curl -s http://192.168.0.4:8000/api/daemon/status | head -c 200
+   curl -s http://192.168.0.5:8000/api/daemon/status | head -c 200
    ```
    둘 다 JSON 이 나와야 한다.
 3. 기기 ID 를 채취해 적어 둔다 — 두 대가 뒤바뀌면 무대감독이 기동에서 거부한다:
    ```bash
-   curl -s http://192.168.0.41:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
-   curl -s http://192.168.0.42:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+   curl -s http://192.168.0.4:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
+   curl -s http://192.168.0.5:8000/api/daemon/status | python3 -c "import sys,json;print(json.load(sys.stdin)['hardware_id'])"
    ```
    `null` 이 나오면 그 로봇의 오디오 장치가 안 잡힌 것이다(시뮬은 언제나 null, 실기는 값이 있어야 한다).
 
@@ -54,15 +55,19 @@
 ```bash
 export REACHY_MC_UNIT=<③의 사회자 hardware_id>
 export REACHY_DOCENT_UNIT=<③의 도슨트 hardware_id>
-REACHY_MC_HOST=192.168.0.41 REACHY_DOCENT_HOST=192.168.0.42 ./reachy.sh start --robot --dry-run   # 계획만
-REACHY_MC_HOST=192.168.0.41 REACHY_DOCENT_HOST=192.168.0.42 ./reachy.sh start --robot
+./reachy.sh start --robot --dry-run   # 계획만 — 대상 192.168.0.4 / 192.168.0.5 가 찍혀야 한다
+./reachy.sh start --robot
 ```
 
 이 한 줄이 아래 ⑤~⑦ 을 순서대로 한다: 포트(8777·8778) 점검 → 추론 3종(LAN) → 예열 → 사회자·도슨트
 각각 **도달 확인 → 백엔드 상태/복구 → config 동기화(역할·감독 주소) → 로봇→맥 도달 → 기상 → 앱** →
 무대감독(`0.0.0.0`)을 **이 터미널에** 띄우고 대시보드(`http://127.0.0.1:8778/`)를 브라우저로 연다.
 
-- 로봇 주소를 안 주면 `192.168.0.4`(사회자) / `192.168.0.5`(도슨트) 다. ③ 에서 정한 주소와 다르면 반드시 준다.
+- 로봇 주소 기본값이 ③ 의 고정 IP 그대로다 — 사회자 `192.168.0.4`, 도슨트 `192.168.0.5`. 주소를
+  바꾼 경우에만 `REACHY_MC_HOST=… REACHY_DOCENT_HOST=… ./reachy.sh start --robot` 으로 덮어쓴다.
+- **추론 서버가 LAN 에서 안 보이면 멈춘다** — `start --sim`/`demo` 가 loopback 으로 띄워 남긴 서버가
+  그 경우다(`loopback 전용 … ./reachy.sh stop 후 다시`). **TTS 가 안 떠도 멈춘다** — 로봇 앱은 이
+  노트북의 TTS 로만 말하고 로봇에는 say 폴백이 없다(`tail -30 .demo-logs/tts.log`).
 - **한 대가 안 닿으면 경고하고 건너뛴다** — 감독은 남은 한 대로 1인 모드로 뜬다. 그 로봇을 살린 뒤
   다른 터미널에서 `REACHY_ROLE=… REACHY_ROBOT_HOST=… ./reachy.sh robot up` 으로 붙인다.
 - 로봇 config 에 들어가는 감독 주소는 **이 노트북**(`ws://<LAN IP>:8777`)이다. 셸에 시뮬 때의
@@ -109,8 +114,8 @@ export REACHY_DIRECTOR_PORT=8777
 노트북에서 로봇마다 한 번씩:
 
 ```bash
-REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
-REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
+REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot up
+REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot up
 ```
 
 `robot up` 하나가 **백엔드 확인 → 추론 3종 → 예열 → 로봇 config 동기화 → 로봇→맥 도달 확인 →
@@ -140,7 +145,9 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 4. **콘솔 `a` → `n`** → 다음 큐로 간다(정지 상태에서도 `n` 이 먹어야 한다).
 5. **로봇 한 대를 끈다** → 감독 콘솔에 `[docent] 이 끊겼다 — 1인 모드` → 남은 사회자가 양쪽 대사를
    읽는다. 도슨트를 다시 켜면(`robot up`) 2인 모드로 돌아온다.
-6. **사회자 앱만 껐다 켠다** (`REACHY_ROBOT_HOST=.41 ./reachy.sh robot down` → `robot up`) →
+6. **사회자 앱만 껐다 켠다** (`REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot down --keep-servers` →
+   `REACHY_ROLE=mc REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot up`. `--keep-servers` 를 빼면 노트북의
+   추론 3종까지 내린다) →
    다시 붙은 뒤 관람객 "다음" 이 먹어야 한다(마이크 재동기화).
 7. **`s` 두 번** → `거절됨: …` 이 뜨고 콘솔이 살아 있다. 도슨트 답은 한 번만 나온다.
 8. **긴 질문**(15초 넘게 이어 말하기) → 그 다음 보통 질문도 들려야 한다.
@@ -155,7 +162,8 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 | `r` | 이 섹션을 처음부터 |
 | `q` | 무대감독 종료 |
 
-로그: 노트북 쪽은 무대감독 터미널, 로봇 쪽은 `REACHY_ROBOT_HOST=<IP> ./reachy.sh robot logs`.
+로그: 노트북 쪽은 무대감독 터미널(`start` 로 띄웠으면 `./reachy.sh logs` 에도 남는다 —
+`.demo-logs/start-director.log`), 로봇 쪽은 `REACHY_ROBOT_HOST=<IP> ./reachy.sh robot logs`.
 "이상하다" 는 순서 하나다 — **로그 확인 → 재현 → 원인 → 고침 → 테스트로 박제**.
 
 ## ⑩ 정리
@@ -165,8 +173,8 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 부품별로 띄웠으면:
 
 ```bash
-REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot down --keep-servers
-REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot down
+REACHY_ROBOT_HOST=192.168.0.4 ./reachy.sh robot down --keep-servers
+REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot down
 ```
 
 두 번째 호출이 맥의 추론 3종까지 내린다. 콘솔은 `q`.
