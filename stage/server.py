@@ -33,7 +33,7 @@ class StageServer:
         self._conns: dict[str, object] = {}
         self._lock = threading.Lock()
         # 대시보드 허브 — **덕 타이핑**(`publish(kind, **fields)`만 있으면 된다).
-        # `None`(기본값)이면 아무것도 안 한다 — 하브 도입 전 호출부·테스트가
+        # `None`(기본값)이면 아무것도 안 한다 — 허브 도입 전 호출부·테스트가
         # 그대로 통과해야 한다.
         self._hub = hub
         # `mc_lines`/`level_name`/`docent_min_chars` 를 그대로 `Director` 로
