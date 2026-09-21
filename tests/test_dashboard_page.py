@@ -101,6 +101,37 @@ def test_로그와_런다운은_창_높이에_맞춰_안쪽에서_스크롤한�
         assert "contain: size" in rule, sel
 
 
+def test_레벨_버튼_클릭은_콘솔과_같은_l_접두어_명령을_보낸다():
+    """관람객 수준 버튼은 확인 단계 없이 바로 `l <이름>` 을 보낸다(계약:
+    level-switch-contract.md — "l <수준이름>", 콘솔과 같은 명령 문자열). 이 리터럴이
+    없으면 버튼이 서버가 모르는 명령을 보내거나 아예 아무것도 보내지 않는다."""
+    assert 'sendCmd("l " + name)' in _src()
+
+
+def test_hello의_levels_배열을_읽어_버튼을_짓는다():
+    """수준 이름 4개(levels.yaml 순서)는 hello.levels 로 온다(계약). 이 필드를 실제로
+    읽는 코드가 있어야 4버튼 세그먼트 컨트롤이 지어지고, 없으면(구버전 서버) 폴백
+    분기(평문 표시)로 빠질 수 있다."""
+    assert "msg.levels" in _src()
+
+
+def test_snapshot의_level_pending을_읽어_대기_표시를_한다():
+    """대기 중인 수준은 snapshot.level_pending 으로 온다(계약, 없으면 null). 이 필드를
+    실제로 읽어야 테두리 강조와 "→ 이름 (다음 큐부터)" 문구가 나타나고, null 일 때
+    감춘다."""
+    assert "s.level_pending" in _src()
+
+
+def test_레벨_버튼에는_키보드_단축키를_두지_않는다():
+    """레벨 변경은 확인 단계 없이 즉시 나간다(계약) — 그런 조작에 실수로 눌리기 쉬운
+    키보드 경로까지 얹으면 위험이 배가된다. P/R/N/S/A 단축키 테이블(KEY_CMD)에 레벨
+    명령("l")이 끼어들지 않았는지 본다."""
+    src = _src()
+    m = re.search(r"var KEY_CMD = \{([^}]*)\}", src)
+    assert m
+    assert '"l"' not in m.group(1)
+
+
 def test_자막은_고정_높이에서_스크롤해_하단을_창_밖으로_밀지_않는다():
     """자막이 `min-height` 였을 때 도슨트 해설(최대 280자)이 6~7줄로 늘어나 칸이 커지고,
     런다운·제어·로그를 창 밖으로 밀어 페이지 스크롤이 생겼다(사용자 요청: 전체화면에서
