@@ -30,7 +30,7 @@ class Harness:
 
     def __init__(
         self, generate=None, expect_units=None, after=("", ""),
-        sheet=None, level_name="일반", mc_lines=None,
+        sheet=None, level_name="일반", mc_lines=None, docent_min_chars=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -69,6 +69,11 @@ class Harness:
                 return generate(role, brief, history)
             return f"[{brief} 로 만든 대사]"
 
+        # `docent_min_chars` 는 넘기지 않으면 `Director` 의 기본값(MIN_CHARS=40)을
+        # 그대로 쓴다 — 이 파일의 기존 테스트 수십 개가 40을 전제하고 있어서
+        # 여기서 수준 프로필 값으로 바꾸면 그것들이 전부 흔들린다. 수준별 하한을
+        # 보는 테스트만 명시적으로 넘긴다.
+        kw = {} if docent_min_chars is None else {"docent_min_chars": docent_min_chars}
         self.d = Director(
             sheet,
             generate=_gen,
@@ -81,6 +86,7 @@ class Harness:
             warn=self.warnings.append,
             mc_lines=mc_lines,
             level_name=level_name,
+            **kw,
         )
 
     def types(self, role=None):
@@ -1103,6 +1109,59 @@ def test_생성_결과가_너무_짧으면_경고한다():
     h.d.start()
     h.ended("mc", "c1")
     assert any("짧다" in w for w in h.warnings), h.warnings
+
+
+# 50자. `MIN_CHARS`(40)는 넘지만 어느 수준의 `min_chars`(초등 70 … 전문가 260)에도
+# 못 미치는 길이다 — 고정 하한과 수준 하한이 **갈리는 구간**이 여기다.
+_50자 = "전파는 눈에 보이지 않지만 우리 생활 구석구석에 아주 널리 쓰입니다. 궁금한 점 있으세요?"
+
+
+def test_도슨트_분량_경고는_수준의_하한을_쓴다():
+    """설계 §5·§10 의 "목표 범위에 한참 못 미치면 경고" 가 절반만 구현돼 있었다.
+
+    `MIN_CHARS = 40` 이 고정이라, 일반(하한 180자)·전문가(하한 260자)에서
+    **50자짜리 해설이 나와도 경고가 한 줄도 없었다**(전체 리뷰 I1). 목표의
+    3분의 1도 안 되는 해설이 조용히 나가면 시연장에서 원인을 못 찾는다 —
+    "조용히 성능이 떨어진 채 도는 것이 가장 나쁘다" 그대로다.
+
+    하한을 40이 아닌 값(180)으로 박는다. 40으로 두면 기본값과 같아져 배선이
+    끊겨도 통과한다.
+    """
+    assert len(_50자) == 50, _50자
+    h = Harness(generate=lambda role, brief, hist: _50자, docent_min_chars=180)
+    h.d.start()
+    h.warnings.clear()
+    h.ended("mc", "c1")          # 도슨트 해설(`role="docent"`)이 나가는 자리
+    짧다 = [w for w in h.warnings if "너무 짧다" in w]
+    assert 짧다, h.warnings
+    assert "180" in 짧다[0], 짧다   # 무엇에 못 미쳤는지 로그가 말해야 한다
+
+
+def test_사회자_받아치기는_수준_하한이_아니라_고정_하한을_쓴다():
+    """사회자 몫은 수준과 무관하게 `MIN_CHARS`(40) 다.
+
+    `stage/prompts.py::_MC_MIN_CHARS` 가 사회자에게 수준과 **무관하게**
+    "40~120자" 를 주기 때문이다(해설하지 않는 역할이라 분량이 수준을 따르지
+    않는다). 여기에 도슨트 하한을 얹으면, 사회자가 프롬프트를 제대로 지켜
+    50자짜리 받아치기를 냈는데도 매 섹션 "너무 짧다" 경고가 뜬다 — 그러면
+    바로 옆의 **진짜** 신호(도슨트가 조용히 짧아지는 것)가 그 안에 묻힌다.
+
+    위 테스트와 **같은 50자 문자열**을 쓴다: 역할만 다르고 길이는 같은데 한쪽만
+    경고가 나야 갈림이 실제로 역할의 함수임이 드러난다.
+    """
+    def gen(role, brief, hist):
+        if role == "mc":
+            return _50자
+        return "해설입니다. " * 40      # 도슨트는 충분히 길다 — 경고 원인을 하나로 둔다
+
+    h = Harness(generate=gen, after=("고정 받아치기", ""), docent_min_chars=180)
+    h.d.start()
+    h.ended("mc", "c1")
+    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
+    h.warnings.clear()
+    h.ended("docent", "c1:docent")   # 받아치기(`role="mc"`)가 나가는 자리
+    assert [t for r, t in h.says() if r == "mc"][-1].startswith(_50자), h.says()
+    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
 
 
 def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는다():

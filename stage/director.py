@@ -87,13 +87,22 @@ HISTORY_MAX = 12
 QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음으로 넘어가 볼까요?"
 
 # 이보다 짧은 생성 결과는 해설이 아니다. 경고만 하고 그대로 쓴다 — 버리면
-# 정적이 되는데 그게 더 나쁘다. 목표 분량은 Task 3 에서 수준 프로필로 올라간다.
+# 정적이 되는데 그게 더 나쁘다. ~~목표 분량은 Task 3 에서 수준 프로필로 올라간다.~~
 #
-# 받아치기(`role="mc"`)에도 같은 값이 걸린다 — 우연이 아니라 같은 수치다.
+# **이제 갈린다 — 도슨트만 수준을 따른다.**
+#
+# 받아치기(`role="mc"`)에는 계속 이 값이 걸린다 — 우연이 아니라 같은 수치다.
 # `stage/prompts.py::_MC_MIN_CHARS` 가 사회자에게 "40~120자" 를 **수준과 무관하게**
 # 주므로(해설하지 않는 역할이라 분량이 수준을 따르지 않는다), 40자 미만은 사회자
 # 프롬프트를 모델이 안 지켰다는 뜻이다. 받아치기에 도슨트 분량을 따로 얹을 필요가
 # 없는 이유이기도 하다 — 역할별 분량은 프롬프트 쪽에 이미 갈려 있다.
+#
+# 반면 도슨트(`role="docent"`: 해설·질문 응답)의 하한은 `Director.__init__` 의
+# `docent_min_chars` 로 들어온다(`stage/__main__.py` 가 `level.min_chars` 를
+# 넘긴다). 이 값이 40으로 고정이던 동안에는 일반(하한 180자)·전문가(260자)에서
+# **50자짜리 해설이 나와도 경고가 한 줄도 없었다** — 설계 §5·§10 이 요구한
+# "목표 범위에 한참 못 미치면 경고" 가 절반만 돌았다(전체 리뷰 I1). 여기 남은
+# 40은 이제 "사회자 몫" 과 "배선이 안 닿았을 때의 안전한 기본값" 둘 다다.
 MIN_CHARS = 40
 
 # 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
@@ -147,6 +156,7 @@ class Director:
         warn: Callable[[str], None] = print,
         mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
+        docent_min_chars: int = MIN_CHARS,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -162,6 +172,12 @@ class Director:
         # 수준은 늘 "일반" 으로 굳어 이 태스크 전체가 무효가 된다.
         self._mc_lines = mc_lines or {}
         self._level_name = level_name
+        # 도슨트 발화의 분량 하한(`level.min_chars`). **수준 프로필 전체(`Level`)
+        # 를 받지 않는 이유**: 이 생성자가 테스트 수십 곳에 퍼져 있어 객체로
+        # 바꾸면 그 전부가 같이 흔들린다. 감독이 수준에서 실제로 쓰는 것은 이
+        # 수 하나뿐이라 수 하나만 받는다(이름은 `_level_name` 과 같은 결이다).
+        # 사회자 몫은 이 값을 쓰지 않는다 — 위 `MIN_CHARS` 주석 참고.
+        self._docent_min_chars = docent_min_chars
 
         self._machine = TurnMachine()
         self.history: list[dict] = []
@@ -1038,26 +1054,53 @@ class Director:
         # 그래서 길이를 잰다. 폴백에 이 검사를 걸면 "생성 실패" 경고 뒤에 "생성
         # 결과가 짧다" 는 **틀린** 경고가 덧붙어, 로그만 보면 LLM 이 실제로 37자를
         # 냈다고 오판한다(QA_FALLBACK 이 37자, MIN_CHARS 가 40이다).
-        self._warn_if_short(text, label)
+        self._warn_if_short(text, label, pending.role)
         return text
 
     def _take_fallback(self, pending: "_Pending") -> str:
         """폴백으로 물러난다. **예비는 진짜 생성 결과**라 길이 검사를 받는다.
 
-        큐시트 원문·지시문·사과문은 사람이 쓴 문장이라 MIN_CHARS 를 재면 헛경보가
+        큐시트 원문·지시문·사과문은 사람이 쓴 문장이라 길이를 재면 헛경보가
         난다(QA_FALLBACK 은 37자다). 반면 예비 받아치기는 LLM 이 낸 대사이므로,
         이 자리에서 안 재면 **예비를 읽은 섹션만 길이 감시의 사각지대**가 된다
         — 조용히 짧아지는 것을 잡으려고 만든 경고가 하필 그때 꺼진다.
+
+        재는 하한은 `pending.role` 이 정한다. 예비 받아치기는 `role="mc"` 라
+        `MIN_CHARS`(40) 고정이다 — 수준이 전문가(260자)여도 그렇다. 사회자
+        프롬프트가 수준과 무관하게 "40~120자" 라서, 여기에 도슨트 하한을 얹으면
+        정상적인 받아치기가 전부 미달로 찍힌다(`_warn_if_short` 주석 참고).
         """
         if pending.fallback_kind in _GENERATED_FALLBACKS:
-            self._warn_if_short(pending.fallback, pending.label)
+            self._warn_if_short(pending.fallback, pending.label, pending.role)
         return pending.fallback
 
-    def _warn_if_short(self, text: str, label: str) -> None:
+    def _warn_if_short(self, text: str, label: str, role: str) -> None:
         """**진짜 생성 결과**가 해설·반응이라기엔 짧으면 소리 낸다. 그대로 쓴다 —
-        버리면 정적이 되는데 그게 더 나쁘다."""
-        if len(text) < MIN_CHARS:
-            self._warn(f"[{label}] 생성 결과가 너무 짧다({len(text)}자) — 그대로 쓴다")
+        버리면 정적이 되는데 그게 더 나쁘다.
+
+        **하한은 역할의 함수다**(`role`, 분량이 슬롯이 아니라 역할을 따르는 것은
+        `stage/prompts.py::_amount_for` 와 같은 축이다):
+
+        - `role="docent"`(해설·질문 응답) → `self._docent_min_chars`
+          (= 그 수준의 `level.min_chars`). 40 고정이던 동안에는 일반 180자·
+          전문가 260자 목표에 50자짜리 해설이 나와도 경고가 없었다(리뷰 I1).
+        - `role="mc"`(받아치기) → `MIN_CHARS`(40) 고정. 사회자 프롬프트가 수준과
+          무관하게 "40~120자" 이기 때문이다 — 여기에 도슨트 하한을 얹으면 사회자가
+          지시를 **제대로 지켰는데도** 매 섹션 경고가 떠, 바로 옆의 진짜 신호
+          (도슨트가 조용히 짧아지는 것)가 그 안에 묻힌다.
+
+        `role` 을 라벨 문자열(`:qa`/`:after`)로 추측하지 않는다 — 역할은 이미
+        `_spawn_generate(slot, role, …)` 로 들어와 `_Pending.role` 에 실려 여기까지
+        온다. 슬롯 이름을 `_Pending` 에 실어 `"docent"` 하드코딩 버그를 고친 것과
+        **같은 방식**이다(`on_speaking_ended` 의 세대 재확인 주석 참고).
+        """
+        limit = self._docent_min_chars if role == "docent" else MIN_CHARS
+        if len(text) < limit:
+            # **무엇에 못 미쳤는지 같이 적는다.** 하한이 역할·수준마다 다르므로
+            # 글자 수만 찍으면 로그를 보는 사람이 그게 미달인지 판단할 수 없다.
+            self._warn(
+                f"[{label}] 생성 결과가 너무 짧다({len(text)}자, 하한 {limit}자) — 그대로 쓴다"
+            )
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()

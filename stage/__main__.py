@@ -115,9 +115,15 @@ def main() -> None:
     # 데도 안 남으면 지켜지지 않는다 — 캐시를 통째로 못 읽어 왔거나(배선
     # 문제) 사전 생성을 깜빡한 채로 기동해도 콘솔에는 아무 신호가 없었다.
     print(f"여는 대사 캐시 {len(mc_lines)}개 로드됨 ({cache_path()})", flush=True)
+    # `docent_min_chars=level.min_chars` — 도슨트 해설의 분량 미달 경고가 수준을
+    # 따르게 하는 유일한 배선이다. 감독의 기본값은 `MIN_CHARS`(40)이라 여기서
+    # 안 넘기면 일반(180자)·전문가(260자) 목표에 50자짜리 해설이 나와도 로그에
+    # 아무것도 안 남는다(전체 리뷰 I1). `Level` 객체째 넘기지 않는 이유는
+    # `Director.__init__` 의 `_docent_min_chars` 주석에 있다.
     server = StageServer(
         CueSheet(load_cues()), build_generate(level), expect_units=expect,
         mc_lines=mc_lines, level_name=level.name,
+        docent_min_chars=level.min_chars,
     )
     stop = threading.Event()
     threading.Thread(

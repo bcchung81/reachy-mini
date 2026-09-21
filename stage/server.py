@@ -12,7 +12,7 @@ from typing import Callable
 from websockets.sync.server import serve as _ws_serve
 
 from stage.cues import CueSheet
-from stage.director import Director, UnitMismatch
+from stage.director import MIN_CHARS, Director, UnitMismatch
 from stage.machine import Command
 from stage.protocol import ROLES, ProtocolError, decode, encode
 
@@ -26,19 +26,21 @@ class StageServer:
         warn: Callable[[str], None] = print,
         mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
+        docent_min_chars: int = MIN_CHARS,
     ) -> None:
         self._warn = warn
         self._conns: dict[str, object] = {}
         self._lock = threading.Lock()
-        # `mc_lines`/`level_name` 을 그대로 `Director` 로 흘려보낸다 — 여기서
-        # 기본값으로 삼키면(예: 인자를 받고 안 넘기면) `Director` 는 늘
-        # 기본값(빈 캐시·"일반")으로 돌고, `main()` 이 아무리 제대로 읽어도
-        # 이 자리에서 끊긴다. `stage/__main__.py::main()` 이 이 값을 채워
-        # 넘긴다.
+        # `mc_lines`/`level_name`/`docent_min_chars` 를 그대로 `Director` 로
+        # 흘려보낸다 — 여기서 기본값으로 삼키면(예: 인자를 받고 안 넘기면)
+        # `Director` 는 늘 기본값(빈 캐시·"일반"·40자)으로 돌고, `main()` 이
+        # 아무리 제대로 읽어도 이 자리에서 끊긴다. `stage/__main__.py::main()`
+        # 이 이 값들을 채워 넘긴다.
         self.director = Director(
             sheet, generate=generate, send=self._send,
             expect_units=expect_units, warn=warn,
             mc_lines=mc_lines, level_name=level_name,
+            docent_min_chars=docent_min_chars,
         )
 
     # ── 전송 ──────────────────────────────────────────────────────

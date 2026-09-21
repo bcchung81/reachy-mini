@@ -490,6 +490,23 @@ def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달�
         t.join(timeout=2)
 
 
+def test_StageServer가_도슨트_분량_하한을_감독까지_전달한다():
+    """전체 리뷰 I1 — `stage/__main__.py` → `StageServer` → `Director` 배선의
+    가운데 토막이다. 여기서 기본값(`MIN_CHARS`=40)으로 삼키면 `main()` 이
+    `level.min_chars` 를 아무리 제대로 읽어도 수준별 하한이 감독까지 못 간다
+    — `mc_lines`/`level_name` 이 정확히 그렇게 끊길 뻔했던 자리다.
+
+    **40이 아닌 값으로 본다**(전문가 260). 기본값과 같은 값으로 단언하면 배선이
+    끊겨도 통과한다.
+    """
+    s = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 대사",
+        docent_min_chars=260,
+    )
+    assert s.director._docent_min_chars == 260
+
+
 def test_tick_이_터져도_감시_루프는_계속_돌고_소리를_낸다():
     """**감시 루프는 한 번 터졌다고 죽지 않는다.**
 

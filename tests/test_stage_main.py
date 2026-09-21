@@ -242,6 +242,42 @@ def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴
     )
 
 
+def test_main이_수준의_분량_하한을_StageServer에_넘긴다(monkeypatch):
+    """전체 리뷰 I1 — 분량 미달 경고만 수준이 닿지 않던 자리의 배선이다.
+
+    `Director` 의 `docent_min_chars` 기본값은 `MIN_CHARS`(40)이고, `main()` 이
+    `level.min_chars` 를 채워 넘기지 않으면 일반(180)·전문가(260)에서 50자짜리
+    해설이 나와도 경고가 없다 — 설계 §5·§10 이 요구한 경고가 절반만 도는 상태로
+    조용히 굳는다.
+
+    **기본값(40)이 아닌 값으로 확인한다**: 초등의 `min_chars` 는 70이다. 40으로
+    보면 배선이 끊겨도 통과한다(이 저장소가 반복해 밟은 함정 3).
+    """
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
+    seen: dict[str, object] = {}
+
+    class _멈춤(Exception):
+        pass
+
+    def fake_server(*a, **kw):
+        seen["docent_min_chars"] = kw.get("docent_min_chars")
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", fake_server)
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
+
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    from stage.levels import load_levels
+
+    초등_하한 = load_levels()["초등"].min_chars
+    assert 초등_하한 == 70, "data/levels.yaml 의 초등 min_chars 가 바뀌었다 — 이 테스트를 갱신한다"
+    assert seen["docent_min_chars"] == 초등_하한, (
+        f"main() 이 level.min_chars 를 StageServer 에 넘기지 않았다 — {seen['docent_min_chars']!r} 이 닿았다"
+    )
+
+
 def test_기동_로그에_캐시_개수가_찍힌다(monkeypatch, capsys):
     """리뷰 Important 2 — "시연 전에 사람이 확인한다" 는 이 캐시의 존재
     이유가, 정작 기동 로그에 몇 개를 읽었는지 한 줄도 안 남으면 지켜지지
