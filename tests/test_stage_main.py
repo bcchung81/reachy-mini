@@ -462,3 +462,40 @@ def test_모듈_문서에_수준_환경변수가_적혀_있다():
     assert "REACHY_AUDIENCE_LEVEL" in doc
     assert "REACHY_LEVELS_PATH" in doc
     assert "REACHY_MC_LINES_PATH" in doc
+
+
+def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보드를_띄운다(monkeypatch):
+    """REACHY_DASHBOARD_HOST/PORT 가 그대로 닿는지 — 기본값(127.0.0.1:8778)이
+    아닌 값으로 본다(함정 3)."""
+    monkeypatch.setenv("REACHY_DASHBOARD_HOST", "0.0.0.0")
+    monkeypatch.setenv("REACHY_DASHBOARD_PORT", "9911")
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen = {}
+
+    class 멈춤(Exception):
+        pass
+
+    class 가짜서버:
+        def __init__(self, *a, **kw):
+            seen["hub"] = kw.get("hub")
+            self.director = object()
+
+        def serve(self, host, port):
+            class S:
+                def serve_forever(self): pass
+                def shutdown(self): pass
+            return S()
+
+        def tick_forever(self, *a): pass
+
+    def 가짜대시보드(hub, director, host, port, warn):
+        seen.update(dash_hub=hub, host=host, port=port)
+        raise 멈춤()
+
+    monkeypatch.setattr(stage_main, "build_generate", lambda level: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
+    monkeypatch.setattr(stage_main, "start_dashboard", 가짜대시보드)
+    with pytest.raises(멈춤):
+        stage_main.main()
+    assert seen["hub"] is not None and seen["dash_hub"] is seen["hub"]
+    assert (seen["host"], seen["port"]) == ("0.0.0.0", 9911)

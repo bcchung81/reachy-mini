@@ -10,6 +10,8 @@
     REACHY_AUDIENCE_LEVEL  관람객 수준 — 초등/중고등/일반/전문가 (기본 일반)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
     REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
+    REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만)
+    REACHY_DASHBOARD_PORT  기본 8778
 """
 
 import os
@@ -18,6 +20,10 @@ import sys
 import threading
 
 from stage.cues import CueSheet, load_cues
+from stage.dashboard import DEFAULT_HOST as DASH_HOST
+from stage.dashboard import DEFAULT_PORT as DASH_PORT
+from stage.dashboard import start_dashboard
+from stage.dashboard_hub import DashboardHub, tee
 from stage.mc_cache import cache_path, load_mc_lines
 from stage.server import StageServer
 
@@ -240,6 +246,12 @@ def main() -> None:
     # 데도 안 남으면 지켜지지 않는다 — 캐시를 통째로 못 읽어 왔거나(배선
     # 문제) 사전 생성을 깜빡한 채로 기동해도 콘솔에는 아무 신호가 없었다.
     print(f"여는 대사 캐시 {len(mc_lines)}개 로드됨 ({cache_path()})", flush=True)
+    # 허브는 **쌓기만** 한다(`DashboardHub.publish`) — 감독이 락을 쥔 채 부르는
+    # 자리(`StageServer._send`, 경고 콜백)에서도 안전하다. `warn` 은 터미널과
+    # 허브 양쪽으로 가는 tee — 대시보드가 없거나 죽어 있어도 터미널 경고는
+    # 그대로 살고, 대시보드가 붙어 있으면 같은 경고가 화면에도 뜬다.
+    hub = DashboardHub()
+    warn = tee(lambda m: print(m, flush=True), lambda m: hub.publish("warn", text=m))
     # `docent_min_chars=level.min_chars` — 도슨트 해설의 분량 미달 경고가 수준을
     # 따르게 하는 유일한 배선이다. 감독의 기본값은 `MIN_CHARS`(40)이라 여기서
     # 안 넘기면 일반(180자)·전문가(260자) 목표에 50자짜리 해설이 나와도 로그에
@@ -249,6 +261,7 @@ def main() -> None:
         CueSheet(load_cues()), build_generate(level), expect_units=expect,
         mc_lines=mc_lines, level_name=level.name,
         docent_min_chars=level.min_chars,
+        warn=warn, hub=hub,
     )
     stop = threading.Event()
     threading.Thread(
@@ -260,11 +273,24 @@ def main() -> None:
     srv = server.serve(host, port)
     print(f"무대감독 대기 중 — ws://{host}:{port}")
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    # `run_console` **앞에** 띄운다 — 콘솔은 표준입력을 막고 버티므로, 뒤에 두면
+    # 대시보드가 절대 뜨지 않는다. 이 서버 자신의 `warn` 은 **터미널로만**
+    # 낸다(`lambda m: print(...)`, tee 가 아니다) — tee 를 넘기면 대시보드 자신의
+    # 실패 경고가 다시 허브를 거쳐 대시보드로 흘러 자기 자신을 부르는 꼴이 된다
+    # (`stage/dashboard.py` 머리 docstring과 같은 이유).
+    dash = start_dashboard(
+        hub, server.director,
+        os.environ.get("REACHY_DASHBOARD_HOST", DASH_HOST),
+        int(os.environ.get("REACHY_DASHBOARD_PORT", str(DASH_PORT))),
+        warn=lambda m: print(m, flush=True),
+    )
     try:
         run_console(server.director)
     finally:
         stop.set()
         srv.shutdown()
+        if dash is not None:
+            dash.shutdown()
 
 
 if __name__ == "__main__":
