@@ -248,8 +248,9 @@
          비우고 다시 짓는다, buildLevelControl 과 같은 이유). modes 가 없으면(구버전
          서버) 이 컨테이너 자체를 숨긴다 — 던지지 않는다(계약: never throw). -->
     <span id="mode" class="mode-group" hidden></span>
-    <!-- 단독을 못 켜는 이유 안내("단독: 로봇 앱 업데이트 후") — snapshot.solo_available
-         이 거짓이고 지금 모드가 solo 가 아닐 때만 채워진다. -->
+    <!-- 단독을 못 켜는 이유 안내 — 사회자가 안 붙었으면 "단독: 사회자 로봇 연결 후", 붙었는데
+         앱이 단독을 모르면 "단독: 로봇 앱 업데이트 후". snapshot.solo_available 이 거짓이고
+         지금 모드가 solo 가 아닐 때만 채워진다. -->
     <span id="mode-note" class="mode-note" hidden></span>
     <span id="cue-label" class="cue-label">CUE — / —</span>
     <span id="cue-topic" class="cue-topic"></span>
@@ -833,7 +834,11 @@ function renderModeState(s) {
   var soloLocked = !s.solo_available && s.mode !== "solo";
   if (modeButtons.solo) modeButtons.solo.disabled = soloLocked;
   if (soloLocked) {
-    note.textContent = "단독: 로봇 앱 업데이트 후";
+    // 잠긴 이유가 둘이다(감독의 거절 경고도 둘) — 사회자 로봇이 안 붙었거나, 붙었는데 그 앱이
+    // 단독을 모른다(caps). 하나로 뭉개면 사회자가 끊긴 것을 "앱 업데이트" 문제로 오인해 엉뚱한
+    // 곳을 본다(최종 리뷰 M4). connected 가 없는 구버전 서버면 "사회자 연결" 쪽으로 읽힌다.
+    var mcConnected = Array.isArray(s.connected) && s.connected.indexOf("mc") !== -1;
+    note.textContent = mcConnected ? "단독: 로봇 앱 업데이트 후" : "단독: 사회자 로봇 연결 후";
     note.hidden = false;
   } else {
     note.textContent = "";
