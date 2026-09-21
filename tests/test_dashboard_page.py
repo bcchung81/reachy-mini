@@ -1,3 +1,4 @@
+import json
 import pathlib
 import re
 
@@ -86,6 +87,27 @@ def _css_rule(src: str, selector: str) -> str:
     return m.group(1)
 
 
+def _media_block(src: str, needle: str) -> str:
+    """`@media (...needle...) { ... }` 블록 전체 본문(중첩 규칙 포함).
+
+    `_css_rule` 처럼 첫 `}` 에서 끊으면 media 블록 안의 개별 규칙(`.foo { … }`)의
+    닫는 중괄호에서 잘려 블록 전체를 못 본다 — 중첩 깊이를 세어 짝이 맞는 곳까지 읽는다.
+    """
+    i = src.index(needle)
+    start = src.index("{", i)
+    depth = 0
+    j = start
+    while True:
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        j += 1
+    return src[start + 1 : j]
+
+
 def test_로그와_런다운은_창_높이에_맞춰_안쪽에서_스크롤한다():
     """body 가 `min-height: 100vh` 면 로그·런다운이 길어질수록 페이지가 늘어나 최신 로그가
     창 밖으로 밀려났다(사용자 요청: 이벤트 로그는 세로 스크롤, 브라우저 크기에 맞게).
@@ -124,12 +146,38 @@ def test_snapshot의_level_pending을_읽어_대기_표시를_한다():
 
 def test_레벨_버튼에는_키보드_단축키를_두지_않는다():
     """레벨 변경은 확인 단계 없이 즉시 나간다(계약) — 그런 조작에 실수로 눌리기 쉬운
-    키보드 경로까지 얹으면 위험이 배가된다. P/R/N/S/A 단축키 테이블(KEY_CMD)에 레벨
-    명령("l")이 끼어들지 않았는지 본다."""
+    키보드 경로까지 얹으면 위험이 배가된다.
+
+    **긍정 단언으로 본다** — `'"l"' not in ...` 같은 부정 단언만 두면(수준 리뷰 Minor 4,
+    함정 ④) KEY_CMD 에 아무 키나(예: 수준 단축키를 다른 글자로 붙여도) 걸리지 않는다.
+    지금 다섯 키(P/R/N/S/A)로 리터럴 통째 비교해, 키가 하나라도 더 붙으면(레벨이든
+    다른 무엇이든) 실패한다."""
     src = _src()
     m = re.search(r"var KEY_CMD = \{([^}]*)\}", src)
     assert m
-    assert '"l"' not in m.group(1)
+    key_cmd = json.loads("{" + m.group(1) + "}")
+    assert key_cmd == {"KeyP": "p", "KeyR": "r", "KeyN": "n", "KeyS": "s", "KeyA": "a"}
+
+
+def test_좁은_폭에서는_수준_캡션과_대기_문구를_숨기고_cue_label은_말줄임한다():
+    """헤더 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 약 500px 로 늘어나면, 줄어들지
+    못하는 `.cue-label`(nowrap)이 "관람객 수준" 캡션 위에 겹쳤다(1024px 실측, 수준
+    리뷰 Minor 2). `.cue-label` 이 줄어들 수 있어야 하고(min-width:0 + 말줄임), 좁은
+    폭에서는 캡션·대기 문구를 접어 자리를 낸다 — 수준 버튼(조작)과 연결 배지(경고)는
+    시연 중 언제나 보여야 하므로 이 media 블록 안에서 숨기지 않는다."""
+    src = _src()
+    label_rule = _css_rule(src, ".cue-label")
+    assert "min-width: 0" in label_rule
+    assert "overflow: hidden" in label_rule
+    assert "text-overflow: ellipsis" in label_rule
+
+    media = _media_block(src, "max-width: 1180px")
+    assert ".level-caption" in media and "display: none" in media
+    assert ".level-pending-text" in media
+    # 버튼·연결 배지는 좁은 폭에서도 항상 보인다 — 이 media 블록에 그 선택자가
+    # 등장하지 않는다는 것이 "숨기지 않는다" 는 뜻이다.
+    assert ".level-btn" not in media
+    assert "#conn" not in media and ".conn" not in media
 
 
 def test_자막은_고정_높이에서_스크롤해_하단을_창_밖으로_밀지_않는다():

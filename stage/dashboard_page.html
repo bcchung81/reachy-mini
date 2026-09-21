@@ -52,7 +52,11 @@
   header .left { display: flex; align-items: center; gap: 16px; min-width: 0; }
   header .right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: #9AA3AE; flex: 0 0 auto; }
   .app-title { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
-  .cue-label { font-size: 13px; color: #9AA3AE; white-space: nowrap; }
+  /* 헤더 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 약 500px 로 늘어나면, flex item
+     기본 최소폭(nowrap 텍스트는 줄어들지 않는다)에 걸려 이 라벨이 "관람객 수준" 캡션
+     위로 겹쳤다(1024px 실측, 수준 리뷰 Minor 2). min-width:0 으로 줄어들 수 있게 하고
+     넘치면 말줄임한다 — white-space:nowrap 은 그대로 둔다(말줄임은 한 줄 전제). */
+  .cue-label { font-size: 13px; color: #9AA3AE; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .cue-topic {
     font-size: 12px; color: #6B7684; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; max-width: 320px;
@@ -193,6 +197,17 @@
   .log-time { color: #6B7684; flex: 0 0 auto; }
   .log-text { color: #C9CFD6; overflow-wrap: anywhere; }
   .log-line.warn .log-text { color: #F0A64A; }
+
+  /* 1280px 아래(태블릿 접속, 오프라인 테스트 절차 참고)에서는 `.cue-label` 이
+     min-width:0 으로 줄어들어도 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 자리를
+     다 못 내준다(1024px 실측). "관람객 수준" 캡션과 "→ 이름 (다음 큐부터)" 대기
+     문구는 정보용 텍스트라 좁은 폭에서 먼저 접는다 — 수준 버튼(.level-btn, 클릭으로
+     수준을 바꾸는 조작)과 연결 배지(#conn, 연결 끊김 경고)는 시연 중 언제나 보여야
+     하므로 여기서 숨기지 않는다. */
+  @media (max-width: 1180px) {
+    .level-caption { display: none; }
+    .level-pending-text { display: none; }
+  }
 </style>
 </head>
 <body>
