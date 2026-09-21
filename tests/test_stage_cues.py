@@ -329,7 +329,15 @@ def test_브리프가_없으면_옛_지시문으로_폴백한다(tmp_path):
 
 def test_수준이_하나라도_빠지면_소리_내서_실패한다(tmp_path):
     """한 수준만 빠지면 그 수준의 시연이 통째로 옛 지시문으로 도는데 로그에는
-    아무것도 안 남는다 — 그래서 일부만 채운 briefs 는 기동에서 막는다."""
+    아무것도 안 남는다 — 그래서 일부만 채운 briefs 는 기동에서 막는다.
+
+    match 는 "빠진 수준이 있다" 로 잡는다. 예전에는 `match="수준"` 이었는데,
+    모든 `CueError` 메시지에 파일 경로가 들어가고 그 경로에는 pytest 가
+    `tmp_path` 로 넣어 주는 **테스트 함수 이름**(이 안에 "수준" 이 들어 있다)이
+    그대로 박힌다 — 검증을 통째로 지워도 다른 에러의 경로 문자열과 우연히
+    일치해 통과한다. 바로 아래 `test_briefs_가_매핑이_아니면_거절한다` 가
+    같은 함정을 이미 알고 피한 전례다.
+    """
     p = write(tmp_path, """
 - id: "t1"
   title: "테스트"
@@ -339,7 +347,7 @@ def test_수준이_하나라도_빠지면_소리_내서_실패한다(tmp_path):
   briefs:
     초등: {mc_brief: "a", docent_brief: "b"}
 """)
-    with pytest.raises(CueError, match="수준"):
+    with pytest.raises(CueError, match="빠진 수준이 있다"):
         load_cues(p)
 
 
@@ -362,7 +370,13 @@ def test_briefs_가_매핑이_아니면_거절한다(tmp_path):
 
 def test_브리프_항목의_docent_brief가_비면_거절한다(tmp_path):
     """`levels.py` 의 선례(리뷰: 존재만 보고 타입을 안 봤다)와 같은 자리다 —
-    briefs 안의 값도 비어 있으면 조용히 빈 지시문으로 LLM 이 돈다."""
+    briefs 안의 값도 비어 있으면 조용히 빈 지시문으로 LLM 이 돈다.
+
+    match 는 "비어 있지 않은 문자열이어야" 로 잡는다. `match="docent_brief"` 는
+    `tmp_path` 에 박히는 **테스트 함수 이름**에 "docent_brief" 가 들어 있어
+    검증을 지워도 다른 에러의 경로와 우연히 일치한다(위
+    `test_briefs_가_매핑이_아니면_거절한다` 의 전례와 같은 함정).
+    """
     p = write(tmp_path, """
 - id: "t1"
   title: "테스트"
@@ -375,7 +389,7 @@ def test_브리프_항목의_docent_brief가_비면_거절한다(tmp_path):
     일반: {mc_brief: "a", docent_brief: "b"}
     전문가: {mc_brief: "a", docent_brief: "b"}
 """)
-    with pytest.raises(CueError, match="docent_brief"):
+    with pytest.raises(CueError, match="비어 있지 않은 문자열이어야"):
         load_cues(p)
 
 

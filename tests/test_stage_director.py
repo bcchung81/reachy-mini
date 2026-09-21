@@ -1659,22 +1659,42 @@ def test_큐시트로_물러난_받아치기에는_안내를_덧붙이지_않는
 
 
 def test_창구_안내_고정_문장은_돌아가며_쓴다():
-    """같은 말이 19번 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다."""
+    """같은 말이 19번 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다.
+
+    **한 바퀴를 다 돌려 순서까지 본다.** 예전에는 두 섹션만 돌고
+    `used[0] != used[1]` 만 봤는데, 그러면 `_q_i += 1` 을 `+= 2` 로 바꿔도
+    (연속한 둘은 여전히 다르므로) 통과한다 — 커서가 한 칸씩 도는지는
+    아무것도 안 지켰다(전체 리뷰). 같은 파일의
+    `test_질문_확인_멘트는_돌아가며_쓴다` 가 `len(set(seen)) == len(QA_ACK_LINES)`
+    로 한 바퀴를 보는 것이 올바른 모양이고, 여기에 **순서 리터럴**까지 더해
+    건너뛰기를 잡는다(`QUESTION_PROMPTS` 가 셋이라 두 칸씩 돌아도 집합은
+    똑같이 셋이 된다 — 집합만으로는 `+= 2` 를 못 잡는다).
+    """
     from stage.cues import QUESTION_PROMPTS
 
-    h = Harness(generate=lambda role, brief, hist: "그렇군요.", after=("고정1", "고정2"))
+    # 한 바퀴(=`QUESTION_PROMPTS` 길이)를 돌 만큼의 섹션을 만든다. 기본 시트는
+    # 두 큐뿐이라 3번째를 못 돈다.
+    n = len(QUESTION_PROMPTS)
+    sheet = CueSheet([
+        Cue(f"c{i}", f"{i}번", f"사회자 {i}번 대사", f"{i}번 지시", "partner",
+            mc_after=f"고정{i}")
+        for i in range(1, n + 1)
+    ])
+    h = Harness(generate=lambda role, brief, hist: "그렇군요.", sheet=sheet)
     h.d.start()
     seen = []
-    for cue in ("c1", "c2"):
+    for i in range(1, n + 1):
+        cue = f"c{i}"
         h.ended("mc", cue)
         h.clear()
         h.ended("docent", f"{cue}:docent")
         seen.append([t for r, t in h.says() if r == "mc"][0])
         h.ended("mc", f"{cue}:after")
-        if cue == "c1":
+        if i < n:
             h.d.on_heard("다음")
     used = [next(q for q in QUESTION_PROMPTS if q in s) for s in seen]
-    assert used[0] != used[1], seen
+    assert len(set(used)) == n, used          # 한 바퀴에 같은 말이 두 번 나오지 않는다
+    assert used == list(QUESTION_PROMPTS), used   # 그리고 한 칸씩, 순서대로 돈다
 
 
 def test_마지막_큐의_받아치기에는_진행_안내를_붙이지_않는다():
@@ -2276,20 +2296,30 @@ def test_다시_묻는_말은_생성을_띄우지_않는다():
 
 
 def test_다시_묻는_말은_돌아가며_쓴다():
-    """같은 말이 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다."""
+    """같은 말이 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다.
+
+    **한 바퀴를 다 돌려 순서까지 본다.** 두 번만 돌고 `seen[0] != seen[1]` 만
+    보면 `_q_i += 1` 을 `+= 2` 로 바꿔도 통과한다 — 연속한 둘은 여전히 다르다
+    (전체 리뷰). `test_질문_확인_멘트는_돌아가며_쓴다` 의 모양(한 바퀴 +
+    `len(set(...))`)에 순서 리터럴을 더한다: `QUESTION_PROMPTS` 가 셋이라
+    두 칸씩 돌아도 한 바퀴의 **집합**은 똑같이 셋이 되기 때문이다.
+    """
+    from stage.cues import QUESTION_PROMPTS
+
     h = Harness()
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")
     seen = []
-    for _ in range(2):
+    for _ in range(len(QUESTION_PROMPTS)):
         h.d.on_heard("질문")
         h.ended("mc", "c1:ack")
         h.clear()
         h.ended("docent", "c1:qa")
         seen.append(h.says()[0][1])
         h.ended("mc", "c1:reask")
-    assert seen[0] != seen[1], seen
+    assert len(set(seen)) == len(QUESTION_PROMPTS), seen
+    assert seen == list(QUESTION_PROMPTS), seen
 
 
 def test_받아치기_안내와_다시_묻는_말이_커서를_함께_쓴다():
@@ -2300,6 +2330,11 @@ def test_받아치기_안내와_다시_묻는_말이_커서를_함께_쓴다():
     커서(`_q_i`)를 따로 두면 둘 다 0번을 집어, 관람객은 받아치기 끝에
     "궁금한 점 있으실까요?" 를 듣고 질문에 답을 들은 직후 **똑같은 문장**을 또
     듣는다 — 돌아가며 쓰는 이유(녹음처럼 들린다)가 바로 이 자리에서 무너진다.
+
+    **어느 칸을 집었는지까지 본다.** `reask != used[0]` 만 보면 커서가 한 칸이
+    아니라 두 칸씩 돌아도(`_q_i += 2`) 통과한다 — 두 자리가 커서를 공유하는지는
+    보지만 그 커서가 **한 칸씩** 도는지는 아무것도 안 지킨다(전체 리뷰). 0번
+    다음이 1번이라고 리터럴로 박는다.
     """
     from stage.cues import QUESTION_PROMPTS
 
@@ -2312,14 +2347,16 @@ def test_받아치기_안내와_다시_묻는_말이_커서를_함께_쓴다():
     after_line = [t for r, t in h.says() if r == "mc"][0]
     used = [q for q in QUESTION_PROMPTS if q in after_line]
     assert len(used) == 1, (after_line, used)  # 안내가 실제로 붙었다
+    assert used[0] == QUESTION_PROMPTS[0], (after_line, used)   # 첫 자리는 0번
     h.ended("mc", "c1:after")
     h.d.on_heard("마르코니가 누구예요")
     h.ended("mc", "c1:ack")
     h.clear()
     h.ended("docent", "c1:qa")                # 다시 묻기
     reask = h.says()[0][1]
-    assert reask in QUESTION_PROMPTS, reask
     assert reask != used[0], (after_line, reask)
+    # 커서를 **공유하면서 한 칸씩** 돈다 — 0번 다음은 1번이다.
+    assert reask == QUESTION_PROMPTS[1], (after_line, reask)
 
 
 def test_다시_묻는_말도_이력에_남는다():

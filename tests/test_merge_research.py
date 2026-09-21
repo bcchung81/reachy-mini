@@ -6,7 +6,6 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from scripts.merge_research import (
-    _DEIXIS,
     _SHORTENED_MC_AFTER,
     _clean_briefs,
     _fix_mc,
@@ -16,6 +15,15 @@ from scripts.merge_research import (
     merge_all,
     merged_cue,
 )
+
+# **피검 모듈에서 가져오지 않는다.** 예전에는
+# `from scripts.merge_research import _DEIXIS` 였는데, 그러면 그 모듈의 출력을
+# 그 모듈이 들고 있는 표로 검사하는 자기참조가 된다 — `merge_research.py` 의
+# `_DEIXIS` 를 비우면 정화 가드와 이 테스트가 **동시에** 눈이 멀어, 위치 지시어가
+# 브리프에 가득해도 `offenders == []` 로 통과한다(전체 리뷰).
+# 같은 파일의 `sentence_count_re` 와 `tests/test_stage_cues.py` 의 위치 지시어
+# 목록은 일부러 리터럴을 따로 들고 있다 — 여기만 안 그랬다.
+_DEIXIS = ("여기", "이곳", "저기", "이쪽", "저쪽")
 
 
 def test_조사_브리프가_큐시트로_접힌다():
@@ -203,10 +211,24 @@ def test_실제_조사에서_사실_정정이_유지된다():
     assert "아파트" not in by_id["14-mobile"]["mc_after"]
     assert "자동차" in by_id["14-mobile"]["mc_after"]
 
+    # **부정 단언에는 반드시 긍정 짝을 붙인다.** 아래 셋이 `not in` 뿐이던 동안에는
+    # `mc_after` 가 통째로 비거나 접미사("이어가려면 '다음'…")만 남아도 통과했다
+    # — 조사가 고친 사실 정정이 사라진 그 상태가 정확히 이 테스트가 막으려던
+    # 것이다(전체 리뷰). 14-mobile 은 처음부터 긍정 짝이 있었고, 나머지 둘만
+    # 없었다.
     assert "괜찮다" not in by_id["15-emf"]["mc_after"]
     assert "유해하지 않다" not in by_id["15-emf"]["mc_after"]
+    # 15-emf 는 접미사를 붙여도 90자를 넘어 사람이 줄인 대체본으로 간다 — 그
+    # 대체본의 본문(거리에 따라 세기가 준다는 정정된 서술)이 실제로 살아 있어야
+    # 한다. 건강 단정만 빠지고 본문이 날아가면 해설이 사라진다.
+    assert "멀어질수록" in by_id["15-emf"]["mc_after"]
+    assert "줄어든다" in by_id["15-emf"]["mc_after"]
 
     assert "의학박사" not in by_id["05-donor"]["mc_after"]
+    # corrections 2번이 '의학박사' 를 '의사' 로 바꾼 것 — 낱말이 통째로 빠진 것이
+    # 아니라 **바뀐 낱말로** 남아야 정정이 유지된 것이다.
+    assert "의사" in by_id["05-donor"]["mc_after"]
+    assert "통신 장비" in by_id["05-donor"]["mc_after"]
 
 
 def test_실제_조사를_접으면_briefs에_위치_지시어나_문장_수_중복이_안_남는다():

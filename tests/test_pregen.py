@@ -12,6 +12,33 @@ from stage.levels import LEVEL_NAMES
 from stage.mc_cache import McCacheError, cache_key, load_mc_lines
 
 
+def test_캐시_키_조성이_리터럴로_박혀_있다():
+    """키가 `{cue_id}|{level}|{mc_brief 해시}` 라는 것을 **리터럴로** 박는다.
+
+    아래 형제 테스트들(`!=` 만 보는 것)은 기대 키를 전부 `cache_key` 자신으로
+    계산한다 — 자기참조라 조성이 바뀌어도 같이 바뀐다. 실제로 전체 리뷰(B2)가
+    `stage/mc_cache.py` 의 `f"{cue_id}|{level}|{h}"` 를 `f"{level}|{h}"` 로
+    줄이는 뮤테이션을 넣었는데 **637개가 전부 통과했다.** 그 구멍의 실기 영향은
+    조용하다: `mc_brief` 가 우연히 같은 두 섹션이 여는 대사 **하나를 공유**해
+    같은 말을 두 번 한다.
+
+    해시도 리터럴이다 — `hashlib` 를 테스트에서 다시 돌리면 "sha256 앞 12자" 라는
+    선택 자체가 검증 밖으로 빠진다. 아래 값은 `sha256("브리프".encode())` 의
+    hexdigest 앞 12자다.
+    """
+    assert cache_key("01-intro", "일반", "브리프") == "01-intro|일반|085d28495ba7"
+    # 구분자·순서까지 본다 — 조성이 `{level}|{cue_id}|{h}` 로 뒤집혀도 잡는다.
+    assert cache_key("01-intro", "일반", "브리프").startswith("01-intro|일반|")
+
+
+def test_큐_id만_달라도_키가_달라진다():
+    """`cue_id` 가 키에서 빠지는 것을 막는 자리다. 같은 브리프·같은 수준이라
+    해시가 같으므로, `cue_id` 가 빠지면 두 키가 **완전히 같아진다** — 두 섹션이
+    여는 대사를 공유한다. 기대값을 `cache_key` 로 만들지 않고 리터럴로 쓴다."""
+    assert cache_key("01-intro", "일반", "브리프") == "01-intro|일반|085d28495ba7"
+    assert cache_key("02-history", "일반", "브리프") == "02-history|일반|085d28495ba7"
+
+
 def test_지시문이_바뀌면_키가_바뀐다():
     """큐시트를 고치면 낡은 캐시가 드러나야 한다 — 안 그러면 옛 대사가 계속 나간다."""
     a = cache_key("c1", "일반", "지시문 A")
@@ -20,6 +47,9 @@ def test_지시문이_바뀌면_키가_바뀐다():
 
 
 def test_수준이_다르면_키가_다르다():
+    """수준도 리터럴로 한 번 더 박는다 — `!=` 만으로는 `level` 이 키에서 빠져도
+    (그러면 두 키가 같아져 `!=` 가 깨지니 이건 잡힌다) 자리·구분자는 못 본다."""
+    assert cache_key("c1", "초등", "초등 여는 지시문") == "c1|초등|6d28df9baa13"
     assert cache_key("c1", "초등", "같은 지시문") != cache_key("c1", "전문가", "같은 지시문")
 
 
@@ -204,6 +234,38 @@ def test_생성_중_예외가_나도_이미_만든_항목은_파일에_남는다
     assert written[key1] == "[브리프] 로 만든 여는 대사", (
         "c2 생성이 터졌는데 그 전에 성공한 c1 까지 사라졌다"
     )
+
+
+@pytest.mark.parametrize(
+    "기존, 설명",
+    [
+        ("", "빈 파일"),
+        ("c0|일반|000000000000: 옛 대사\n", "개행으로 끝난 파일"),
+        ("c0|일반|000000000000: 옛 대사", "개행 없이 끝난 파일"),
+    ],
+)
+def test_이어_붙이기가_끝_개행이_없어도_YAML_을_깨지_않는다(tmp_path, 기존, 설명):
+    """**이 파일은 사람이 손으로 고치는 것이 존재 이유다**(`stage/mc_cache.py`).
+    사람이 마지막 줄 뒤의 개행을 지우고 저장하면, 그 뒤에 그냥 append 하는
+    다음 실행이 `…: 옛 대사c1|일반|abc: 새 대사` 라는 **한 줄**을 만든다 —
+    YAML 이 깨지거나(파싱 실패) 두 항목이 한 값으로 뭉쳐, 기동에서
+    `McCacheError` 로 시연이 죽거나 여는 대사가 통째로 사라진다.
+
+    쓰기 전에 끝 개행을 보장한다. 빈 파일에는 붙이지 않는다(맨 앞 빈 줄).
+    """
+    p = tmp_path / "mc_lines.yaml"
+    if 기존:
+        p.write_text(기존, encoding="utf-8")
+    pregen._append_entry(p, "c1|일반|abcdef012345", "새 대사")
+
+    written = load_mc_lines(p)
+    assert written["c1|일반|abcdef012345"] == "새 대사", (설명, p.read_text(encoding="utf-8"))
+    if 기존:
+        assert written["c0|일반|000000000000"] == "옛 대사", (
+            설명, "기존 항목이 새 항목과 한 줄로 뭉쳤다", p.read_text(encoding="utf-8")
+        )
+    # 빈 파일에 맨 앞 빈 줄을 만들지 않는다 — 사람이 읽는 파일이다.
+    assert not p.read_text(encoding="utf-8").startswith("\n"), 설명
 
 
 def test_고아_키_개수를_보고한다(monkeypatch, tmp_path, capsys):

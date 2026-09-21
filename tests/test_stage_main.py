@@ -205,8 +205,18 @@ def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴
     `level` 은 이미 `test_main_은_수준을_한_번만_읽어…` 가 "한 번만 읽는다"
     를 박제했으므로 여기서는 그 값(`level.name`)이 실제로 `StageServer` 까지
     닿는지, 그리고 `load_mc_lines()` 의 결과가 함께 닿는지만 본다.
+
+    **기본값과 다른 수준을 세운다.** 예전에는 `REACHY_AUDIENCE_LEVEL` 을
+    **지우고** `== "일반"` 을 단언했는데, "일반" 은 `stage/server.py` 와
+    `stage/director.py` 의 `level_name` **기본값과 같은 값**이라 배선을 아무것도
+    안 지켰다 — `stage/__main__.py` 의 `level_name=level.name` 을
+    `level_name="일반"` 으로 바꿔도(= `REACHY_AUDIENCE_LEVEL` → `Director` 로
+    가는 **유일한 통로**를 끊어도) 이 테스트를 포함해 전부 통과했다(전체 리뷰
+    B1, 뮤테이션으로 실제로 뚫렸다). 기본값이 아닌 "초등" 으로 세워야 그 한 줄이
+    지켜진다 — 이 저장소가 반복해 밟은 "기본값이 있는 인자를 기본값과 같은 값으로
+    단언한다" 함정이다.
     """
-    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     seen: dict[str, object] = {}
 
     class _멈춤(Exception):
@@ -226,8 +236,9 @@ def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴
     assert seen["mc_lines"] == {"가짜": "캐시"}, (
         "main() 이 load_mc_lines() 의 결과를 StageServer 에 넘기지 않았다"
     )
-    assert seen["level_name"] == "일반", (
-        "main() 이 level.name 을 StageServer 에 넘기지 않았다"
+    assert seen["level_name"] == "초등", (
+        "main() 이 level.name 을 StageServer 에 넘기지 않았다 — 환경변수로 세운 "
+        f"'초등' 이 아니라 {seen['level_name']!r} 이 닿았다"
     )
 
 

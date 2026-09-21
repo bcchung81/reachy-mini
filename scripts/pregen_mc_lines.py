@@ -46,8 +46,25 @@ def _valid_keys(cues) -> set[str]:
 
 def _append_entry(path: pathlib.Path, key: str, text: str) -> None:
     """항목 하나만 파일 끝에 이어 붙인다. 기존 줄(사람이 남긴 주석 포함)은
-    절대 다시 쓰지 않는다 — `open(..., "a")` 라 파일이 없으면 새로 만든다."""
+    절대 다시 쓰지 않는다 — `open(..., "a")` 라 파일이 없으면 새로 만든다.
+
+    **붙이기 전에 끝 개행을 보장한다.** 이 파일은 사람이 손으로 고치는 것이
+    존재 이유인데(`stage/mc_cache.py::load_mc_lines`), 편집기에 따라 마지막 줄
+    뒤의 개행이 사라진 채로 저장된다. 그 뒤에 그냥 append 하면
+    `…: 옛 대사c1|일반|abc: 새 대사` 라는 **한 줄**이 만들어져 YAML 이 깨지고,
+    다음 기동이 `McCacheError` 로 죽거나(전부 잃는다) 두 항목이 한 값으로
+    뭉친다 — "건별로 즉시 써서 하나도 잃지 않는다" 는 이 함수의 목적이
+    통째로 뒤집히는 자리다(`tests/test_pregen.py::
+    test_이어_붙이기가_끝_개행이_없어도_YAML_을_깨지_않는다`).
+
+    빈 파일·없는 파일에는 붙이지 않는다 — 맨 앞 빈 줄은 사람이 읽기 나쁘다.
+    """
+    needs_nl = path.exists() and path.stat().st_size > 0 and not path.read_text(
+        encoding="utf-8"
+    ).endswith("\n")
     with path.open("a", encoding="utf-8") as f:
+        if needs_nl:
+            f.write("\n")
         f.write(yaml.safe_dump({key: text}, allow_unicode=True, sort_keys=True))
 
 

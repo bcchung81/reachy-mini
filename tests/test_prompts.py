@@ -14,9 +14,17 @@ def test_역할에_따라_프롬프트가_다르다():
 
 
 def test_수준의_분량이_프롬프트에_들어간다():
+    """**순서·인접까지 본다.** 예전에는 `"5" in p and "7" in p and "260" in p
+    and "400" in p` 였는데, 네 수가 어디에 어떤 순서로 박혀도 통과했다 —
+    `stage/prompts.py::_amount_for` 의 min/max 를 **뒤집어**
+    "7~5문장으로, 400~260자 사이로" 라는 말이 안 되는 지시를 내보내도
+    잡히지 않았다(전체 리뷰). 전문가 수준의 수치는 리터럴로 박는다
+    (`data/levels.yaml` 전문가: 5~7문장 / 260~400자)."""
     lv = load_levels()["전문가"]
     p = build_system_prompt("docent", lv)
-    assert "5" in p and "7" in p and "260" in p and "400" in p
+    assert "5~7문장으로" in p, p
+    assert "260~400자 사이로" in p, p
+    assert "7~5문장" not in p and "400~260자" not in p, p
 
 
 def test_공통_규약은_두_역할_모두에_있다():
@@ -47,8 +55,13 @@ def test_시스템_프롬프트에_분량_규정이_있다():
     lv = load_levels()["일반"]
     p = build_system_prompt("docent", lv)
     # 1) 수치 범위 — 상한만 주면 모델이 하단에 붙는다(브리프 교체본의 관심사).
-    assert str(lv.min_sentences) in p and str(lv.max_sentences) in p
-    assert str(lv.min_chars) in p and str(lv.max_chars) in p
+    #    **min~max 순서로 붙어 있는지까지** 본다. 네 수가 따로 `in p` 인지만
+    #    보면 min/max 를 뒤집어도 통과한다(전체 리뷰) — 뒤집힌 "5~4문장으로"
+    #    는 모델에게 범위가 아니라 헛소리다.
+    assert f"{lv.min_sentences}~{lv.max_sentences}문장으로" in p, p
+    assert f"{lv.min_chars}~{lv.max_chars}자 사이로" in p, p
+    assert f"{lv.max_sentences}~{lv.min_sentences}문장" not in p, p
+    assert f"{lv.max_chars}~{lv.min_chars}자" not in p, p
     # 2) 하한을 동사로 명시하는 문장 — 수치 범위만으로는 "N문장 이내" 로
     #    오독될 수 있어 이 문구가 그것을 막는다(원래 테스트의 관심사).
     assert "채워" in p, p
