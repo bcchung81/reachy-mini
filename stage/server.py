@@ -106,9 +106,10 @@ class StageServer:
                         self._warn(f"모르는 역할이다: {r!r} — 연결을 끊는다")
                         return
                     role = r
+                    caps = self._caps_field(role, msg)
                     try:
                         self.director.on_hello(
-                            role, msg.get("unit_id"), msg.get("version", "")
+                            role, msg.get("unit_id"), msg.get("version", ""), caps
                         )
                     except UnitMismatch as exc:
                         # 사람이 읽을 한 줄로 남기고 이 연결만 닫는다. 예전에는
@@ -175,6 +176,25 @@ class StageServer:
             )
             return None
         return v
+
+    def _caps_field(self, role: str, msg: dict) -> list[str] | None:
+        """hello 의 선택 필드 `caps`(로봇 앱이 할 줄 아는 것, 예: `["solo"]`).
+
+        **없으면 None** — 지금 로봇 앱은 보내지 않는다(4단계 앱부터). 감독은 None 을
+        빈 목록으로 본다. 로봇이 보내는 형식은 넓히기만 하고 바꾸지 않는다.
+
+        문자열 목록이 아니면 경고하고 None(능력 없음). 연결은 끊지 않는다 — 규약 위반은
+        그 필드만 버린다(`_str_field` 와 같은 원칙). 특히 `"solo"` 처럼 목록 대신 문자열이
+        오면 그대로 넘겼을 때 `set("solo")` 가 글자 집합이 되어 **아무 말 없이** 단독이 안
+        켜진다 — 운영자는 "앱이 단독을 모른다" 거절만 보고 원인을 앱에서 찾게 된다.
+        """
+        caps = msg.get("caps")
+        if caps is None:
+            return None
+        if isinstance(caps, list) and all(isinstance(c, str) for c in caps):
+            return caps
+        self._warn(f"[{role}] hello 의 caps 가 문자열 목록이 아니다 — 무시한다: {caps!r}")
+        return None
 
     def _seq_field(self, role: str, msg: dict) -> tuple[int | None, bool]:
         v = msg.get("seq")

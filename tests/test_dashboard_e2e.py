@@ -149,3 +149,53 @@ def test_대시보드의_수준_버튼이_진짜_감독에서_대기로_보였�
         assert (snap["level"], snap["level_pending"]) == ("전문가", None)
 
     assert 훅 == ["전문가"]
+
+
+def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진짜_감독의_모드를_바꾼다():
+    """운영 모드의 페이지 계약 — `hello.modes`, `snapshot.mode`/`solo_available`, 명령
+    `m solo`, 그리고 페이지 로그의 전환 경고. 로봇 hello 의 `caps` 가 서버 → 감독 →
+    스냅샷까지 한 줄로 닿는지를 진짜 서버·감독으로 본다(지금 로봇 앱은 `caps` 를 안
+    보낸다 — 4단계 앱을 흉내 낸 가짜 사회자다)."""
+    hub = DashboardHub()
+    warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 여는 대사", "도슨트 지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 해설",
+        warn=warn, hub=hub,
+    )
+    대시보드_경고: list[str] = []
+
+    with contextlib.ExitStack() as 정리:
+        robot_srv = server.serve("127.0.0.1", 0)
+        t = threading.Thread(target=robot_srv.serve_forever, daemon=True)
+        t.start()
+        정리.callback(t.join, 2)
+        정리.callback(robot_srv.shutdown)
+        dash = start_dashboard(hub, server.director, "127.0.0.1", 0, warn=대시보드_경고.append)
+        assert dash is not None, 대시보드_경고
+        정리.callback(dash.shutdown)
+        rport = robot_srv.socket.getsockname()[1]
+        dport = dash.socket.getsockname()[1]
+
+        robot = 정리.enter_context(connect(f"ws://127.0.0.1:{rport}", open_timeout=3))
+        robot.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None,
+                               "version": "2.0.0", "caps": ["solo"]}))
+        # 동기화 점 — 등록(`on_connect`)의 락 안에서 오는 마이크 재동기화.
+        assert json.loads(robot.recv(timeout=3)) == {"type": "mic", "open": False}
+
+        page = 정리.enter_context(connect(
+            f"ws://127.0.0.1:{dport}/ws", origin=f"http://127.0.0.1:{dport}", open_timeout=3,
+        ))
+        hello = json.loads(page.recv(timeout=3))
+        assert hello["modes"] == ["podcast", "solo"]
+        pre = hello["snapshot"]
+        assert (pre["mode"], pre["solo_available"]) == ("podcast", True)
+
+        page.send(json.dumps({"cmd": "m solo"}))
+        w = _recv_until(page, lambda m: m["kind"] == "warn" and "모드를" in m["text"])
+        assert w["text"] == "모드를 podcast → solo 로 바꿨다"
+        # 경고는 감독이 모드를 바꾼 **뒤** 락 안에서 실린다 — 그 뒤 첫 스냅샷은 단독이다.
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
+        assert (snap["mode"], snap["state"]) == ("solo", "idle")
+        # 전환은 말하던 것을 멈춘다 — 사회자 로봇이 중단 지시를 실제로 받는다.
+        assert _recv_until(robot, lambda m: m["type"] == "abort") == {"type": "abort"}

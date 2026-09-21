@@ -46,6 +46,11 @@ class 가짜감독:
         # 감독이 준 목록을 그대로 싣는지 가른다.
         return ["초등", "전문가"]
 
+    def mode_names(self):
+        # 헤더의 운영 모드 토글(계약: 이 순서). 감독이 준 것을 그대로 싣는지는
+        # `test_hello_의_모드_목록은_감독이_준_것을_그대로_싣는다` 가 다른 값으로 본다.
+        return ["podcast", "solo"]
+
     def abort(self):
         self.calls.append("abort")
 
@@ -133,8 +138,19 @@ def test_접속하면_큐목록_이력_스냅샷을_한번에_준다(dash):
         assert m["kind"] == "hello"
         assert m["cues"] == [{"id": "07-maritime", "title": "해상무선통신", "topic": "타이타닉"}]
         assert m["levels"] == ["초등", "전문가"]      # 헤더의 수준 버튼(감독이 준 순서 그대로)
+        assert m["modes"] == ["podcast", "solo"]     # 헤더의 운영 모드 토글
         assert m["snapshot"]["cue_id"] == "07-maritime"
         assert [e["text"] for e in m["history"] if e["kind"] == "warn"] == ["먼저 난 경고"]
+
+
+def test_hello_의_모드_목록은_감독이_준_것을_그대로_싣는다(dash):
+    """계약값(`["podcast", "solo"]`)과 **다른** 목록을 준다 — 대시보드가 목록을 제 손으로
+    박아 두면 위 테스트는 통과해도 여기서 걸린다(감독이 받는 이름과 버튼이 갈라진다)."""
+    dash["d"].mode_names = lambda: ["solo"]
+    with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
+        m = json.loads(ws.recv(timeout=3))
+        assert m["kind"] == "hello"
+        assert m["modes"] == ["solo"]
 
 
 def test_접속_뒤_이벤트와_주기_스냅샷이_온다(dash):

@@ -297,6 +297,29 @@ def test_도움말에_l_이_있다():
     assert any("l <수준>  관람객 수준 바꾸기(다음 큐부터)" in m for m in h.out), h.out
 
 
+def test_m_은_모드를_감독에_넘긴다():
+    """이름 검증·경고 문구·말하던 것 멈추기는 전부 `Director.set_mode` 한 곳이 한다 —
+    콘솔이 먼저 `abort()` 하면 거절될 전환(모르는 이름·사회자 없음)도 시연을 멈춘다."""
+    import stage.console as console
+    calls = []
+
+    class 가짜감독:
+        def abort(self):
+            calls.append("abort")
+
+        def set_mode(self, name):
+            calls.append(("set_mode", name))
+
+    console.dispatch(가짜감독(), "m  solo ", out=lambda m: None)
+    assert calls == [("set_mode", "solo")]
+
+
+def test_도움말에_m_이_있다():
+    h = Harness()
+    h.run(["?", "q"])
+    assert any("m <모드>  운영 모드 바꾸기(podcast/solo)" in m for m in h.out), h.out
+
+
 def test_l_뒤_r_은_대기_수준을_바로_적용한다():
     """사용자 결정 — 바로 적용하려면 "이 큐 다시(R)". `r` 은 abort + start 라
     `_begin_cue` 를 지나므로 같은 큐가 새 수준의 여는 대사(캐시)로 다시 열린다.

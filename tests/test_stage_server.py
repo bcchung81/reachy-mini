@@ -639,3 +639,36 @@ def test_허브가_없어도_지금처럼_돈다(server):
     """`hub=None`(기본값) — 기존 fixture 그대로. 한 번 붙었다 떨어져도 예외가 없다."""
     with connect(url_of(server)) as ws:
         hello(ws, "mc")
+
+
+# ── 운영 모드 1단계 — hello 의 선택 필드 `caps`(로봇 앱이 할 줄 아는 것) ──────────
+
+
+def _hello_caps(ws, role, caps):
+    """`caps` 를 실은 hello. 접속 직후의 마이크 재동기화 한 통을 걷어낸다 — 그 한 통은
+    감독이 등록(`on_connect`)의 락 안에서 보내므로, 받았으면 hello 처리가 끝났다."""
+    ws.send(json.dumps({"type": "hello", "role": role, "unit_id": None,
+                        "version": "2.0.0", "caps": caps}))
+    m = recv(ws)
+    assert m["type"] == "mic", f"접속 직후 mic 재동기화가 아니라 {m} 가 왔다"
+
+
+def test_사회자가_hello_에_단독을_알리면_감독이_단독_가능으로_본다(server):
+    with connect(url_of(server)) as mc:
+        _hello_caps(mc, "mc", ["solo"])
+        assert server.director.snapshot()["solo_available"] is True
+
+
+@pytest.mark.parametrize(
+    "caps, 보인_값",
+    [("solo", "'solo'"), (["solo", 1], "['solo', 1]")],
+    ids=["문자열", "문자열_아닌_원소"],
+)
+def test_caps_가_문자열_목록이_아니면_경고하고_없는_것으로_본다(server, caps, 보인_값):
+    """규약 위반은 그 필드만 버린다 — 연결은 산다(`_str_field` 와 같은 원칙). 문자열을
+    그대로 넘기면 `set("solo")` 가 {'s','o','l'} 이 되어 **조용히** 단독이 안 켜진다."""
+    with connect(url_of(server)) as mc:
+        _hello_caps(mc, "mc", caps)
+        assert f"[mc] hello 의 caps 가 문자열 목록이 아니다 — 무시한다: {보인_값}" in server.warnings
+        assert server.director.snapshot()["solo_available"] is False
+        assert server.director.snapshot()["connected"] == ["mc"]   # 연결은 살아 붙어 있다

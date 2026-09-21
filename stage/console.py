@@ -13,6 +13,7 @@ HELP = """
   a  즉시 중단   |  ?  도움말        |  q  종료
   g <큐id>  그 큐로 이동
   l <수준>  관람객 수준 바꾸기(다음 큐부터)
+  m <모드>  운영 모드 바꾸기(podcast/solo)
 """
 
 
@@ -98,6 +99,13 @@ def dispatch(director: Director, cmd: str, out) -> None:
         # 문구는 `Director.set_level` 한 곳에만 둔다(`g` 와 같은 이유). 대시보드가
         # 명령을 `.lower()` 해도 한글 수준 이름은 그대로다.
         director.set_level(cmd[2:].strip())
+    elif cmd.startswith("m "):
+        # 운영 모드(podcast/solo). **여기서 먼저 멈추지 않는다** — 말하던 것을 멈추는 일은
+        # 전환이 받아들여졌을 때만 감독이 락 안에서 한다. 여기서 `abort()` 하면 거절될
+        # 전환(모르는 이름·사회자 없음·앱이 단독을 모름)도 시연을 끊는다. 이름 검증·
+        # 경고 문구는 `Director.set_mode` 한 곳에만 둔다(`g`·`l` 과 같은 이유 — 페이지
+        # 로그에 뜨는 문구가 계약이다).
+        director.set_mode(cmd[2:].strip())
     elif cmd == "?":
         out(HELP)
     elif cmd:

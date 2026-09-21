@@ -117,6 +117,9 @@ class DashboardServer:
                 # 헤더의 관람객 수준 버튼(levels.yaml 순서). 파일을 따로 읽지 않고 감독에게
                 # 받는다 — 버튼 이름과 감독이 받아들이는 이름(`l <수준>`)이 한 곳에서 나온다.
                 "levels": self._director.level_names(),
+                # 헤더의 운영 모드 토글(podcast/solo 순서). 수준과 같은 이유로 감독에게
+                # 받는다 — 버튼 이름과 `m <모드>` 가 받아들이는 이름이 한 곳에서 나온다.
+                "modes": self._director.mode_names(),
                 "history": self._hub.history(),
                 "snapshot": self._safe_snapshot(),
             }))

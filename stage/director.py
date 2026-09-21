@@ -124,6 +124,18 @@ FB_SHEET = "큐시트 받아치기"
 # 낸 대사라 짧으면 짧다고 말해야 한다.
 _GENERATED_FALLBACKS = frozenset({FB_SPARE})
 
+# 운영 모드(설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2).
+# **순서가 곧 페이지 버튼 순서다**(`mode_names` → 대시보드 hello `modes`). 처음 값은
+# 언제나 첫째(팟캐스트)다 — 지금 운영 흐름(운영자가 시작을 누를 때까지 대기)을 그대로
+# 둔다. 스펙의 `REACHY_MODE`(처음 모드를 환경변수로)는 1단계에서 뺐다: 단독을 켤 로봇이
+# 아직 없어(`caps` 를 보내는 앱이 4단계) 켜 봐야 거절될 값이다.
+#
+#   podcast — 큐시트를 따라 사회자·도슨트가 주고받는다(지금까지의 전부).
+#   solo    — 사회자 한 대가 관람객 질문에 답한다. 감독은 진행하지 않는다(`s`·`n`·`p`·
+#             `r`·`g` 거절). 1단계에는 로봇에게 알리는 일도 없다 — 4단계에서 `mode`
+#             지시가 붙는다(`set_mode` 의 주석 자리).
+MODES = ("podcast", "solo")
+
 
 class _Pending(NamedTuple):
     """`on_speaking_ended` 가 락을 놓고 기다릴 **한 건**.
@@ -292,6 +304,8 @@ class Director:
         # 지목하는 경고, 유령 처리된 진짜 종료)가 한 번에 없어진다. 어느
         # 공개 메서드도 다른 공개 메서드를 부르지 않으므로(전부 `_begin_cue`
         # 등 내부 헬퍼만 거친다) 재진입이 필요 없어 일반 Lock 으로 충분하다.
+        # 모드 전환(`set_mode`)이 말하던 것을 멈출 때도 공개 `abort()` 가 아니라
+        # 락 안의 몸체 `_abort_locked()` 를 부른다 — 이 규칙을 깨면 그 자리에서 교착이다.
         #
         # ~~`_speak_docent()` 의 유예시간(`GENERATE_GRACE_S`, 최대 8초) 대기는
         # 이 락을 쥔 채로 일어난다 — 그동안 tick() 은 막힌다. 의도한 동작이다:
@@ -313,6 +327,13 @@ class Director:
         # 역할 검증(`on_hello`)에 실패한 로봇. 비어 있지 않으면 `start()` 를 거절한다.
         self._rejected: set[str] = set()
 
+        # 운영 모드(`MODES`). `set_mode` 만 바꾼다.
+        self._mode = "podcast"
+        # 역할 → 그 로봇 앱이 hello 로 알린 능력(`caps`, 예: {"solo"}). **끊기면 지운다**
+        # (`on_disconnect`) — 안 지우면 단독을 아는 앱이 나가고 모르는 앱이 다시 붙어도
+        # 옛 능력이 남아 단독이 켜진다. 지금 로봇 앱은 `caps` 를 안 보내 늘 빈 집합이다.
+        self._caps: dict[str, set[str]] = {}
+
     # ── 상태 ──────────────────────────────────────────────────────
     @property
     def state(self) -> State:
@@ -328,6 +349,20 @@ class Director:
     @property
     def rejected(self) -> frozenset[str]:
         return frozenset(self._rejected)
+
+    @property
+    def mode(self) -> str:
+        """지금 운영 모드(`MODES` 중 하나). 읽기 전용 — 바꾸는 길은 `set_mode` 하나다.
+
+        락을 잡지 않는다: 문자열 한 칸의 대입·읽기는 원자적이고, 다른 값과 **한 시점으로**
+        묶어 봐야 하는 쪽(대시보드)은 `snapshot()` 이 락 안에서 읽는다.
+        """
+        return self._mode
+
+    def mode_names(self) -> list[str]:
+        """고를 수 있는 운영 모드 — 페이지 버튼 순서. 바뀌지 않으므로 락이 필요 없다
+        (`level_names` 와 같다). 감독이 받아들이는 이름과 버튼 이름이 한 곳에서 나온다."""
+        return list(MODES)
 
     def reject(self, role: str, reason: str) -> None:
         """역할 검증에 실패한 로봇. 맞는 로봇이 붙기 전에는 시연을 시작하지 않는다.
@@ -357,6 +392,8 @@ class Director:
     def on_disconnect(self, role: str) -> None:
         with self._lock:
             self._connected.discard(role)
+            # 능력은 **그 연결의** 것이다 — 다시 붙는 앱은 새 hello 로 다시 알린다.
+            self._caps.pop(role, None)
             if self.solo_role is not None:
                 self._warn(
                     f"[{role}] 이 끊겼다 — 1인 모드로 내려간다. "
@@ -379,10 +416,31 @@ class Director:
         return solo if solo is not None else preferred
 
     # ── 로봇에게서 오는 것 ────────────────────────────────────────
-    def on_hello(self, role: str, unit_id: str | None, version: str) -> None:
-        """역할 자기신고. 두 대가 뒤바뀐 채 시연을 시작하는 것을 여기서 막는다."""
+    def on_hello(
+        self, role: str, unit_id: str | None, version: str,
+        caps: list[str] | None = None,
+    ) -> None:
+        """역할 자기신고. 두 대가 뒤바뀐 채 시연을 시작하는 것을 여기서 막는다.
+
+        `caps` 는 그 로봇 앱이 할 줄 아는 것(선택 필드, 예: `["solo"]`). 없으면 빈 목록 —
+        지금 로봇 앱은 보내지 않는다(4단계 앱이 보낸다). 형식 검사는 서버가 한다.
+        """
         with self._lock:
             expected = self._expect_units.get(role)
+            # **거절을 먼저 가른다 — 그래야 caps 를 한 자리에서 기억할 수 있다.**
+            # 예전 순서(기대값 없음 → 반환, unit_id 없음 → 반환, 다르면 예외)에 caps 를
+            # 끼우면 조기 반환 두 갈래마다 따로 적어야 하고, 하나를 빠뜨리면 그 갈래
+            # (시뮬은 늘 `unit_id is None` 이다)의 사회자는 단독을 영영 못 켠다. 거꾸로
+            # 맨 앞에 두면 `UnitMismatch` 로 거절된 로봇(붙은 적이 없다 — 서버가 그
+            # 연결만 닫는다)이 자리에 남은 맞는 로봇의 능력을 덮는다.
+            if expected is not None and unit_id is not None and unit_id != expected:
+                raise UnitMismatch(
+                    f"{role} 자리에 다른 로봇이 있다: 기대 {expected!r}, 신고 {unit_id!r}. "
+                    "사회자와 도슨트가 뒤바뀌었는지 확인한다."
+                )
+            # hello 마다 **갈아끼운다**(합치지 않는다) — 같은 자리에 옛 앱이 다시 인사하면
+            # 그 앱이 모르는 능력이 남으면 안 된다.
+            self._caps[role] = set(caps or ())
             if expected is None:
                 return
             if unit_id is None:
@@ -390,11 +448,6 @@ class Director:
                 # sysfs 를 읽는다. 여기서 막으면 실기 없이 개발할 수 없다.
                 self._warn(f"[{role}] unit_id 가 없다 — 실기라면 확인할 것 (시뮬은 정상)")
                 return
-            if unit_id != expected:
-                raise UnitMismatch(
-                    f"{role} 자리에 다른 로봇이 있다: 기대 {expected!r}, 신고 {unit_id!r}. "
-                    "사회자와 도슨트가 뒤바뀌었는지 확인한다."
-                )
             self._rejected.discard(role)   # 맞는 로봇이 붙었다 — 거부를 푼다
 
     def on_heard(self, text: str) -> None:
@@ -683,6 +736,8 @@ class Director:
     # ── 바깥에서 부르는 것 ────────────────────────────────────────
     def start(self) -> None:
         with self._lock:
+            if self._refused_in_solo("시작"):
+                return
             if self._rejected:
                 raise TurnError(
                     f"거부된 역할이 있다: {sorted(self._rejected)} — "
@@ -699,6 +754,8 @@ class Director:
         — 운영자가 망가진 섹션을 건너뛸 길이 없었다(리뷰 A7b).
         """
         with self._lock:
+            if self._refused_in_solo("다음"):
+                return
             self._next_locked(quiet_if_last=False)
 
     def _next_locked(self, *, quiet_if_last: bool) -> None:
@@ -736,6 +793,8 @@ class Director:
         가 불변식 ② 로 거절하고, 콘솔이 그 거절을 사람에게 보여준다.
         """
         with self._lock:
+            if self._refused_in_solo("이전"):
+                return
             prev = self._sheet.back()
             if prev is None:
                 self._warn("첫 큐다 — 더 되돌릴 곳이 없다")
@@ -756,6 +815,10 @@ class Director:
         전에 끝나므로 순서를 바꿔도 "커서를 옮기기 전에 거절" 은 그대로다.
         """
         with self._lock:
+            # 모르는 id 검사보다도 **먼저** 본다 — 단독에서는 어느 id 든 이동하지 않으므로
+            # "모르는 큐다" 보다 "지금은 진행하지 않는다" 가 운영자에게 맞는 답이다.
+            if self._refused_in_solo("이동"):
+                return
             i = self._sheet.find(cue_id)
             if i is None:
                 self._warn(f"모르는 큐다: {cue_id!r} — 이동하지 않는다")
@@ -815,6 +878,68 @@ class Director:
         """
         return list(self._level_min_chars)
 
+    def set_mode(self, name: str) -> None:
+        """운영 모드를 바꾼다 — 콘솔·대시보드 `m <모드>`(설계 §1-2).
+
+        결과는 전부 경고 한 줄로 남긴다(바꿈·거절·이미·모름) — `set_level` 과 같은 이유로
+        운영자 화면(대시보드 로그)과 터미널에 같은 줄이 가야 "누가 언제 모드를 바꿨나" 를
+        로그로 따라간다. 문구는 페이지와의 계약이라 여기 한 곳에만 둔다(콘솔은 넘기기만).
+
+        **단독은 사회자가 붙어 있고 그 앱이 `caps` 에 "solo" 를 알렸을 때만** 받는다.
+        단독은 사회자 한 대가 관람객에게 답하는 모드라, 그 앱이 모르는 채로 감독만
+        단독이 되면 진행은 멈췄는데 아무도 답하지 않는 정적이 된다 — 1단계의 지금
+        로봇 앱은 `caps` 를 보내지 않으므로 단독은 늘 여기서 거절된다.
+        """
+        with self._lock:
+            if name not in MODES:
+                # 오타 한 번이 시연을 흔들면 안 된다 — 경고만, 고를 수 있는 것을 같이.
+                self._warn(
+                    f"모르는 모드다: {name!r} — 바꾸지 않는다"
+                    f"(고를 수 있는 것: {', '.join(MODES)})"
+                )
+                return
+            if name == self._mode:
+                self._warn(f"이미 {name} 모드다 — 바꿀 것이 없다")
+                return
+            if name == "solo":
+                if "mc" not in self._connected:
+                    self._warn("단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다")
+                    return
+                if "solo" not in self._caps.get("mc", ()):
+                    self._warn(
+                        "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다"
+                        "(로봇 앱 업데이트 뒤에 켜진다)"
+                    )
+                    return
+            # **말하던 것을 먼저 멈춘다 — 락 안에서, 내부 구현으로.** 공개 `abort()` 를
+            # 여기서 부르면 `threading.Lock` 이 재진입을 안 받아 그 자리에서 영영 멈춘다
+            # (`__init__` 의 `self._lock` 주석). 락을 놓고 부르면 그 틈에 다른 스레드가
+            # 새 큐를 시작해, 모드는 단독인데 팟캐스트 발화가 흐르는 채로 남을 수 있다.
+            #
+            # 멈추면 IDLE 이다. 그래서 단독에서는 관람객의 "다음"(`on_heard`)도 침묵 자동
+            # 진행(`tick`)도 따로 막지 않는다 — 둘 다 LISTENING 에서만 진행하는데, 진행
+            # 명령(`start`·`next`·`previous`·`goto`)이 가드에 막혀 단독에서는 LISTENING 이
+            # 될 길이 없다. 늦게 온 `speaking_ended` 는 멈춘 발화의 것이라 유령으로
+            # 버려지고, 생성을 기다리던 핸드오프는 깨어나 IDLE 을 보고 물러난다.
+            # (`test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다`)
+            self._abort_locked()
+            old, self._mode = self._mode, name
+            # 4단계: 여기서 로봇에게 mode 를 보낸다(앱이 단독 루프로 전환)
+            self._warn(f"모드를 {old} → {name} 로 바꿨다")
+
+    def _refused_in_solo(self, what: str) -> bool:
+        """단독이면 팟캐스트 진행 명령을 거절하고 True. **`self._lock` 을 쥔 채** 부른다.
+
+        진행 명령 네 곳(`start`·`next`·`previous`·`goto`)의 **맨 앞**에서 부른다 — 다른
+        검사(거부된 역할·발화 중·모르는 큐)보다 먼저여야 단독에서 누른 `s`·`n`·`p`·`g`·
+        `r` 이 엉뚱한 사유("말하는 중이다" 등)로 거절되지 않는다. `a`(중단)·`l`(수준)·
+        `m`(모드)은 단독에서도 된다(설계 §1-2).
+        """
+        if self._mode != "solo":
+            return False
+        self._warn(f"단독 모드에서는 팟캐스트 진행({what})을 하지 않는다 — 먼저 m podcast")
+        return True
+
     def cue_list(self) -> list[dict]:
         """런다운용 큐 목록. 큐시트는 기동 뒤 바뀌지 않으므로 락이 필요 없다.
 
@@ -867,6 +992,11 @@ class Director:
                 # 다음 큐부터 적용될 수준(없으면 None). 페이지는 둘을 다르게 칠한다.
                 "level": self._level_name,
                 "level_pending": self._level_pending,
+                # 운영 모드와 **단독을 지금 켤 수 있는가**. 뒤의 것은 `set_mode("solo")` 의
+                # 거절 조건과 같은 식이다 — 페이지가 단독 버튼을 켜 놓았는데 누르면 거절되는
+                # 어긋남이 없게. 사회자가 끊기면 꺼진다(능력도 끊길 때 지운다).
+                "mode": self._mode,
+                "solo_available": "mc" in self._connected and "solo" in self._caps.get("mc", ()),
             }
 
     def tick(self) -> None:
@@ -915,8 +1045,16 @@ class Director:
 
     def abort(self) -> None:
         with self._lock:
-            self._deadline = None
-            self._emit(self._machine.abort())
+            self._abort_locked()
+
+    def _abort_locked(self) -> None:
+        """중단의 본체. **`self._lock` 을 쥔 채** 부른다.
+
+        공개 `abort()` 와 모드 전환(`set_mode`)이 같은 몸을 쓴다 — 락을 이미 쥔
+        `set_mode` 가 공개 `abort()` 를 부르면 재진입이 안 되는 락에서 교착이다.
+        """
+        self._deadline = None
+        self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
     def _begin_cue(self, cue: Cue) -> None:

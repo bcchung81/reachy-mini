@@ -2915,3 +2915,200 @@ def test_지금_수준이_수준_목록에_없으면_기동에서_막는다():
             level_name="유치원", level_min_chars=dict(_수준_하한),
             on_level_change=lambda name: None,
         )
+
+
+# ── (G) 운영 모드(팟캐스트/단독, `m <모드>`)와 로봇 능력 알림(`caps`) ─────────
+#
+# 설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2. 1단계에는
+# 단독을 켤 로봇이 없다 — 지금 로봇 앱은 hello 에 `caps` 를 안 보내므로 단독은 늘
+# 거절된다. 아래 테스트는 4단계 앱이 보낼 `caps=["solo"]` 를 직접 넣어 본다.
+#
+# 경고 문구는 페이지 로그에 그대로 뜨는 계약이라 전부 리터럴로 본다(함정 ⑤).
+
+
+def _모드(h, name):
+    """`set_mode` 를 **제한 시간 안에** 부른다.
+
+    전환은 락 안에서 말하던 것을 멈춘다. 그 자리에서 공개 `abort()` 를 다시 부르면
+    `threading.Lock` 은 재진입이 안 되므로 영영 멈춘다 — 스위트가 멈춘 채 원인을 안
+    보이는 대신 여기서 실패로 드러낸다."""
+    t = threading.Thread(target=h.d.set_mode, args=(name,), daemon=True)
+    t.start()
+    t.join(2.0)
+    assert not t.is_alive(), f"set_mode({name!r}) 가 돌아오지 않는다 — 락 재진입 교착"
+
+
+def test_모드는_팟캐스트로_시작하고_고를_수_있는_것은_둘이다():
+    h = Harness()
+    assert h.d.snapshot()["mode"] == "podcast"
+    assert h.d.mode == "podcast"
+    assert h.d.mode_names() == ["podcast", "solo"]
+
+
+def test_사회자가_단독을_알리지_않으면_단독을_거절한다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "1.9.0")        # caps 없음(지금 앱)
+    _모드(h, "solo")
+    assert h.d.snapshot()["mode"] == "podcast"
+    assert h.d.snapshot()["solo_available"] is False
+    assert "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다(로봇 앱 업데이트 뒤에 켜진다)" in h.warnings
+
+
+def test_사회자가_없으면_단독을_거절한다():
+    h = Harness()
+    h.d.on_connect("docent"); h.d.on_hello("docent", None, "1.9.0", caps=["solo"])
+    _모드(h, "solo")
+    assert h.d.snapshot()["mode"] == "podcast"
+    assert "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다" in h.warnings
+
+
+def test_사회자가_단독을_알리면_전환하고_말하던_것을_멈춘다():
+    h = Harness()
+    for r in ("mc", "docent"):
+        h.d.on_connect(r)
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.start()                                             # 사회자가 말하는 중
+    assert h.d.snapshot()["state"] == "mc_speaking"
+    assert h.d.snapshot()["solo_available"] is True
+    _모드(h, "solo")
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"]) == ("solo", "idle")
+    assert h.d.mode == "solo"
+    assert "모드를 podcast → solo 로 바꿨다" in h.warnings
+    assert ("mc", "abort") in [(r, t) for r, t, _ in h.sent]
+
+
+def test_단독에서는_진행_명령을_거절한다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    _모드(h, "solo")
+    h.d.start(); h.d.next(); h.d.goto("c2")
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
+    assert "단독 모드에서는 팟캐스트 진행(시작)을 하지 않는다 — 먼저 m podcast" in h.warnings
+    assert "단독 모드에서는 팟캐스트 진행(다음)을 하지 않는다 — 먼저 m podcast" in h.warnings
+    assert "단독 모드에서는 팟캐스트 진행(이동)을 하지 않는다 — 먼저 m podcast" in h.warnings
+
+
+def test_단독에서는_이전_큐로도_되돌리지_않는다():
+    """둘째 큐에서 바꾼다 — 첫 큐면 가드가 없어도 "첫 큐다" 로 커서가 안 움직여 통과한다."""
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.start(); h.d.abort(); h.d.next(); h.d.abort()
+    assert h.d.snapshot()["cue_index"] == 1                 # 전제: 되돌릴 곳이 있다
+    _모드(h, "solo")
+    h.clear()
+    h.d.previous()
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 1)
+    assert h.says() == []
+    assert "단독 모드에서는 팟캐스트 진행(이전)을 하지 않는다 — 먼저 m podcast" in h.warnings
+
+
+def test_모르는_모드와_같은_모드는_경고만():
+    h = Harness()
+    _모드(h, "karaoke"); _모드(h, "podcast")
+    assert h.d.snapshot()["mode"] == "podcast"
+    assert "모르는 모드다: 'karaoke' — 바꾸지 않는다(고를 수 있는 것: podcast, solo)" in h.warnings
+    assert "이미 podcast 모드다 — 바꿀 것이 없다" in h.warnings
+
+
+def test_단독에서_팟캐스트로_돌아오면_다시_진행할_수_있다():
+    h = Harness()
+    for r in ("mc", "docent"):
+        h.d.on_connect(r)
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    _모드(h, "solo"); _모드(h, "podcast")
+    h.d.start()
+    assert (h.d.snapshot()["mode"], h.d.snapshot()["state"]) == ("podcast", "mc_speaking")
+    assert "모드를 solo → podcast 로 바꿨다" in h.warnings
+
+
+def test_사회자가_끊기면_단독_가능이_꺼진다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_disconnect("mc")
+    assert h.d.snapshot()["solo_available"] is False
+
+
+def test_단독_가능은_사회자가_등록된_뒤에야_켜진다():
+    """서버는 hello(`on_hello`)를 등록(`on_connect`)보다 **먼저** 부른다 — 그 사이, 그리고
+    UnitMismatch 없이도 등록이 안 된 사회자는 능력만 알렸지 붙은 것이 아니다. 스냅샷의
+    `solo_available` 은 `set_mode("solo")` 의 거절 조건과 같은 식이어야 한다: 버튼이
+    켜졌는데 누르면 "붙어 있지 않다" 로 거절되면 페이지와 감독이 어긋난다.
+
+    끊김(`on_disconnect`)은 능력도 지우므로 끊김만으로는 "붙어 있는가" 조건을 못 가른다
+    — 등록 전의 창에서 본다."""
+    h = Harness()
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    assert h.d.snapshot()["solo_available"] is False
+    _모드(h, "solo")
+    assert "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다" in h.warnings
+    h.d.on_connect("mc")
+    assert h.d.snapshot()["solo_available"] is True
+
+
+def test_끊긴_뒤_다시_붙은_사회자는_새_hello_의_caps_만_쓴다():
+    """끊길 때 지우지 않으면 옛 앱의 능력이 남는다 — 단독을 아는 앱이 나가고 모르는 앱이
+    붙어도 단독 버튼이 켜진 채다. 서버는 hello(`on_hello`)를 **등록(`on_connect`) 전에**
+    부르므로 여기서도 그 순서로 붙인다."""
+    h = Harness()
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"]); h.d.on_connect("mc")
+    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_disconnect("mc")
+    h.d.on_connect("mc")                                    # hello 없이 등록만 — caps 가 비어야 한다
+    assert h.d.snapshot()["solo_available"] is False
+    h.d.on_hello("mc", None, "1.9.0")                       # 옛 앱으로 다시 hello
+    assert h.d.snapshot()["solo_available"] is False
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    assert h.d.snapshot()["solo_available"] is True
+
+
+def test_caps_없는_hello_는_앞서_알린_능력을_갈아치운다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_hello("mc", None, "1.9.0")                       # 같은 자리에 옛 앱이 다시 인사
+    assert h.d.snapshot()["solo_available"] is False
+
+
+@pytest.mark.parametrize("unit_id", ["AAA", None], ids=["unit_id_맞음", "unit_id_없음_시뮬"])
+def test_unit_id_검증을_지나는_갈래는_모두_caps_를_기억한다(unit_id):
+    """`on_hello` 는 기대값이 있을 때 `unit_id` 가 없으면(시뮬) 경고하고 **일찍 돌아간다.**
+    caps 를 그 반환 뒤에 두면 시뮬 사회자는 단독을 영영 못 켠다."""
+    h = Harness(expect_units={"mc": "AAA"})
+    h.d.on_connect("mc")
+    h.d.on_hello("mc", unit_id, "2.0.0", caps=["solo"])
+    assert h.d.snapshot()["solo_available"] is True
+
+
+def test_뒤바뀐_로봇의_caps_는_기억하지_않는다():
+    """`UnitMismatch` 로 거절된 로봇은 붙은 적이 없다(서버가 그 연결만 닫는다) — 자리에
+    남은 것은 먼저 붙은 맞는 로봇이다. 거절된 쪽의 caps 로 덮으면 남은 로봇의 능력이 사라진다."""
+    h = Harness(expect_units={"mc": "AAA"})
+    h.d.on_connect("mc"); h.d.on_hello("mc", "AAA", "2.0.0", caps=["solo"])
+    with pytest.raises(UnitMismatch):
+        h.d.on_hello("mc", "BBB", "1.9.0", caps=[])
+    assert h.d.snapshot()["solo_available"] is True
+
+
+def test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다():
+    """`tick`·`on_heard` 에는 단독 가드가 없다 — 전환이 IDLE 로 멈추고 둘 다 LISTENING
+    에서만 진행하기 때문이다(`Director.set_mode` 주석). 그 근거를 여기서 못박는다."""
+    h = Harness()
+    for r in ("mc", "docent"):
+        h.d.on_connect(r)
+    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")                          # 받아치기 없는 큐 → 듣기(침묵 기한 8초)
+    assert h.d.state is State.LISTENING
+    _모드(h, "solo")
+    h.clear()
+    h.clock.t += 8.0
+    h.d.tick()
+    h.d.on_heard("다음")
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
+    assert h.says() == []
