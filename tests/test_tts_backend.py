@@ -229,6 +229,39 @@ def test_qwen_이_죽으면_say_로_떨어진다(monkeypatch, tmp_path):
         importlib.reload(tts_mod)
 
 
+def test_qwen_실패마다_TTS_폴백_로그를_이유와_함께_남긴다(monkeypatch, tmp_path, capsys):
+    """voice-fix-brief V2 — 폴백 자리가 조용하면(로그 0줄) 실기에서 목소리가
+    남자 기계음으로 바뀌어도 원인을 못 찾는다(CLAUDE.md "실패는 소리 내서
+    실패한다" 위반이었다 — 실측: 재생 0건, 로그 0줄, 0.02초 만에 통과).
+
+    한 번(_warn_once)이 아니라 **발화마다** 찍어야 한다 — 운영자가 "이번
+    문장만 목소리가 바뀌었다"를 그 발화의 로그 줄로 바로 대조할 수 있어야
+    한다(두 번 실패 → 두 줄).
+    """
+    monkeypatch.setenv("TTS_BACKEND", "qwen")
+    monkeypatch.setenv("TTS_QWEN_URL", "http://127.0.0.1:1/v1/audio/speech")  # 죽은 포트
+    importlib.reload(tts_mod)
+    try:
+        out = tmp_path / "log"
+        fallback = ["/bin/sh", "-c", f'echo "$0" >> {out}']
+        s = tts_mod.Speaker(fallback_cmd=fallback, play=lambda b: None)
+        s.speak("첫 번째 문장입니다.")
+        s.speak("두 번째 문장입니다.")
+        s.wait_idle(timeout=5)
+        printed = capsys.readouterr().out
+        lines = [ln for ln in printed.splitlines() if "[TTS 폴백]" in ln]
+        assert len(lines) == 2, f"발화마다 한 줄씩이어야 한다: {lines}"
+        for ln in lines:
+            assert "URLError" in ln, f"실패 이유(예외 이름)가 없다: {ln}"
+            assert "/bin/sh" in ln, f"폴백 합성기 이름이 없다: {ln}"
+        assert "첫 번째 문장입니다" in lines[0]
+        assert "두 번째 문장입니다" in lines[1]
+    finally:
+        monkeypatch.delenv("TTS_QWEN_URL")
+        monkeypatch.delenv("TTS_BACKEND")
+        importlib.reload(tts_mod)
+
+
 class StreamStub(BaseHTTPRequestHandler):
     """chunked PCM 을 흘리는 서버 흉내 — 청크 사이에 지연을 준다."""
 

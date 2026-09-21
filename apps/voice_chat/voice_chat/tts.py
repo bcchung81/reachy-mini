@@ -111,7 +111,15 @@ _PCM_CHUNK = 4096
 # (0.23s → 0.35s 수준) 깨지는 것보다 낫다.
 PREBUFFER_S = float(os.environ.get("REACHY_TTS_PREBUFFER", "0.25"))
 # 넉넉히 잡는다. 타임아웃으로 연결을 끊으면 서버가 그 소켓에 쓰다 죽는다(실측).
-# 절 단위로 보내므로 정상적으로는 1~3초면 끝난다 — 이 값은 안전장치일 뿐이다.
+# ~~절 단위로 보내므로 정상적으로는 1~3초면 끝난다 — 이 값은 안전장치일 뿐이다.~~
+# 그 가정은 **호출부가 지킬 때만** 참이다. 무대 모드가 감독 대사 전체(최대 280자,
+# 40~90초 분량)를 한 요청으로 보내던 시절에는 이 타임아웃이 실제로 걸렸다:
+# 서버가 끊긴 요청도 끝까지 합성하므로(실측 65.3초) 뒤에 밀린 요청이 90초를
+# 넘겨 로컬 합성기(실기 espeak-ng — 남성 기계음)로 폴백했다("목소리가 가끔
+# 남자로 바뀐다" 결함의 원인, voice-fix-brief 참고). `session.speak` 가 이제
+# `clauses.split_sentences` 로 문장 단위로 쪼개 `speak_many` 로 보내므로 다시
+# 1~3초 안에 끝나지만, **호출부가 문장보다 큰 덩어리를 넣으면 이 안전장치가
+# 다시 걸린다** — 여기 값 자체는 그 사고를 막지 못한다.
 QWEN_TIMEOUT = float(os.environ.get("TTS_QWEN_TIMEOUT", "90"))
 
 # 채택 음색 — 2026-07-30 청취 비교로 고른 CustomVoice 화자 'serena'.
@@ -847,6 +855,10 @@ class Speaker:
         self._gen = 0
         self._lock = threading.Lock()
         self._pending = 0
+        # `_open_qwen` 이 None 을 돌려줄 때 **이유**를 여기 남긴다(예외 이름·메시지,
+        # 또는 "첫 청크가 비었다"). 워커 스레드 하나만 읽고 쓰므로 잠금이 필요
+        # 없다 — 폴백 로그(voice-fix-brief V2)에 이유를 싣기 위한 것뿐이다.
+        self._qwen_open_error = ""
         threading.Thread(target=self._worker, daemon=True).start()
 
     def speak(self, text: str, seed: int | None = None) -> None:
@@ -916,7 +928,13 @@ class Speaker:
         **여는 것과 재생을 나눈 이유**: 다음 문장을 미리 요청하려면 "현재 요청이
         서버에 도달한 뒤"여야 한다. 순서가 뒤집히면 서버(요청을 직렬 처리한다)가
         다음 문장을 먼저 만들어 현재 발화가 오히려 늦어진다 — 테스트로 잡았다.
+
+        None 을 돌려줄 때는 **이유**를 `self._qwen_open_error` 에 남긴다. 예전에는
+        이유 없이 None 만 돌려줘 `_worker` 의 폴백 자리가 아무 로그도 못 남겼다
+        (voice-fix-brief V2 — 로그 0줄이라 실기에서 목소리가 왜 바뀌었는지
+        추적할 수 없었다).
         """
+        self._qwen_open_error = ""
         pre_first = b""
         if ahead is not None:
             ahead.ready.wait(timeout=QWEN_TIMEOUT)
@@ -927,7 +945,8 @@ class Speaker:
         if ahead is None:
             try:
                 r = _qwen_open(_qwen_body(text, seed, stream=QWEN_STREAM))
-            except (urllib.error.URLError, OSError, TimeoutError):
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+                self._qwen_open_error = f"{type(exc).__name__}: {exc}"
                 return None
 
         ctype = (r.headers.get("Content-Type") or "").lower()
@@ -938,6 +957,7 @@ class Speaker:
         first = pre_first or read(_PCM_CHUNK)
         if not first:
             r.close()
+            self._qwen_open_error = "첫 청크가 비었다"
             return None
         return (r, first, ctype, rate)
 
@@ -1110,14 +1130,26 @@ class Speaker:
                     if opened is None or not self._play_qwen(opened, gen):
                         # 서버가 죽었다 — 로컬 합성기로라도 말한다. 음색이 바뀌는 건
                         # 어색하지만 조용히 벙어리가 되는 것보다 낫다.
+                        reason = self._qwen_open_error or "빈 응답"
                         fb = self._fallback_cmd or fallback_tts_cmd(voice)
                         if fb is None:
                             _warn_once(
                                 "nofallback",
                                 f"TTS 서버 응답 없음({QWEN_URL}) + 로컬 합성기 없음"
-                                " (say/espeak-ng) — 이 발화는 무음이다",
+                                f" (say/espeak-ng) — 이 발화는 무음이다: 이유={reason}",
                             )
                         else:
+                            # **매번**(once 아님) 찍는다 — 목소리가 바뀌는 발화마다
+                            # 운영자가 로그로 대조해야 하기 때문이다(voice-fix-brief
+                            # V2). 예전에는 이 자리가 로그를 한 줄도 안 남겨(CLAUDE.md
+                            # "실패는 소리 내서 실패한다" 위반) 목소리가 남자 기계음
+                            # 으로 바뀐 원인을 로그로 못 찾았다.
+                            print(
+                                f"  [TTS 폴백] Qwen 합성 실패({reason}) → 로컬 합성기 "
+                                f"{fb[0]} 로 말한다 — 이 발화만 목소리가 바뀐다: "
+                                f"'{text[:30]}…'",
+                                flush=True,
+                            )
                             subprocess.run([*fb, text], check=False)
                 else:
                     cmd = self._cmd or fallback_tts_cmd(voice)
