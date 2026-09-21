@@ -1,0 +1,95 @@
+# 무대감독 컨트롤러 대시보드 — 설계 (시안 B · 방송 조정실)
+
+2026-09-21. 시안: https://claude.ai/artifact/TFtniNic8PVFwwDnJ7eWBr 의 `B-ControlRoom.dc.html`
+(저장소 사본: `docs/design/dashboard-B.dc.html`).
+
+## 목표
+
+무대감독(`python -m stage`)이 도는 동안 운영자가 브라우저 한 장으로 두 로봇의 상태·발화
+문구를 보고, 진행을 멈추거나 큐 단위로 옮길 수 있게 한다. **카메라 영상은 이번 범위 밖**
+— 자리표시자로 두고 실기에서 따로 붙인다.
+
+## 사용자 결정 (브레인스토밍)
+
+1. **접근 범위**: 기본은 노트북에서만(`127.0.0.1`). `REACHY_DASHBOARD_HOST` 로 같은 망에 연다.
+   이 화면은 인증 없이 시연을 멈추고 건너뛸 수 있다 — 위험한 쪽을 기본으로 두지 않는다
+   (`reachy.sh` 의 `BIND_HOST` 와 같은 원칙).
+2. **런다운 큐 이동**: 첫 클릭은 **선택만**, "이 큐로 이동" 확인 버튼으로 이동한다. 시연 중
+   실수 클릭 한 번이 진행을 깨지 않게. 이전·다음·다시·중단은 콘솔 키처럼 즉시 동작한다.
+3. **구현 방식**: 무대감독 프로세스 안에, 로봇용(8777)과 **다른 포트**(기본 8778)로.
+   새 의존성·로봇 프로토콜 변경 없음. 실행은 여전히 `python -m stage` 하나.
+4. 터미널 콘솔은 그대로 산다 — 문서화된 비상 폴백이다.
+
+## 구성 요소
+
+| 단위 | 하는 일 | 의존 |
+|---|---|---|
+| `stage/dashboard_hub.py` `DashboardHub` | 이벤트를 받아 링버퍼(200)에 두고 구독자 큐로 나눈다. **쌓기만 하고 되부르지 않는다** | 표준 라이브러리 |
+| `stage/dashboard.py` `DashboardServer`, `start_dashboard` | `GET /` 페이지, `/ws` 실시간 소켓. 허브 이벤트 + 주기 스냅샷을 보내고 버튼 명령을 콘솔과 같은 경로로 실행 | 허브, 감독, 콘솔 |
+| `stage/dashboard_page.html` | 시안 B 를 순수 HTML·CSS·JS 로. 빌드·외부 리소스 없음 | `/ws` 메시지 형식 |
+| `stage/server.py` (수정) | `_send`·`_dispatch`·접속/끊김을 허브에 흘린다. `hub=None` 이면 지금과 같다 | 허브(덕 타이핑) |
+| `stage/director.py` (수정) | `snapshot()`, `cue_list()`, `goto(cue_id)` | 큐시트 |
+| `stage/cues.py` (수정) | `CueSheet.cues()`, `find(cue_id)`, `seek(index)` | — |
+| `stage/console.py` (수정) | `_dispatch` → 공개 `dispatch`, `g <큐id>` 명령 추가 | 감독 |
+| `stage/__main__.py` (수정) | 허브 생성, 경고를 터미널+허브로, 대시보드 기동(포트가 막히면 경고만) | 전부 |
+
+## 데이터 흐름
+
+- **감독 → 허브**: 경고(`warn`)는 `tee(터미널, 허브)` 로 두 곳에 간다. 서버가 로봇에게 보낸
+  지시(`sent`: say·mic·gaze·abort), 로봇에게서 받은 보고(`recv`: heard·speaking_started·
+  speaking_ended·error), 접속(`connect`)·끊김(`disconnect`)을 허브에 `publish` 한다.
+- **교착 금지**: `_send` 와 경고는 감독이 `Director._lock` 을 쥔 채 부른다. 그 자리에서 감독
+  상태를 읽으면 교착이다. 그래서 `publish` 는 deque 추가 + `put_nowait` 뿐이고, 스냅샷은
+  대시보드 서버의 별도 스레드가 **락 밖에서** `Director.snapshot()` 으로 읽는다.
+- **허브 → 페이지**: 접속 시 `hello`(큐 목록·최근 이벤트·스냅샷), 이후 이벤트는 오는 대로,
+  스냅샷은 0.5초마다. 연결 하나에 **보내는 스레드는 하나**(펌프) — 명령 결과도 허브 이벤트로
+  흘려 같은 펌프가 보낸다.
+- **페이지 → 감독**: `{"cmd": "s"|"n"|"p"|"r"|"a"|"g <큐id>"}` — 콘솔 명령 문자열 그대로.
+  `console.dispatch` 가 실행한다(콘솔과 같은 길). 결과는 `command` 이벤트(ok·lines)로
+  모든 대시보드에 보인다.
+
+### 메시지 형식 (서버 → 페이지, JSON)
+
+| kind | 필드 |
+|---|---|
+| `hello` | `cues: [{id, topic}]`, `history: [이벤트…]`, `snapshot: {…}` |
+| `snapshot` | `cue_index, cue_id, cue_count, state(idle/mc_speaking/docent_speaking/listening), speaking_role, question_wait_s(침묵 자동 진행까지 남은 초, LISTENING 이 아니거나 기한이 없으면 null), question_wait_total_s, connected[], solo_role, rejected[], level` |
+| `sent` | `t, role, type, fields` |
+| `recv` | `t, role, type, fields` |
+| `connect` / `disconnect` | `t, role` (+ `version`) |
+| `warn` | `t, text` |
+| `command` | `t, cmd, ok, lines[]` |
+
+## 감독 쪽 새 동작
+
+- `goto(cue_id)`: **발화 중이면 커서를 옮기기 전에 거절**(TurnError). 모르는 큐면 경고만.
+  콘솔 `g` 가 `n`·`p`·`r` 처럼 먼저 `abort()` 한다. (`previous()` 는 커서를 먼저 옮긴 뒤
+  거절당할 수 있는데, 그 틈을 `goto` 에서는 만들지 않는다.)
+- `snapshot()`: 락을 잠깐 쥐고 한 시점의 값을 모은다. 전송 탭 안에서 부르면 안 된다.
+
+## 오류 처리 (저장소 규약: 소리 내서 실패)
+
+- 대시보드 포트가 막혀 있으면 경고하고 **감독·콘솔은 그대로** 돈다.
+- 페이지 파일을 못 읽으면 500 + 터미널 경고.
+- 규약에 안 맞는 명령은 터미널 경고, 연결은 유지.
+- 스냅샷이 터져도 펌프는 경고하고 계속 돈다.
+- 구독자 큐가 넘치면 버리고 개수를 센다(페이지는 다음 스냅샷으로 다시 맞춰진다).
+- 대시보드 서버의 경고는 **터미널로만** 간다(허브로 되돌리면 자기 자신을 다시 부른다).
+
+## 보안
+
+- 기본 `127.0.0.1`. 망에 열 때는 전용 공유기 전제(`docs/two-robot-setup.md` 와 같은 이유).
+- 페이지는 관람객 STT 문장·경고를 표시한다 — **`innerHTML` 을 쓰지 않고 `textContent` 만**.
+- 페이지는 외부 리소스를 하나도 부르지 않는다(시연장은 인터넷이 없다 — 오프라인 테스트 절차).
+
+## 테스트
+
+- 허브·큐시트·감독·콘솔은 단위 테스트. 서버 탭은 기존 실소켓 테스트 방식 + 기록용 가짜 허브.
+- 대시보드 서버는 실소켓(`port=0`) + HTTP GET + 가짜 감독.
+- 페이지는 정적 검사(필수 id, `/ws`, 외부 URL 없음, `innerHTML` 없음) + 최종 검증에서
+  시뮬 2대 위에 실제 브라우저로 띄워 버튼·실시간 갱신을 확인한다.
+
+## 범위 밖
+
+- 카메라 영상(실기). 관람객 수준 실시간 전환(지금은 기동 때 고정). 침묵 자동 진행 켜고 끄기.
+  콘솔에서 친 명령을 대시보드 로그에 싣는 것.
