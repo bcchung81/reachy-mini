@@ -162,9 +162,13 @@
     background: #151A21; border: 1px solid #242B35; border-radius: 6px; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 8px; min-height: 0;
   }
-  .rundown-panel { flex: 1 1 320px; min-width: 280px; }
-  .control-panel { flex: 1 1 340px; min-width: 300px; }
-  .log-panel { flex: 1 1 320px; min-width: 280px; overflow: hidden; }
+  /* 기본 폭(flex-basis)을 최소 폭과 같게 둔다. 예전 320+340+320=980 에 간격 2개(48)와 좌우
+     여백(48)을 더하면 1076px 이라, 태블릿 가로(1024px)에서 이벤트 로그가 둘째 줄로 밀려
+     창 높이 맞춤에 눌린 채 몇 px 로 찌그러졌다. 최소 폭 합 860 + 96 = 956px 까지 한 줄이고,
+     남는 폭은 `flex-grow` 가 그대로 나눠 가지므로 넓은 창의 모양은 달라지지 않는다. */
+  .rundown-panel { flex: 1 1 280px; min-width: 280px; }
+  .control-panel { flex: 1 1 300px; min-width: 300px; }
+  .log-panel { flex: 1 1 280px; min-width: 280px; overflow: hidden; }
 
   .panel-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
   .panel-title { font-weight: 700; color: #E8EAED; }
@@ -236,6 +240,15 @@
   @media (max-width: 1180px) {
     .level-caption { display: none; }
     .level-pending-text { display: none; }
+  }
+
+  /* 956px 보다 좁으면(세로 태블릿 등) 세 패널이 한 줄에 안 들어가 줄바꿈이 난다. 그때
+     창 높이 맞춤을 그대로 두면 둘째 줄 패널이 남은 몇 px 에 눌려 로그가 안 보인다 — 이
+     폭에서는 패널마다 쓸 만한 높이를 주고, 넘치는 만큼은 페이지 스크롤로 넘긴다(body 는
+     이미 overflow-y: auto). */
+  @media (max-width: 955px) {
+    .lower { flex: 0 0 auto; }
+    .panel { min-height: 260px; }
   }
 </style>
 </head>

@@ -236,3 +236,38 @@ def test_단독으로_들어가면_열려_있던_이동_확인_바를_닫는다(
     src = _src()
     body = _media_block(src, "function applySoloLockdown(isSolo)")
     assert "closeGotoBar()" in body
+
+
+def _px(rule: str, prop: str) -> int:
+    m = re.search(prop + r"\s*:\s*(\d+)px", rule)
+    assert m, (prop, rule)
+    return int(m.group(1))
+
+
+def test_하단_패널_셋은_1024px_폭에서_한_줄에_들어간다():
+    """태블릿 가로(1024px)에서 이벤트 로그가 둘째 줄로 밀려 높이 몇 px 로 찌그러졌다 —
+    세 패널의 `flex` 기본 폭 합(320+340+320=980)에 간격·여백(96)을 더하면 1076px 이라
+    그보다 좁으면 줄바꿈이 났다. 기본 폭 합 + 간격 2개 + 좌우 여백이 1024 이하여야 한다."""
+    src = _src()
+    lower = _css_rule(src, ".lower")
+    gap = _px(lower, "gap")
+    pad = re.search(r"padding\s*:\s*\d+px\s+(\d+)px", lower)
+    assert pad, lower
+    side = int(pad.group(1))
+    basis = 0
+    for sel in (".rundown-panel", ".control-panel", ".log-panel"):
+        rule = _css_rule(src, sel)
+        m = re.search(r"flex\s*:\s*\d+\s+\d+\s+(\d+)px", rule)
+        assert m, (sel, rule)
+        basis += int(m.group(1))
+    assert basis + 2 * gap + 2 * side <= 1024, (basis, gap, side)
+
+
+def test_더_좁아서_줄바꿈되면_패널이_납작해지지_않는다():
+    """956px 보다 좁으면 줄바꿈은 피할 수 없다 — 그때 둘째 줄 패널이 창 높이 맞춤에 눌려
+    몇 px 로 찌그러지지 않게 최소 높이를 주고 페이지 스크롤로 넘긴다."""
+    src = _src()
+    blocks = re.findall(r"@media\s*\(max-width:\s*(\d+)px\)\s*\{(.*?)\n  \}", src, re.S)
+    narrow = [body for w, body in blocks if int(w) < 1000 and ".panel" in body]
+    assert narrow, blocks
+    assert re.search(r"\.panel\s*\{[^}]*min-height:\s*2\d\dpx", narrow[0]), narrow[0]
