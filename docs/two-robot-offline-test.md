@@ -49,7 +49,29 @@
 
 `http://<로봇IP>:8000` → 자동 시작 앱을 **없음**으로. 켜져 있으면 우리 앱과 모터를 두고 싸운다. 두 대 모두.
 
-## ⑤ 노트북: 추론 3종 + 예열 (5분, 첫 합성 8.5초 포함)
+## ⑤~⑦ 한 줄로 — `./reachy.sh start --robot` (권장, 10분)
+
+```bash
+export REACHY_MC_UNIT=<③의 사회자 hardware_id>
+export REACHY_DOCENT_UNIT=<③의 도슨트 hardware_id>
+REACHY_MC_HOST=192.168.0.41 REACHY_DOCENT_HOST=192.168.0.42 ./reachy.sh start --robot --dry-run   # 계획만
+REACHY_MC_HOST=192.168.0.41 REACHY_DOCENT_HOST=192.168.0.42 ./reachy.sh start --robot
+```
+
+이 한 줄이 아래 ⑤~⑦ 을 순서대로 한다: 포트(8777·8778) 점검 → 추론 3종(LAN) → 예열 → 사회자·도슨트
+각각 **도달 확인 → 백엔드 상태/복구 → config 동기화(역할·감독 주소) → 로봇→맥 도달 → 기상 → 앱** →
+무대감독(`0.0.0.0`)을 **이 터미널에** 띄우고 대시보드(`http://127.0.0.1:8778/`)를 브라우저로 연다.
+
+- 로봇 주소를 안 주면 `192.168.0.4`(사회자) / `192.168.0.5`(도슨트) 다. ③ 에서 정한 주소와 다르면 반드시 준다.
+- **한 대가 안 닿으면 경고하고 건너뛴다** — 감독은 남은 한 대로 1인 모드로 뜬다. 그 로봇을 살린 뒤
+  다른 터미널에서 `REACHY_ROLE=… REACHY_ROBOT_HOST=… ./reachy.sh robot up` 으로 붙인다.
+- 로봇 config 에 들어가는 감독 주소는 **이 노트북**(`ws://<LAN IP>:8777`)이다. 셸에 시뮬 때의
+  `REACHY_DIRECTOR_URL` 이 남아 있으면 무시한다고 경고가 뜬다.
+- 콘솔 `q`(또는 Ctrl-C)로 끝내면 **두 로봇의 앱만** 멈춘다. 추론 3종은 남는다 — 전부 내리려면 `./reachy.sh stop`.
+
+아래 ⑤~⑦ 은 **부품별로 띄울 때**다 — 한 대만 다시 올리거나, 어느 단계에서 막히는지 좁힐 때 쓴다.
+
+## ⑤ 노트북: 추론 3종 + 예열 — 부품별로 띄울 때 (5분, 첫 합성 8.5초 포함)
 
 ```bash
 export REACHY_MC_UNIT=<③의 사회자 hardware_id>
@@ -62,7 +84,7 @@ export REACHY_DIRECTOR_PORT=8777
 `REACHY_AEC` 는 **켜지 않는다**(실기는 XMOS 하드웨어 AEC). 로봇의 셸에서 `export` 하는 것은 아무
 효과가 없다 — 로봇의 앱은 데몬의 자식이라 설정파일만 읽는다. 그 파일은 ⑦ 이 써 넣는다.
 
-## ⑥ 무대감독 기동 (1분)
+## ⑥ 무대감독 기동 — 부품별로 띄울 때 (1분)
 
 ```bash
 .venv/bin/python -m stage
@@ -82,7 +104,7 @@ export REACHY_DIRECTOR_PORT=8777
 적용되고(로그에 `관람객 수준 일반 → 초등 — 다음 큐부터 적용(바로 하려면 r)`), 지금 큐에 바로 걸려면
 이어서 "이 큐 다시"(`r`) 를 누른다. `REACHY_AUDIENCE_LEVEL` 은 처음 수준일 뿐이다.
 
-## ⑦ 로봇 앱 기동 — 사회자 먼저, 도슨트 다음 (2분 × 2)
+## ⑦ 로봇 앱 기동 — 부품별로 띄울 때: 사회자 먼저, 도슨트 다음 (2분 × 2)
 
 노트북에서 로봇마다 한 번씩:
 
@@ -91,8 +113,8 @@ REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
 REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 ```
 
-`robot up` 하나가 **백엔드 확인 → 추론 3종 → 로봇 config 동기화 → 로봇→맥 도달 확인 → 기상 →
-예열 → 앱 기동** 을 순서대로 한다. 무대감독 콘솔에 `[mc] 붙었다`, `[docent] 붙었다` 가 뜨면 된다.
+`robot up` 하나가 **백엔드 확인 → 추론 3종 → 예열 → 로봇 config 동기화 → 로봇→맥 도달 확인 →
+기상 → 앱 기동** 을 순서대로 한다. 무대감독 콘솔에 `[mc] 붙었다`, `[docent] 붙었다` 가 뜨면 된다.
 
 **확인할 로그 줄** (`./reachy.sh robot logs`):
 
@@ -137,6 +159,10 @@ REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 "이상하다" 는 순서 하나다 — **로그 확인 → 재현 → 원인 → 고침 → 테스트로 박제**.
 
 ## ⑩ 정리
+
+`start --robot` 으로 띄웠으면: 콘솔 `q` → 두 로봇의 앱이 멈춘다 → `./reachy.sh stop` 이 맥의 추론 3종까지 내린다.
+
+부품별로 띄웠으면:
 
 ```bash
 REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot down --keep-servers

@@ -27,6 +27,8 @@ macOS 26.5.2 / Apple Silicon / Python 3.12.13(uv 관리) 기준으로 검증됐�
 ## 명령
 
 ```bash
+./reachy.sh start --sim          # 시연 전부(추론 3종·시뮬 2대·무대감독+대시보드)
+./reachy.sh start --robot        # 시연 전부 — 실기 2대(REACHY_MC_HOST / REACHY_DOCENT_HOST, 기본 192.168.0.4 / .5)
 ./reachy.sh sim                  # 시뮬레이터 기동 (빈 씬, 미디어 비활성)
 ./reachy.sh sim --scene minimal  # 테이블 + 사과/크루아상/오리
 .venv/bin/python your.py      # SDK 스크립트 실행 (데몬이 떠 있어야 함)

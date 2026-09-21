@@ -162,6 +162,9 @@ export REACHY_DIRECTOR_PORT=8777
 
 ### 각 로봇에는 — `./reachy.sh robot up` 이 설정파일에 써 넣는다
 
+`./reachy.sh start --robot`(§7)이 두 로봇에 이 일을 **한 번에** 한다 — 역할은 사회자/도슨트로
+정해 넣고, 감독 주소는 이 노트북(`ws://<LAN IP>:8777`)으로 넣는다. 아래는 부품별로 띄울 때다.
+
 노트북에서 로봇마다 한 번씩 돌린다. 역할·무대감독 주소·추론 3종 주소가
 로봇의 `~/.config/reachy-mini-voice-chat/config.json` 에 들어간다.
 
@@ -203,13 +206,28 @@ PC_IP=192.168.0.10 source scripts/stage-env.sh mc       # 로봇에서 손으로
 ```
 ① 공유기 켜기
 ② 로봇 2대 켜고 WiFi 붙는 것 확인 (curl 로 status 200)
+③ 한 줄로 전부     REACHY_MC_HOST=… REACHY_DOCENT_HOST=… ./reachy.sh start --robot
+```
+
+`start --robot` 이 **추론 3종(LAN) → 예열 → 사회자·도슨트 각각(도달 확인 → 백엔드 상태/복구 →
+config 동기화 → 로봇→맥 도달 → 기상 → 앱) → 무대감독(0.0.0.0, 이 터미널이 콘솔) + 대시보드**
+를 순서대로 한다. 로봇 주소를 안 주면 `192.168.0.4` / `192.168.0.5` 다(§2 에서 정한 주소가 다르면 준다).
+먼저 `--dry-run` 으로 계획만 찍어 볼 수 있다.
+
+- 한 대가 안 닿으면 **경고하고 건너뛴다** — 감독은 남은 한 대로 뜬다(1인 모드, 아래 ⚠️).
+- 무대감독·대시보드 포트(8777·8778)를 누가 쥐고 있으면 그게 무엇인지 보여 주고 멈춘다.
+- 콘솔 `q`(또는 Ctrl-C)로 끝내면 **두 로봇의 앱만** 멈춘다. 추론 3종은 남는다 — 전부 내리려면 `./reachy.sh stop`.
+
+**부품별로 띄울 때**(한 대만 다시 올리거나 어느 단계에서 막히는지 좁힐 때):
+
+```
 ③ 무대감독 기동                 .venv/bin/python -m stage
 ④ 사회자 로봇 기동   REACHY_ROLE=mc     REACHY_ROBOT_HOST=… ./reachy.sh robot up
 ⑤ 도슨트 로봇 기동   REACHY_ROLE=docent REACHY_ROBOT_HOST=… ./reachy.sh robot up
 ```
 
-`robot up` 하나가 **추론 3종 기동 → config 동기화 → 기상 → 예열 → 앱 기동**을 순서대로
-한다. 두 번째 호출에서 추론 3종과 예열은 이미 돼 있으므로 금방 지나간다.
+`robot up` 하나가 **추론 3종 기동 → 예열 → config 동기화 → 기상 → 앱 기동**을 순서대로
+한다(예열은 2026-09-22 에 로봇별 단계 앞으로 옮겼다 — `start --robot` 이 두 대에 한 번만 하려고). 두 번째 호출에서 추론 3종과 예열은 이미 돼 있으므로 금방 지나간다.
 
 > **⚠️ 예열을 건너뛰지 않는다.** Qwen3-TTS 첫 합성은 Metal 커널 JIT 로 **8.5초**가
 > 걸린다(`scripts/warmup.py` 실측). 감독의 타임아웃 여유분(`TIMEOUT_MARGIN_S`)을 15초로

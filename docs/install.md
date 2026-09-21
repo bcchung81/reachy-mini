@@ -281,8 +281,9 @@ REACHY_ROLE=mc     REACHY_ROBOT_HOST=192.168.0.41 ./reachy.sh robot up
 REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.42 ./reachy.sh robot up
 ```
 
-`robot up` 하나가 **백엔드 확인 → 추론 3종 → config 동기화 → 로봇→맥 도달 확인 → 기상 →
-예열 → 앱 기동** 을 순서대로 한다.
+`robot up` 하나가 **백엔드 확인 → 추론 3종 → 예열 → config 동기화 → 로봇→맥 도달 확인 → 기상 →
+앱 기동** 을 순서대로 한다. 두 대를 한 번에 올리려면 `./reachy.sh start --robot`
+(`REACHY_MC_HOST`/`REACHY_DOCENT_HOST`) — `docs/two-robot-setup.md` §7.
 
 `REACHY_ROLE` 없이 돌리면 그 로봇의 역할 설정을 **지운다**(1대 모드로 되돌린다).
 지웠다는 줄이 화면에 뜬다.
