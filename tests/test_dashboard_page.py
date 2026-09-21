@@ -77,3 +77,35 @@ def test_키_매핑은_물리_코드를_쓴다():
     src = _src()
     assert "KEY_CMD[ev.code]" in src
     assert '"KeyN"' in src
+
+
+def _css_rule(src: str, selector: str) -> str:
+    """`selector { … }` 규칙 본문. 주석 안의 같은 글자에 걸리지 않게 줄 머리의 선택자만 본다."""
+    m = re.search(r"\n\s*" + re.escape(selector) + r"\s*\{([^}]*)\}", src)
+    assert m, selector
+    return m.group(1)
+
+
+def test_로그와_런다운은_창_높이에_맞춰_안쪽에서_스크롤한다():
+    """body 가 `min-height: 100vh` 면 로그·런다운이 길어질수록 페이지가 늘어나 최신 로그가
+    창 밖으로 밀려났다(사용자 요청: 이벤트 로그는 세로 스크롤, 브라우저 크기에 맞게).
+    body 높이를 창에 고정하고, 두 목록은 `contain: size` 로 내용 길이를 패널 높이에서 떼어
+    안쪽에서 스크롤한다 — 런다운 19행이 하단 줄 높이를 정하면 같은 줄의 로그도 그만큼 늘어난다."""
+    src = _src()
+    body = _css_rule(src, "body")
+    assert "height: 100vh;" in body
+    assert "min-height: 100vh" not in body
+    for sel in (".log", ".rundown-list"):
+        rule = _css_rule(src, sel)
+        assert "overflow-y: auto" in rule, sel
+        assert "contain: size" in rule, sel
+
+
+def test_자막은_고정_높이에서_스크롤해_하단을_창_밖으로_밀지_않는다():
+    """자막이 `min-height` 였을 때 도슨트 해설(최대 280자)이 6~7줄로 늘어나 칸이 커지고,
+    런다운·제어·로그를 창 밖으로 밀어 페이지 스크롤이 생겼다(사용자 요청: 전체화면에서
+    세로 스크롤 없이). 높이를 정하고 안쪽에서 스크롤한다."""
+    rule = _css_rule(_src(), ".caption")
+    assert "height: clamp(" in rule
+    assert "overflow-y: auto" in rule
+    assert "min-height" not in rule
