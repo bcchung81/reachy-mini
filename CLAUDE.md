@@ -44,6 +44,7 @@ open http://localhost:8000/docs         # REST API 문서 (OpenAPI)
 
 - **인터프리터는 `.venv/bin/python`(3.12) 하나뿐이다.** 시스템 `python3`는 3.14라 SDK가 설치되지 않는다.
 - **데몬은 `./reachy.sh sim`로만 띄운다.** `reachy-mini-daemon --sim`은 macOS에서 RuntimeError로 죽는다.
+  2대 시연은 `./reachy.sh start --sim` 이 `--mockup-sim`(MuJoCo 없음)으로 두 대를 띄운다 — 그래서 한 맥에 공존한다.
 - **오디오는 된다 — 단 `./reachy.sh sim`로 띄웠을 때만.** 스크립트가 GStreamer 장치 프로바이더 교착을 우회한다. 데몬을 직접 `mjpython ...`으로 띄우면 미디어 초기화에서 멈춘다. DoA(음원 방향)는 마이크 어레이가 없어 기대하지 않는다.
 - **손으로 움직여 모션 녹화 불가**(컴플라이언트 모드 no-op). 녹화 모션 *재생*은 된다.
 - **JS(Live/Web) 앱 경로를 쓰지 않는다.** 시뮬 연동 근거가 없다. Python 앱으로 만든다.

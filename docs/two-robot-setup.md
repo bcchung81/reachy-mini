@@ -222,16 +222,23 @@ config 동기화 → 로봇→맥 도달 → 기상 → 앱) → 무대감독(0.
 - **TTS 가 안 떠도 멈춘다** — 로봇 앱은 이 노트북의 TTS 로만 말한다. 시뮬처럼 say 로 물러나는
   길이 로봇에는 없다(`tail -30 .demo-logs/tts.log`).
 - 로봇에 앱이 이미 돌고 있으면(지난 시연의 옛 config) 멈추고 새 config 로 다시 띄운다 — 경고가 뜬다.
-- 한 대가 안 닿으면 **경고하고 건너뛴다** — 감독은 남은 한 대로 뜬다(1인 모드, 아래 ⚠️).
+- 로봇에 앱이 이미 돌고 있어 멈췄으면 **다시 깨운 뒤**(모터 → wake_up) 띄운다 — 멈춘 로봇은 몇 초 뒤
+  절전에 들어, 그대로 띄우면 말은 하는데 몸이 안 움직인다.
+- 한 대가 안 닿으면 **경고하고 건너뛴다** — 감독은 남은 한 대로 뜬다(1인 모드, 아래 ⚠️). 건너뛸 때마다
+  그 로봇의 합류 명령(`REACHY_ROLE=<역할> REACHY_ROBOT_HOST=<주소> ./reachy.sh robot up`)이 찍힌다.
 - 무대감독·대시보드 포트(8777·8778)를 누가 쥐고 있으면 그게 무엇인지 보여 주고 멈춘다.
-- 콘솔 `q`(또는 Ctrl-C)로 끝내면 **두 로봇의 앱만** 멈춘다. 추론 3종은 남는다 — 전부 내리려면 `./reachy.sh stop`.
+- `REACHY_MC_HOST` 와 `REACHY_DOCENT_HOST` 가 같으면 멈춘다(종료코드 2, `--dry-run` 도) — 도슨트 config 가
+  사회자를 덮어쓴다.
+- 콘솔 `q`(또는 Ctrl-C)로 끝내면 **두 로봇(사회자·도슨트 주소)의 앱만** 멈춘다 — 건너뛰었다가 위 합류 명령으로
+  나중에 붙인 로봇까지. 그때도 꺼져 있는 로봇은 `로봇 앱 정지 실패 … 안 닿는다` 한 줄이 뜬다. 추론 3종은
+  남는다 — 전부 내리려면 `./reachy.sh stop`.
 
-**부품별로 띄울 때**(한 대만 다시 올리거나 어느 단계에서 막히는지 좁힐 때):
+**부품별로 띄울 때**(한 대만 다시 올리거나 어느 단계에서 막히는지 좁힐 때) — 위 ③ 한 줄을 셋으로 나눈 것이다:
 
 ```
-③ 무대감독 기동                 .venv/bin/python -m stage
-④ 사회자 로봇 기동   REACHY_ROLE=mc     REACHY_ROBOT_HOST=… ./reachy.sh robot up
-⑤ 도슨트 로봇 기동   REACHY_ROLE=docent REACHY_ROBOT_HOST=… ./reachy.sh robot up
+③-1 무대감독 기동                 .venv/bin/python -m stage
+③-2 사회자 로봇 기동   REACHY_ROLE=mc     REACHY_ROBOT_HOST=… ./reachy.sh robot up
+③-3 도슨트 로봇 기동   REACHY_ROLE=docent REACHY_ROBOT_HOST=… ./reachy.sh robot up
 ```
 
 `robot up` 하나가 **추론 3종 기동 → 예열 → config 동기화 → 기상 → 앱 기동**을 순서대로

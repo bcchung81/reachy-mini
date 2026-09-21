@@ -19,6 +19,9 @@
 
 | 명령 | 하는 일 |
 |---|---|
+| `./reachy.sh start --sim` | **2대 시연 한 벌** — 추론 3종 · 모의 데몬 2대(`--mockup-sim`) + 앱 2대 · 무대감독 + 대시보드. 이 터미널이 감독 콘솔이고 `q` 로 끝내면 이 실행이 띄운 것만 내린다(추론 3종은 남는다) |
+| `./reachy.sh start --robot` | 같은 한 벌을 **실기 2대**로(`REACHY_MC_HOST` / `REACHY_DOCENT_HOST`, 기본 192.168.0.4 / .5). 절차는 `docs/two-robot-offline-test.md` |
+| `./reachy.sh start … --dry-run` | 무엇을 어디에 띄울지 `PLAN` 줄만 찍는다 — 아무것도 건드리지 않는다 |
 | `./reachy.sh demo` | 전체 스택 기동 + 예열 후 **음성 모드**. 진입점은 `main.py`(실기와 동일) |
 | `./reachy.sh demo --text` | 같은 스택, **키보드 대화** — 마이크가 말썽일 때 (`demo.py` 폴백) |
 | `./reachy.sh demo --no-robot` | 시뮬 없이 대화·음성만 — 최후 폴백 |
