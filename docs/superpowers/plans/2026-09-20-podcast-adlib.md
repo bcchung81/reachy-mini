@@ -1098,6 +1098,44 @@ Run: `.venv/bin/python -m pytest tests/test_stage_director.py -k 여는_대사_�
 
 이후 `speak(...)` 에 `cue.mc` 대신 `mc_text` 를 넘긴다.
 
+- [ ] **Step 5b: 도슨트 해설도 수준을 따르게 한다 — 계획 보완(2026-09-20)**
+
+Task 5 가 `Cue.brief_for` 를 열었지만 **도슨트 자신의 해설 브리프를 그것으로 바꾸는
+자리가 계획 어디에도 없었다.** `stage/director.py` 가 두 곳에서 `cue.docent_brief` 를
+직접 읽는다. 그대로 두면 사회자 대사만 수준을 따르고 **도슨트 해설은 수준과
+무관해진다** — 수준 기능이 절반만 배선된 채 시연에 나간다.
+
+먼저 실패 테스트:
+
+```python
+def test_도슨트_해설_브리프가_수준을_따른다():
+    """사회자 대사만 수준을 따르고 해설이 안 따르면 기능이 반만 도는 것이다."""
+    from stage.cues import Cue, CueSheet
+    sheet = CueSheet([Cue(
+        "c1", "첫째", "여는 대사", "옛 지시문", "partner",
+        briefs={
+            "초등": {"mc_brief": "초등 진행", "docent_brief": "초등 해설 지시"},
+            "중고등": {"mc_brief": "중 진행", "docent_brief": "중 해설 지시"},
+            "일반": {"mc_brief": "일반 진행", "docent_brief": "일반 해설 지시"},
+            "전문가": {"mc_brief": "전 진행", "docent_brief": "전문가 해설 지시"},
+        },
+    )])
+    seen: list[str] = []
+    h = Harness(sheet=sheet, level_name="초등",
+                generate=lambda role, brief, hist: seen.append(brief) or "대사")
+    h.d.start()
+    assert any("초등 해설 지시" in b for b in seen), seen
+    assert not any("옛 지시문" in b for b in seen), seen
+```
+
+> `Harness` 에 `sheet`·`level_name` 을 넘길 수 있게 확장한다(기본값은 지금 동작 유지).
+
+그다음 `stage/director.py` 의 두 자리를 바꾼다. `_begin_cue` 의 도슨트 생성과
+`on_speaking_ended` 의 `pending` 튜플 둘 다, `cue.docent_brief` 대신
+`cue.brief_for(self._level_name)[1]` 을 쓴다. **폴백 인자도 같은 값**으로 준다 —
+`brief_for` 가 브리프 없는 섹션에서는 옛 `docent_brief` 를 돌려주므로 폴백 의미가
+그대로 유지된다.
+
 - [ ] **Step 6: 사전 생성 스크립트 작성**
 
 `scripts/pregen_mc_lines.py`:
