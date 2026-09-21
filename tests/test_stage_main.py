@@ -654,3 +654,31 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
     assert seen["console"] is 서버들[0].director
     assert seen["shutdown"] == 1
     assert seen["dash"] == []
+
+
+@pytest.mark.parametrize("빈값", ["", "   "])
+def test_대시보드_주소가_비어_있으면_모든_망이_아니라_노트북에서만_열고_경고한다(monkeypatch, capsys, 빈값):
+    """`REACHY_DASHBOARD_HOST=` (빈 값) 은 `os.environ.get(…, 기본값)` 을 지나 빈 문자열로
+    `serve("", …)` 에 닿고, 빈 호스트는 **모든 인터페이스**에 바인드된다 — 인증 없이
+    시연을 멈추는 화면이 빈 값 하나로 망에 열린다(최종 수정 웨이브 뒤 관찰). 위험한 쪽을
+    기본으로 두지 않는다는 결정 1에 따라 빈 값은 루프백으로 두고, 소리 내서 알린다."""
+    monkeypatch.setenv("REACHY_DASHBOARD_HOST", 빈값)
+    monkeypatch.setenv("REACHY_DASHBOARD_PORT", "9911")
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen: dict = {}
+
+    class 멈춤(Exception):
+        pass
+
+    def 가짜대시보드(hub, director, host, port, warn=print):
+        seen["host"] = host
+        raise 멈춤()
+
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "StageServer", lambda *a, **kw: _가짜서버(seen, *a, **kw))
+    monkeypatch.setattr(stage_main, "start_dashboard", 가짜대시보드)
+    with pytest.raises(멈춤):
+        stage_main.main()
+
+    assert seen["host"] == "127.0.0.1"
+    assert "⚠ REACHY_DASHBOARD_HOST 가 비어 있다" in capsys.readouterr().out

@@ -311,9 +311,21 @@ def main() -> None:
             "띄우지 않는다(기본 포트로 바꾸지 않는다). 감독과 콘솔은 그대로 돈다"
         )
     else:
+        # 빈 값(`REACHY_DASHBOARD_HOST=`)은 `get(…, 기본값)` 을 지나 `serve("", …)` 에 닿고,
+        # 빈 호스트는 **모든 인터페이스**에 바인드된다 — 인증 없는 제어 화면이 빈 값 하나로
+        # 망에 열린다. 위험한 쪽을 기본으로 두지 않는다(설계 결정 1): 루프백으로 두고 알린다.
+        # 포트와 달리 여기서는 바꾼다 — 빈 값은 "아무 주소" 가 아니라 "안 정했다" 로 읽는 게 맞고,
+        # 바꾸는 방향이 더 좁은 쪽이다.
+        dash_host = os.environ.get("REACHY_DASHBOARD_HOST", DASH_HOST)
+        if not dash_host.strip():
+            terminal(
+                f"⚠ REACHY_DASHBOARD_HOST 가 비어 있다 — 빈 값은 모든 망에 여는 것이라 "
+                f"{DASH_HOST}(노트북에서만)로 띄운다. 망에 열려면 0.0.0.0 을 적는다"
+            )
+            dash_host = DASH_HOST
         dash = start_dashboard(
             hub, server.director,
-            os.environ.get("REACHY_DASHBOARD_HOST", DASH_HOST),
+            dash_host,
             dash_port,
             warn=terminal,
         )
