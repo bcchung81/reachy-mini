@@ -11,7 +11,7 @@
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
     REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
     REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만)
-    REACHY_DASHBOARD_PORT  기본 8778
+    REACHY_DASHBOARD_PORT  기본 8778 (틀린 값이면 경고하고 대시보드만 빼고 돈다)
 """
 
 import os
@@ -224,6 +224,22 @@ def main() -> None:
     announce_level(level, explicit)  # 수준이 잘못됐으면 이미 위에서 죽었다.
     host = os.environ.get("REACHY_DIRECTOR_HOST", "0.0.0.0")
     port = int(os.environ.get("REACHY_DIRECTOR_PORT", "8777"))
+    # 허브는 **쌓기만** 한다(`DashboardHub.publish`) — 감독이 락을 쥔 채 부르는
+    # 자리(`StageServer._send`, 경고 콜백)에서도 안전하다. `warn` 은 터미널과
+    # 허브 양쪽으로 가는 tee — 대시보드가 없거나 죽어 있어도 터미널 경고는
+    # 그대로 살고, 대시보드가 붙어 있으면 같은 경고가 화면에도 뜬다.
+    #
+    # **첫 경고보다 먼저 만든다.** 예전에는 아래 역할 검증 경고가 허브를 만들기
+    # 전에 `print` 로 나가 대시보드 이력에 없었다 — 지난 실기 리허설의 역할
+    # 뒤바뀜을 막는 검증이 꺼져 있다는 경고인데 운영자 화면에서만 빠졌다(최종
+    # 리뷰 Y3). 허브 이력은 대시보드가 나중에 붙어도 `hello` 로 받으므로, 대시보드가
+    # 뜨기 전에 낸 경고도 여기 실으면 화면에 보인다. 정보성 출력(수준·캐시 개수)은
+    # 경고가 아니라 `print` 그대로다.
+    def terminal(m: str) -> None:
+        print(m, flush=True)
+
+    hub = DashboardHub()
+    warn = tee(terminal, lambda m: hub.publish("warn", text=m))
     expect = {
         k: v
         for k, v in (
@@ -233,7 +249,7 @@ def main() -> None:
         if v
     }
     if not expect:
-        print("⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다")
+        warn("⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다")
 
     # `level.name` 은 이미 위에서 한 번 읽어 둔 `level` 객체의 속성일 뿐이다
     # — 환경변수를 다시 조회하지 않는다("수준을 두 번 읽지 않는다"). 캐시도
@@ -246,19 +262,18 @@ def main() -> None:
     # 데도 안 남으면 지켜지지 않는다 — 캐시를 통째로 못 읽어 왔거나(배선
     # 문제) 사전 생성을 깜빡한 채로 기동해도 콘솔에는 아무 신호가 없었다.
     print(f"여는 대사 캐시 {len(mc_lines)}개 로드됨 ({cache_path()})", flush=True)
-    # 허브는 **쌓기만** 한다(`DashboardHub.publish`) — 감독이 락을 쥔 채 부르는
-    # 자리(`StageServer._send`, 경고 콜백)에서도 안전하다. `warn` 은 터미널과
-    # 허브 양쪽으로 가는 tee — 대시보드가 없거나 죽어 있어도 터미널 경고는
-    # 그대로 살고, 대시보드가 붙어 있으면 같은 경고가 화면에도 뜬다.
-    hub = DashboardHub()
-    warn = tee(lambda m: print(m, flush=True), lambda m: hub.publish("warn", text=m))
     # `docent_min_chars=level.min_chars` — 도슨트 해설의 분량 미달 경고가 수준을
     # 따르게 하는 유일한 배선이다. 감독의 기본값은 `MIN_CHARS`(40)이라 여기서
     # 안 넘기면 일반(180자)·전문가(260자) 목표에 50자짜리 해설이 나와도 로그에
     # 아무것도 안 남는다(전체 리뷰 I1). `Level` 객체째 넘기지 않는 이유는
     # `Director.__init__` 의 `_docent_min_chars` 주석에 있다.
+    #
+    # `build_generate` 에도 같은 tee `warn` 을 넘긴다. 기본값(`print`)에 기대면
+    # 생성기 경고(화자 이름표를 걷었다·분량 상한에서 잘랐다)만 터미널에 남고
+    # 대시보드 이력에서 빠진다(최종 리뷰 Y1) — 감독의 "질문 유도가 없다"·"너무
+    # 짧다" 경고는 화면에 뜨는데 그 **원인**인 상한 경고는 안 보이는 꼴이다.
     server = StageServer(
-        CueSheet(load_cues()), build_generate(level), expect_units=expect,
+        CueSheet(load_cues()), build_generate(level, warn=warn), expect_units=expect,
         mc_lines=mc_lines, level_name=level.name,
         docent_min_chars=level.min_chars,
         warn=warn, hub=hub,
@@ -275,15 +290,33 @@ def main() -> None:
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     # `run_console` **앞에** 띄운다 — 콘솔은 표준입력을 막고 버티므로, 뒤에 두면
     # 대시보드가 절대 뜨지 않는다. 이 서버 자신의 `warn` 은 **터미널로만**
-    # 낸다(`lambda m: print(...)`, tee 가 아니다) — tee 를 넘기면 대시보드 자신의
+    # 낸다(`terminal`, tee 가 아니다) — tee 를 넘기면 대시보드 자신의
     # 실패 경고가 다시 허브를 거쳐 대시보드로 흘러 자기 자신을 부르는 꼴이 된다
     # (`stage/dashboard.py` 머리 docstring과 같은 이유).
-    dash = start_dashboard(
-        hub, server.director,
-        os.environ.get("REACHY_DASHBOARD_HOST", DASH_HOST),
-        int(os.environ.get("REACHY_DASHBOARD_PORT", str(DASH_PORT))),
-        warn=lambda m: print(m, flush=True),
-    )
+    #
+    # **포트 값이 틀려도 감독은 죽지 않는다.** 예전에는 `int(...)` 의 ValueError 가
+    # 여기서 새어 기동이 통째로 죽었다(최종 리뷰 Y4) — 곁다리 화면의 오타 하나로
+    # 시연이 못 뜬다. 값을 보여 주고 대시보드만 뺀다. 기본 포트로 **몰래 바꾸지
+    # 않는다**: 주소는 환경변수가 권위다 — 운영자는 적은 포트로 열려 하는데 다른
+    # 포트에 떠 있으면 "대시보드가 안 뜬다" 로만 보인다. 범위 밖 숫자(99999)는
+    # `start_dashboard` 가 같은 모양으로 경고하고 None 을 준다. 경고는 터미널로만 —
+    # 대시보드가 없으니 허브에 실어도 볼 화면이 없다.
+    dash = None
+    raw_port = os.environ.get("REACHY_DASHBOARD_PORT", str(DASH_PORT))
+    try:
+        dash_port = int(raw_port)
+    except ValueError:
+        terminal(
+            f"⚠ REACHY_DASHBOARD_PORT 가 포트 번호가 아니다({raw_port!r}) — 대시보드를 "
+            "띄우지 않는다(기본 포트로 바꾸지 않는다). 감독과 콘솔은 그대로 돈다"
+        )
+    else:
+        dash = start_dashboard(
+            hub, server.director,
+            os.environ.get("REACHY_DASHBOARD_HOST", DASH_HOST),
+            dash_port,
+            warn=terminal,
+        )
     try:
         run_console(server.director)
     finally:

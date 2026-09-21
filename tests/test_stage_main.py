@@ -143,6 +143,10 @@ def test_warn_기본값은_print다(기록LLM, capsys):
     `scripts/pregen_mc_lines.py`)이 기본값에만 기대므로, 그러면 실기 경로의
     이름표·상한 경고가 전부 무방비가 된다(조용한 실패 금지 규약 위반).
     `warn` 을 일부러 넘기지 않는다.
+
+    (갱신: 대시보드가 들어온 뒤 `main()` 은 tee `warn` 을 넘긴다 — 최종 리뷰 Y1,
+    `test_감독_경고는_허브에_싣고…` 가 지킨다. 기본값에만 기대는 호출부는 이제
+    `scripts/pregen_mc_lines.py` 하나지만, 그 하나 때문에 이 테스트는 여전히 필요하다.)
     """
     기록LLM.답 = ["사회자: 좋은 설명이네요."]
     generate = stage_main.build_generate(_레벨)
@@ -329,7 +333,9 @@ def test_main_은_수준을_한_번만_읽어_announce_level과_build_generate�
         """`build_generate` 호출 직후 `main()` 을 여기서 멈춘다 — 서버·콘솔이
         뜨기 전이라 소켓도 안 열리고 표준입력 대기 루프도 안 돈다."""
 
-    def fake_build_generate(level):
+    # 진짜 `build_generate(level, warn=print)` 와 인자 모양을 맞춘다 — `main()` 은
+    # 이제 tee `warn` 을 넘긴다(최종 리뷰 Y1).
+    def fake_build_generate(level, warn=print):
         seen["build"] = level
         raise _멈춤
 
@@ -492,10 +498,159 @@ def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보
         seen.update(dash_hub=hub, host=host, port=port)
         raise 멈춤()
 
-    monkeypatch.setattr(stage_main, "build_generate", lambda level: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
     monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
     monkeypatch.setattr(stage_main, "start_dashboard", 가짜대시보드)
     with pytest.raises(멈춤):
         stage_main.main()
     assert seen["hub"] is not None and seen["dash_hub"] is seen["hub"]
     assert (seen["host"], seen["port"]) == ("0.0.0.0", 9911)
+
+
+class _가짜서버:
+    """`StageServer` 대역 — 받은 `warn`·`hub` 를 적고 소켓은 열지 않는다.
+
+    `warn` 이 안 넘어오면 **진짜의 기본값(`print`)** 을 쥔다. 배선이 빠졌을 때 표식이
+    터미널로만 가 허브 단언이 **단언으로** 떨어지게 한다 — `None` 을 쥐면 부르다가
+    TypeError 로 엉뚱하게 죽어, 무엇이 끊겼는지 테스트가 말해 주지 않는다.
+    """
+
+    def __init__(self, seen, *a, **kw):
+        seen["server_warn"] = kw.get("warn", print)
+        seen["hub"] = kw["hub"]
+        self.director = object()
+        self._seen = seen
+
+    def serve(self, host, port):
+        seen = self._seen
+
+        class S:
+            def serve_forever(self):
+                pass
+
+            def shutdown(self):
+                seen["shutdown"] = seen.get("shutdown", 0) + 1
+
+        return S()
+
+    def tick_forever(self, *a):
+        pass
+
+
+def _허브_경고(hub) -> list[str]:
+    return [e["text"] for e in hub.history() if e["kind"] == "warn"]
+
+
+def test_감독_경고는_허브에_싣고_대시보드_자신의_경고는_터미널로만_보낸다(monkeypatch, capsys):
+    """경고 배선(최종 리뷰 Y1·Y2) — `StageServer` 와 `build_generate` 가 받은 `warn` 은
+    터미널+허브(tee), `start_dashboard` 가 받은 `warn` 은 터미널로만.
+
+    - 생성기 경고(화자 이름표를 걷었다·분량 상한에서 잘랐다)는 `main()` 이
+      `build_generate(level)` 로 불러 기본값 `print` 로 갔다 — 터미널에만 남고 운영자가
+      보는 대시보드 이력에는 없었다(Y1). 스펙은 경고 전부를 tee 로 보낸다.
+    - 대시보드 자신의 경고(송신 실패·소켓 거절·큐 넘침)를 허브에 실으면, 넘침 경고가
+      허브 → 넘친 그 구독 큐로 다시 들어가 또 버려지는 자기 고리가 된다(스펙 "오류 처리").
+
+    셋에 **서로 다른 표식**을 넣어 부르고 **같은 허브**(StageServer 가 받은 것)의 이력을
+    본다. 대시보드 표식이 "없다" 는 단언만 두면 대시보드 warn 이 아무 데도 안 가도
+    통과하므로(함정 ④) 셋 다 터미널에 찍히는지와 짝으로 본다.
+    """
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    monkeypatch.delenv("REACHY_DASHBOARD_HOST", raising=False)
+    monkeypatch.delenv("REACHY_DASHBOARD_PORT", raising=False)
+    seen: dict = {}
+
+    class 멈춤(Exception):
+        pass
+
+    def 가짜생성기(level, warn=print):   # 진짜와 같은 기본값 — 위 `_가짜서버` 주석과 같은 이유
+        seen["gen_warn"] = warn
+        return lambda r, b, h: "x"
+
+    def 가짜대시보드(hub, director, host, port, warn=print):
+        seen["dash_warn"] = warn
+        raise 멈춤()
+
+    monkeypatch.setattr(stage_main, "build_generate", 가짜생성기)
+    monkeypatch.setattr(stage_main, "StageServer", lambda *a, **kw: _가짜서버(seen, *a, **kw))
+    monkeypatch.setattr(stage_main, "start_dashboard", 가짜대시보드)
+    with pytest.raises(멈춤):
+        stage_main.main()
+
+    seen["server_warn"]("표식-서버")
+    seen["gen_warn"]("표식-생성기")
+    seen["dash_warn"]("표식-대시보드")
+
+    허브 = _허브_경고(seen["hub"])
+    assert "표식-서버" in 허브, 허브
+    assert "표식-생성기" in 허브, 허브
+    assert "표식-대시보드" not in 허브, 허브
+    터미널 = capsys.readouterr().out.splitlines()
+    assert {"표식-서버", "표식-생성기", "표식-대시보드"} <= set(터미널), 터미널
+
+
+def test_역할_검증을_건너뛴다는_기동_경고가_대시보드_이력에도_남는다(monkeypatch, capsys):
+    """최종 리뷰 Y3 — 이 경고는 허브를 만들기 **전에** `print` 로 나가 대시보드 이력에
+    없었다. 지난 실기 리허설의 역할 뒤바뀜(사회자·도슨트 로봇이 서로 바뀐 채 시작)을
+    막는 검증이 꺼져 있다는 경고라, 운영자가 보는 화면에 있어야 한다. 터미널에도
+    그대로 남는지 함께 본다(tee 의 한쪽만 살아도 통과하지 않게)."""
+    monkeypatch.delenv("REACHY_MC_UNIT", raising=False)
+    monkeypatch.delenv("REACHY_DOCENT_UNIT", raising=False)
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen: dict = {}
+
+    class 멈춤(Exception):
+        pass
+
+    def 가짜서버(*a, **kw):
+        seen["hub"] = kw["hub"]
+        raise 멈춤()
+
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
+    with pytest.raises(멈춤):
+        stage_main.main()
+
+    경고문 = "⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다"
+    assert 경고문 in _허브_경고(seen["hub"]), _허브_경고(seen["hub"])
+    assert 경고문 in capsys.readouterr().out.splitlines()
+
+
+def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만_빼고_감독과_콘솔은_돈다(monkeypatch, capsys):
+    """최종 리뷰 Y4 — `int(REACHY_DASHBOARD_PORT)` 의 ValueError 가 기동을 통째로 죽였다.
+    대시보드는 곁다리다: 값이 틀렸으면 **그 값을 보여 주고** 대시보드만 빼고 감독·콘솔은
+    돈다. 기본 포트로 몰래 바꾸지 않는다 — 주소는 환경변수가 권위다(운영자는 적은 포트로
+    열려 하는데 다른 포트에 떠 있으면 "대시보드가 안 뜬다" 로만 보인다).
+
+    "대시보드를 안 불렀다" 는 부정 단언은 "콘솔까지 갔다"·"끝에 서버를 내렸다" 와 짝이다
+    — 기동이 그 전에 죽어도 대시보드는 안 불리기 때문이다(함정 ④)."""
+    monkeypatch.setenv("REACHY_DASHBOARD_PORT", "88x8")
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen: dict = {"dash": []}
+    서버들: list = []
+
+    class 멈춤(Exception):
+        pass
+
+    def 가짜서버(*a, **kw):
+        서버들.append(_가짜서버(seen, *a, **kw))
+        return 서버들[-1]
+
+    def 가짜콘솔(director):
+        seen["console"] = director
+        raise 멈춤()
+
+    import stage.console
+
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
+    monkeypatch.setattr(stage_main, "start_dashboard", lambda *a, **kw: seen["dash"].append(a))
+    monkeypatch.setattr(stage.console, "run_console", 가짜콘솔)
+    with pytest.raises(멈춤):
+        stage_main.main()
+
+    assert "⚠ REACHY_DASHBOARD_PORT 가 포트 번호가 아니다('88x8')" in capsys.readouterr().out
+    assert seen["console"] is 서버들[0].director
+    assert seen["shutdown"] == 1
+    assert seen["dash"] == []

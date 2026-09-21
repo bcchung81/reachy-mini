@@ -1,0 +1,104 @@
+"""대시보드 생산자↔소비자 계약 — 진짜 `StageServer`(그 안의 진짜 `Director`) + 진짜 대시보드.
+
+`tests/test_dashboard.py` 는 전부 **가짜 감독**이고, `tests/test_stage_server.py` 는 허브를
+기록용 가짜로 본다. 양쪽이 각자의 흉내하고만 맞춰져 있어, 서버가 싣는 이벤트 모양
+(`sent.fields.text`)이나 감독 스냅샷의 키(`speaking_role`)가 바뀌어도 둘 다 통과한다 —
+페이지는 그 자리에서 빈 자막·꺼진 탤리로 굳는다(최종 리뷰 Y5). 페이지가 읽는 바로 그
+필드를 한 경로로 묶는다: 로봇 hello → 대시보드 `s` → 사회자에게 간 say → 다음 스냅샷.
+
+**LLM 을 부르지 않는 경로다.** `s` 의 첫 사회자 대사는 큐시트 원문이고(캐시 없음 — 감독이
+경고하고 원문을 읽는다), 같은 자리에서 띄우는 도슨트 사전 생성은 가짜 `generate` 가 받는다.
+
+**감시 루프(`tick_forever`)는 돌리지 않는다.** 발화 기한이 다음 스냅샷보다 먼저 터져
+`speaking_role` 을 되돌리면 결과가 시계에 달린다. sleep 도 없다 — 등록 완료는 로봇이
+받는 마이크 재동기화로, 나머지는 `recv(timeout)` 루프로 기다린다.
+"""
+
+import contextlib
+import json
+import pathlib
+import sys
+import threading
+import time
+
+from websockets.sync.client import connect
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from stage.cues import Cue, CueSheet
+from stage.dashboard import start_dashboard
+from stage.dashboard_hub import DashboardHub, tee
+from stage.server import StageServer
+
+
+def _recv_until(ws, pred, timeout=3.0) -> dict:
+    """조건에 맞는 메시지가 올 때까지 읽는다(맞지 않는 것은 버린다). 남은 시간만큼만
+    기다리므로 안 오면 `TimeoutError` 로 끝난다 — pytest 를 붙잡지 않는다."""
+    end = time.monotonic() + timeout
+    while True:
+        left = end - time.monotonic()
+        if left <= 0:
+            raise AssertionError("기다리던 메시지가 제한 시간 안에 안 왔다")
+        m = json.loads(ws.recv(timeout=left))
+        if pred(m):
+            return m
+
+
+def test_대시보드의_s_가_진짜_감독을_돌려_사회자_say_와_발화_스냅샷이_페이지에_닿는다():
+    hub = DashboardHub()
+    터미널: list[str] = []
+    # `main()` 과 같은 배선 — 감독·서버 경고는 터미널+허브, 대시보드 자신의 경고는 따로.
+    warn = tee(터미널.append, lambda m: hub.publish("warn", text=m))
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 여는 대사", "도슨트 지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 해설",
+        warn=warn, hub=hub,
+    )
+    대시보드_경고: list[str] = []
+
+    with contextlib.ExitStack() as 정리:   # 뒤에 등록한 것부터 닫는다 — 클라이언트 → 서버
+        robot_srv = server.serve("127.0.0.1", 0)
+        t = threading.Thread(target=robot_srv.serve_forever, daemon=True)
+        t.start()
+        정리.callback(t.join, 2)
+        정리.callback(robot_srv.shutdown)
+        dash = start_dashboard(hub, server.director, "127.0.0.1", 0, warn=대시보드_경고.append)
+        assert dash is not None, 대시보드_경고
+        정리.callback(dash.shutdown)
+        rport = robot_srv.socket.getsockname()[1]
+        dport = dash.socket.getsockname()[1]
+
+        robot = 정리.enter_context(connect(f"ws://127.0.0.1:{rport}", open_timeout=3))
+        robot.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None, "version": "1.9.0"}))
+        # 동기화 점: 감독은 등록(`Director.on_connect`)의 락 안에서 마이크 재동기화를 보낸다.
+        # 이것이 왔으면 `connected` 에 mc 가 있다 — sleep 없이 `s` 를 눌러도 된다.
+        assert json.loads(robot.recv(timeout=3)) == {"type": "mic", "open": False}
+
+        # 브라우저처럼 Origin 을 붙인다 — 실제 페이지가 타는 `_check_origin` 경로 그대로.
+        page = 정리.enter_context(connect(
+            f"ws://127.0.0.1:{dport}/ws", origin=f"http://127.0.0.1:{dport}", open_timeout=3,
+        ))
+        hello = json.loads(page.recv(timeout=3))
+        assert hello["kind"] == "hello"
+        assert hello["cues"] == [{"id": "c1", "title": "첫째", "topic": "첫째"}]
+        # 전제: 누르기 **전에는** 아무도 말하지 않는다. 이것이 없으면 아래 "mc" 단언이
+        # 처음부터 참인 공허한 테스트일 수 있다.
+        pre = hello["snapshot"]
+        assert (pre["state"], pre["speaking_role"], pre["connected"]) == ("idle", None, ["mc"])
+
+        page.send(json.dumps({"cmd": "s"}))
+        said = _recv_until(
+            page, lambda m: m["kind"] == "sent" and m["role"] == "mc" and m["type"] == "say"
+        )
+        assert said["fields"]["text"] == "사회자 여는 대사"
+        # `sent` 뒤의 **첫** 스냅샷. 펌프는 이벤트를 보낸 뒤에야 스냅샷을 읽고, `sent` 는
+        # 감독이 상태를 옮긴 뒤 락 안에서 실린다 — 그래서 이 스냅샷은 반드시 발화 중이다.
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
+        assert (snap["state"], snap["speaking_role"], snap["cue_id"]) == ("mc_speaking", "mc", "c1")
+
+        # 페이지의 자막은 로봇이 실제로 받은 say 와 같은 문장이다.
+        got = _recv_until(robot, lambda m: m["type"] == "say")
+        assert got["text"] == said["fields"]["text"]
+
+    # 대시보드는 기동 안내 한 줄 말고는 아무 경고도 안 냈다(송신 실패·거절·큐 넘침 없음).
+    # 위의 단언들이 "페이지에 닿았다" 의 짝이다.
+    assert len(대시보드_경고) == 1 and 대시보드_경고[0].startswith("대시보드 — http://127.0.0.1:"), 대시보드_경고

@@ -215,7 +215,10 @@ def start_dashboard(hub, director, host: str = DEFAULT_HOST, port: int = DEFAULT
     ds = DashboardServer(hub, director, warn=warn)
     try:
         srv = _ws_serve(ds.handler, host, port, process_request=ds.process_request)
-    except OSError as exc:
+    # `bind()` 는 0~65535 밖의 포트(`REACHY_DASHBOARD_PORT=99999`)에 OSError 가 아니라
+    # OverflowError 를 낸다 — OSError 만 잡으면 그 하나로 감독이 기동에서 죽었다(최종
+    # 리뷰 Y4). 막힌 포트와 같은 실패다: 경고하고 None.
+    except (OSError, OverflowError) as exc:
         warn(f"대시보드를 띄우지 못했다({host}:{port} — {exc}) — 감독과 콘솔은 그대로 돈다")
         return None
     threading.Thread(target=srv.serve_forever, daemon=True).start()

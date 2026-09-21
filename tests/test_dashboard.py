@@ -265,6 +265,15 @@ def test_포트가_막혀_있으면_경고하고_None(dash):
     assert any("띄우지 못했다" in w for w in warned), warned
 
 
+def test_포트가_범위_밖이면_경고하고_None():
+    """`bind()` 는 0~65535 밖의 포트에 OSError 가 아니라 **OverflowError** 를 낸다 —
+    `except OSError` 만으로는 새어 나가 `REACHY_DASHBOARD_PORT=99999` 하나로 감독이 기동에서
+    죽었다(최종 리뷰 Y4). 막힌 포트와 같은 경고·같은 None 이어야 한다."""
+    warned = []
+    assert start_dashboard(DashboardHub(), 가짜감독(), "127.0.0.1", 99999, warn=warned.append) is None
+    assert any(w.startswith("대시보드를 띄우지 못했다(127.0.0.1:99999 — ") for w in warned), warned
+
+
 def test_start_dashboard_는_실제_페이지와_소켓을_띄운다():
     warned = []
     srv = start_dashboard(DashboardHub(), 가짜감독(), "127.0.0.1", 0, warn=warned.append)
