@@ -5,6 +5,8 @@
 - **로봇용 포트(8777)와 다른 포트**(기본 `127.0.0.1:8778`)다. 로봇 포트는 로봇 때문에
   `0.0.0.0` 이어야 하는데, 이 화면은 인증 없이 시연을 멈추고 건너뛸 수 있다 — 위험한
   쪽을 기본으로 두지 않는다. 망에 열려면 `REACHY_DASHBOARD_HOST`.
+- 루프백 바인드는 **운영자 자신의 브라우저**에서 오는 사이트 간 소켓을 못 막는다 —
+  `/ws` 는 `Origin` 이 이 서버 주소(`Host`)와 같을 때만 받는다(`_check_origin`).
 - **연결 하나에 보내는 스레드는 하나**(펌프)다. 명령 결과도 허브 이벤트로 흘려 같은
   펌프가 보낸다 — 두 스레드가 한 소켓에 동시에 쓰지 않게.
 - 감독 상태(`Director.snapshot()`)는 펌프가 **락 밖에서** 읽는다. 허브 이벤트를 받는
@@ -18,8 +20,10 @@ import pathlib
 import queue
 import threading
 import time
+import urllib.parse
 from typing import Callable
 
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.server import serve as _ws_serve
 
 from stage.console import dispatch as console_dispatch
@@ -43,9 +47,12 @@ class DashboardServer:
 
     # ── HTTP ──────────────────────────────────────────────────────
     def process_request(self, connection, request):
-        if request.path == "/ws":
-            return None  # 웹소켓 핸드셰이크로 넘어간다
-        if request.path in ("/", "/index.html"):
+        # `request.path` 는 쿼리까지 담는다 — 그대로 비교하면 캐시 무효화용 `/?v=2` 나
+        # `/ws?x=1` 이 404 가 된다. 경로만 본다.
+        path = urllib.parse.urlsplit(request.path).path
+        if path == "/ws":
+            return self._check_origin(connection, request)  # None 이면 핸드셰이크로 넘어간다
+        if path in ("/", "/index.html"):
             try:
                 # 요청마다 읽는다 — 시연 중 페이지 파일을 고쳐도 새로고침으로 반영되고,
                 # 파일이 사라졌으면 기동 때가 아니라 그 요청에서 500 + 경고로 드러난다.
@@ -61,6 +68,38 @@ class DashboardServer:
             resp.headers["Content-Type"] = "text/html; charset=utf-8"
             return resp
         return connection.respond(404, "not found")
+
+    def _check_origin(self, connection, request):
+        """다른 사이트가 연 소켓(CSWSH)을 막는다. 통과면 None, 아니면 403 응답.
+
+        **`127.0.0.1` 바인드로는 못 막는다.** 운영자 브라우저에 열린 아무 탭(광고·검색
+        결과 속 스크립트)이나 `new WebSocket("ws://127.0.0.1:8778/ws")` 을 열 수 있고,
+        브라우저는 웹소켓에 동일 출처 정책을 걸지 않는다 — 그 탭이 `a`·`n`·`g` 를 보내면
+        인증 없는 이 화면이 시연을 멈추고 건너뛴다. 브라우저가 스스로 붙이는(페이지가
+        못 바꾸는) `Origin` 이 이 서버의 주소(`Host`)와 같을 때만 받는다.
+
+        `Origin` 이 **없으면** 받는다 — 브라우저가 아닌 클라이언트(테스트, 스크립트)다.
+        브라우저는 웹소켓에 늘 `Origin` 을 붙이므로 이 예외로 사이트 간 공격이 새지 않는다.
+        같은 헤더가 둘 이상이면 어느 쪽을 믿을지 정할 수 없으니 거절한다.
+        """
+        origins = request.headers.get_all("Origin")
+        if not origins:
+            return None
+        hosts = request.headers.get_all("Host")
+        ok = (
+            len(origins) == 1
+            and len(hosts) == 1
+            # 호스트 이름은 대소문자를 가리지 않는다. `Origin: null`(sandbox·file://)은
+            # netloc 이 비어 여기서 걸린다.
+            and urllib.parse.urlsplit(origins[0]).netloc.lower() == hosts[0].lower()
+        )
+        if ok:
+            return None
+        self._warn(
+            f"대시보드 소켓을 거절했다 — 다른 사이트에서 온 연결이다(Origin={origins}, Host={hosts}). "
+            "운영자 브라우저의 다른 탭이 시연을 조작하려 했을 수 있다"
+        )
+        return connection.respond(403, "cross-origin dashboard connection refused")
 
     # ── WebSocket ─────────────────────────────────────────────────
     def handler(self, ws) -> None:
@@ -81,6 +120,14 @@ class DashboardServer:
             threading.Thread(target=self._pump, args=(ws, sub, stop), daemon=True).start()
             for raw in ws:
                 self._on_command(raw)
+        except ConnectionClosed:
+            # 페이지가 close 프레임 없이 사라졌다(노트북 절전·Wi-Fi 끊김·브라우저 강제
+            # 종료) — `for raw in ws` 가 ConnectionClosedError 를 낸다. 여기서 새면
+            # websockets 가 "connection handler failed" 트레이스백을 찍는데, 운영자가 할
+            # 일이 없는 정상 경로라 터미널의 진짜 경고를 묻어 버린다. 페이지는 스스로
+            # 다시 붙는다. 펌프가 송신 실패로 1011 을 보내고 닫은 경우도 여기로 온다
+            # (그 경고는 펌프가 이미 냈다).
+            pass
         finally:
             stop.set()
             self._hub.unsubscribe(sub)
@@ -88,11 +135,23 @@ class DashboardServer:
     def _pump(self, ws, sub, stop: threading.Event) -> None:
         """이 연결의 유일한 송신자. 이벤트는 오는 대로, 스냅샷은 `interval` 마다."""
         last = 0.0
+        dropped_seen = 0
         while not stop.is_set():
             try:
                 ev = sub.queue.get(timeout=self._interval)
             except queue.Empty:
                 ev = None
+            # 구독 큐가 넘쳐 허브가 버린 이벤트. 상태 칸은 다음 스냅샷으로 다시 맞춰지지만
+            # 대사·경고 줄은 로그에서 **빠진 채** 남는다 — 페이지만 보면 모른다. 늘어난
+            # 만큼만 한 번 알린다(같은 수를 주기마다 되풀이하지 않게). 보내기 **전에**
+            # 알려, 버린 뒤 처음 도착한 이벤트보다 경고가 늦지 않게 한다.
+            dropped = sub.dropped
+            if dropped > dropped_seen:
+                self._warn(
+                    f"대시보드 구독 큐가 넘쳐 이벤트 {dropped - dropped_seen}개를 버렸다"
+                    f"(이 연결 누적 {dropped}) — 페이지 로그에서 빠졌다. 상태는 다음 스냅샷으로 맞춰진다"
+                )
+                dropped_seen = dropped
             try:
                 if ev is not None:
                     ws.send(self._dumps(ev))
@@ -101,7 +160,19 @@ class DashboardServer:
                     if snap is not None:
                         ws.send(self._dumps({"kind": "snapshot", **snap}))
                     last = time.monotonic()
-            except Exception:  # noqa: BLE001 — 연결이 닫혔다. 핸들러가 정리한다.
+            except ConnectionClosed:
+                return  # 연결이 닫혔다. 핸들러가 정리한다.
+            except Exception as exc:  # noqa: BLE001
+                # **조용히 return 하면 안 된다.** 이 스레드가 이 연결의 유일한 송신자라,
+                # 여기서 말없이 끝나면 소켓은 열린 채 페이지가 그 자리에서 굳는다(재접속도
+                # 안 한다 — 끊긴 게 아니므로). 가장 흔한 원인은 직렬화 실패(문자열이 아닌
+                # dict 키는 `default=str` 로도 못 넘긴다). 알리고 1011 로 닫아 핸들러가
+                # 정리하고 페이지가 다시 붙게 한다.
+                self._warn(
+                    f"대시보드 송신 실패({type(exc).__name__}: {exc}) — 이 연결을 닫는다"
+                    "(페이지는 다시 붙는다)"
+                )
+                ws.close(1011, "dashboard send failed")
                 return
 
     def _safe_snapshot(self) -> dict | None:
@@ -126,6 +197,9 @@ class DashboardServer:
         except Exception as exc:  # noqa: BLE001 — 콘솔과 같다: 거절은 보여주고 계속
             ok = False
             lines.append(f"거절됨: {exc}")
+            # 페이지에만 보이면 안 된다 — 콘솔은 거절을 터미널에 찍고, 문제 보고를 받으면
+            # 터미널 로그부터 읽는다. 대시보드에서 누른 것도 같은 자리에 남긴다.
+            self._warn(f"대시보드 명령 {cmd!r} 거절됨: {exc}")
         # 결과는 이 소켓에 직접 쓰지 않고 허브로 흘린다 — 여기서 `ws.send` 하면 펌프와
         # 두 스레드가 한 소켓에 쓰게 되고, 다른 대시보드는 누가 무엇을 눌렀는지 못 본다.
         self._hub.publish("command", cmd=cmd, ok=ok, lines=lines)
