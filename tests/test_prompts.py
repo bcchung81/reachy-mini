@@ -133,3 +133,12 @@ def test_프롬프트에_마크다운_강조가_새지_않는다():
         for name in ("초등", "중고등", "일반", "전문가"):
             p = build_system_prompt(role, load_levels()[name])
             assert "**" not in p, (role, name, p)
+
+
+def test_조립된_프롬프트_전부에_이름표_금지_규칙이_있다():
+    """모델이 "사회자:" 를 붙여 말하면 TTS 가 그대로 읽는다(2026-09-21 실기).
+    두 역할 × 네 수준 전수. "이름표" 는 리터럴로 본다."""
+    for name, lv in load_levels().items():
+        for role in ("mc", "docent"):
+            p = build_system_prompt(role, lv)
+            assert "이름표" in p, (role, name)

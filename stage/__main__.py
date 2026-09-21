@@ -27,9 +27,46 @@ sys.path.insert(
     0, str(pathlib.Path(__file__).resolve().parent.parent / "apps/voice_chat/voice_chat")
 )
 from llm import LLMClient  # noqa: E402
+from typing import Callable  # noqa: E402
+
+from stage.director import SPEAKER_LABEL  # noqa: E402
+from stage.prompts import _MC_MAX_CHARS, _MC_MAX_SENTENCES  # noqa: E402
+from stage.speech_text import cap_length, strip_speaker_labels  # noqa: E402
 
 
-def build_generate(level) -> "callable":
+def history_for(role: str, history: list[dict]) -> list[dict]:
+    """감독의 공용 이력을 **생성하는 역할의 시점**으로 바꾼다.
+
+    감독의 이력은 하나이고 내용 앞에 "사회자:"/"도슨트:"/"관람객:" 이 붙는다
+    (`Director._remember`, 설계 §5.2). 그대로 실으면 사회자·도슨트 줄이 전부
+    `assistant` 라 모델이 **상대의 말을 자기 말로** 보고, 그 말들이 전부
+    "이름표: 텍스트" 모양이라 따라 한다 — 2026-09-21 실기에서 사회자가 "사회자:"
+    를 소리 내 읽었다(mc:42).
+
+    - 자기 줄 → `assistant`, 이름표를 뗀다(모델이 흉내 낼 원본을 없앤다)
+    - 남의 줄 → `user`, 이름표를 둔다(누가 한 말인지는 알아야 한다)
+    - 같은 역할이 연달아 오면 한 메시지로 합친다 — 역할 교대를 강제하는 채팅
+      템플릿에 거절당하면 모든 생성이 큐시트 폴백으로 떨어진다
+    """
+    own = SPEAKER_LABEL[role] + ":"
+    out: list[dict] = []
+    for h in history:
+        content = h["content"]
+        if content.startswith(own):
+            msg = {"role": "assistant", "content": content[len(own):].strip()}
+        else:
+            msg = {"role": "user", "content": content}
+        if out and out[-1]["role"] == msg["role"]:
+            out[-1] = {
+                "role": msg["role"],
+                "content": out[-1]["content"] + "\n" + msg["content"],
+            }
+        else:
+            out.append(msg)
+    return out
+
+
+def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     """LLM 호출 하나. **직렬화한다.**
 
     두 화자가 **하나의 대화 이력**을 봐야 말이 이어진다 — B 의 대사는 A 가
@@ -39,6 +76,12 @@ def build_generate(level) -> "callable":
     페르소나는 이제 역할·수준의 함수다(`stage/prompts.py`) — 도슨트만
     기술하던 문자열 하나(`_system_prompt`, 이 함수가 지웠다) 대신
     [공통 규약 + 역할 + 수준] 세 조각을 역할별로 조립한다.
+
+    **모든 생성이 여기를 지나므로 생성문 정리도 여기서 한다**(도슨트 해설·질문
+    응답·사회자 받아치기·예비·사전 생성 여는 대사). 텍스트가 TTS 와 감독 이력으로
+    갈라지기 전이라 두 갈래가 함께 깨끗해진다. 순서는 이름표 정리 → 분량 상한 —
+    상대 턴을 먼저 걷어야 문장 수를 바르게 센다. 바뀌면 반드시 경고한다.
+    분량 한도는 프롬프트가 모델에게 준 바로 그 수다(두 곳에 따로 적으면 썩는다).
     """
     from stage.prompts import ROLES, build_system_prompt
 
@@ -47,13 +90,33 @@ def build_generate(level) -> "callable":
                      max_tokens=level.max_tokens)
         for r in ROLES
     }
+    limits = {
+        "docent": (level.max_sentences, level.max_chars),
+        "mc": (_MC_MAX_SENTENCES, _MC_MAX_CHARS),
+    }
     lock = threading.Lock()
 
     def generate(role: str, brief: str, history: list[dict]) -> str:
         with lock:
             c = clients[role]
-            c.history = list(history)
-            return "".join(c.chat_stream(brief, None))
+            hist = history_for(role, history)
+            # 이력 끝의 남의 말은 이번 지시문 앞으로 옮긴다 — `chat_stream` 이
+            # 지시문을 user 로 붙이므로 그대로 두면 user 가 연달아 간다.
+            if hist and hist[-1]["role"] == "user":
+                brief = hist.pop()["content"] + "\n\n" + brief
+            c.history = hist
+            raw = "".join(c.chat_stream(brief, None))
+        text, stripped = strip_speaker_labels(raw)
+        if stripped:
+            warn(f"[{role}] 생성문에 화자 이름표/상대 턴이 섞여 걷어냈다: {raw[:60]!r}")
+        max_sentences, max_chars = limits[role]
+        text, capped = cap_length(text, max_sentences, max_chars)
+        if capped:
+            warn(
+                f"[{role}] 생성문이 분량 상한({max_sentences}문장/{max_chars}자)을 "
+                "넘어 문장 경계에서 잘랐다"
+            )
+        return text
 
     return generate
 

@@ -67,30 +67,107 @@ def test_LLM_호출이_직렬화된다():
     assert 동시_최대 == 1, f"LLM 호출이 겹쳤다(최대 동시 {동시_최대})"
 
 
-def test_이력을_호출마다_갈아끼운다():
-    """감독이 준 이력이 그대로 실려야 한다 — 락을 넣으면서 이게 깨지면
-    도슨트가 맥락 없이 말한다."""
-    본것: list[list[dict]] = []
+class _기록LLM:
+    """`build_generate` 가 LLM 에 실제로 무엇을 싣는지 기록한다."""
+    본것: list[tuple[str, list[dict]]] = []
+    답: list[str] = ["답"]
 
-    class 가짜LLM:
-        def __init__(self, **kw):
-            self.history: list[dict] = []
+    def __init__(self, **kw):
+        self.history: list[dict] = []
 
-        def chat_stream(self, brief, image):
-            본것.append(list(self.history))
-            return iter(["답"])
+    def chat_stream(self, brief, image):
+        type(self).본것.append((brief, list(self.history)))
+        return iter(type(self).답)
 
-    원래 = stage_main.LLMClient
-    stage_main.LLMClient = 가짜LLM
-    try:
-        generate = stage_main.build_generate(_레벨)
-        assert generate(
-            "docent", "지시", [{"role": "assistant", "content": "사회자: 앞선 말"}]
-        ) == "답"
-    finally:
-        stage_main.LLMClient = 원래
 
-    assert 본것 == [[{"role": "assistant", "content": "사회자: 앞선 말"}]]
+@pytest.fixture
+def 기록LLM(monkeypatch):
+    _기록LLM.본것 = []
+    _기록LLM.답 = ["답"]
+    monkeypatch.setattr(stage_main, "LLMClient", _기록LLM)
+    return _기록LLM
+
+
+def test_이력은_생성하는_역할의_시점으로_바꿔_싣는다(기록LLM):
+    """자기 말은 assistant(이름표 없이), 남의 말은 user(이름표 유지).
+
+    예전에는 받은 이력을 그대로 실었고, 사회자·도슨트 줄이 **전부 assistant**
+    였다 — 모델이 상대의 말을 자기 말로 보고 "이름표: 텍스트" 모양을 따라 해
+    실기에서 "사회자:" 를 소리 내 읽었다(2026-09-21, mc:42). 이력 끝의 남의 말은
+    이번 지시문 앞으로 옮긴다 — user 가 연달아 가지 않게.
+    """
+    generate = stage_main.build_generate(_레벨)
+    이력 = [
+        {"role": "assistant", "content": "사회자: 첫 질문"},
+        {"role": "assistant", "content": "도슨트: 첫 해설"},
+        {"role": "assistant", "content": "사회자: 다음 질문"},
+    ]
+    assert generate("docent", "지시", 이력) == "답"
+    assert 기록LLM.본것 == [(
+        "사회자: 다음 질문\n\n지시",
+        [
+            {"role": "user", "content": "사회자: 첫 질문"},
+            {"role": "assistant", "content": "첫 해설"},
+        ],
+    )]
+
+
+def test_같은_역할이_연달아_오면_한_메시지로_합친다(기록LLM):
+    """역할 교대를 강제하는 채팅 템플릿이 있다 — 거절당하면 모든 생성이 폴백으로 떨어진다."""
+    generate = stage_main.build_generate(_레벨)
+    이력 = [
+        {"role": "assistant", "content": "사회자: 여는 말"},
+        {"role": "assistant", "content": "사회자: 덧붙임"},
+        {"role": "user", "content": "관람객: 질문 하나"},
+        {"role": "assistant", "content": "도슨트: 답"},
+    ]
+    generate("mc", "지시", 이력)
+    assert 기록LLM.본것 == [(
+        "관람객: 질문 하나\n도슨트: 답\n\n지시",
+        [{"role": "assistant", "content": "여는 말\n덧붙임"}],
+    )]
+
+
+def test_생성문의_화자_이름표를_걷고_경고한다(기록LLM):
+    기록LLM.답 = ["사회자: 사회자: ", "좋은 설명이네요."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("mc", "지시", []) == "좋은 설명이네요."
+    assert any("이름표" in w for w in 경고), 경고
+
+
+def test_상대_턴까지_이어_쓴_생성문은_그_앞에서_자른다(기록LLM):
+    """실측 docent:106 — 도슨트 한 발화 안에 사회자 반응이 이어 붙었다."""
+    기록LLM.답 = ["설명을 마칩니다.", "사회자: 반응입니다."]
+    generate = stage_main.build_generate(_레벨, warn=lambda m: None)
+    assert generate("docent", "지시", []) == "설명을 마칩니다."
+
+
+def test_도슨트_생성문은_수준_상한_5문장에서_자르고_경고한다(기록LLM):
+    """일반 수준은 4~5문장 / 180~280자(`data/levels.yaml`). 수는 리터럴로 박는다."""
+    기록LLM.답 = ["하나.", "둘.", "셋.", "넷.", "다섯.", "여섯.", "일곱."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("docent", "지시", []) == "하나.둘.셋.넷.다섯."
+    assert any("5문장/280자" in w for w in 경고), 경고
+
+
+def test_사회자_생성문은_고정_상한_3문장에서_자른다(기록LLM):
+    """사회자는 수준과 무관하게 1~3문장 / 40~120자(`stage/prompts.py`)."""
+    기록LLM.답 = ["하나.", "둘.", "셋.", "넷.", "다섯."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("mc", "지시", []) == "하나.둘.셋."
+    assert any("3문장/120자" in w for w in 경고), 경고
+
+
+def test_깨끗하고_상한_안인_생성문은_그대로이고_경고하지_않는다(기록LLM):
+    """위 두 경고 테스트의 짝 — 이것이 없으면 "늘 경고한다" 도 통과한다."""
+    기록LLM.답 = ["전파는 파동입니다.", "눈에 보이지 않습니다."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("docent", "지시", []) == "전파는 파동입니다.눈에 보이지 않습니다."
+    assert 경고 == []
 
 
 def test_도슨트_프롬프트에_음성_출력_규칙이_있다():
