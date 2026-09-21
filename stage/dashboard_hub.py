@@ -40,7 +40,11 @@ class DashboardHub:
             try:
                 s.queue.put_nowait(ev)
             except queue.Full:
-                s.dropped += 1
+                # 로봇 연결 스레드·틱 스레드·대시보드 핸들러가 모두 publish 를 부를 수
+                # 있어, 같은 구독자를 향해 두 스레드가 동시에 큐가 가득 찬 걸 볼 수
+                # 있다 — 그 read-modify-write 를 락 없이 하면 카운트를 잃는다.
+                with self._lock:
+                    s.dropped += 1
 
     def subscribe(self, maxsize: int = SUB_QUEUE) -> Subscription:
         s = Subscription(maxsize)
