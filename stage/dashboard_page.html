@@ -1,0 +1,651 @@
+<!doctype html>
+<!--
+  무대감독 조정실 — 시안 B(docs/design/dashboard-B.dc.html)를 오프라인 한 장으로.
+
+  시연장은 인터넷이 없다: 이 파일은 외부 폰트·스크립트·이미지를 하나도 부르지
+  않는다(정적 테스트가 확인한다). 서버 문자열(관람객 STT, 경고, 대사)은 전부
+  textContent 로만 DOM 에 넣는다 — HTML 을 그대로 심는 DOM API 는 쓰지 않는다
+  (정적 테스트가 확인한다). 서버는 아직 없다(Task 5) — 이 페이지는 메시지
+  형식 표(docs/superpowers/specs/2026-09-21-stage-dashboard-design.md)만 보고 짰다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>무대감독 조정실</title>
+<style>
+  /* 폰트는 시스템 스택뿐이다 — 하나도 내려받지 않는다. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #0D1014;
+    color: #E8EAED;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  .mono, .cue-label, .cue-topic, .cue-num, .cue-tag, .log-time, .log-text,
+  kbd, .cam-label, .mic, .auto-head span {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  header {
+    flex: 0 0 56px;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #242B35;
+    gap: 16px;
+    overflow: hidden;
+  }
+  header .left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  header .right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: #9AA3AE; flex: 0 0 auto; }
+  .app-title { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+  .cue-label { font-size: 13px; color: #9AA3AE; white-space: nowrap; }
+  .cue-topic {
+    font-size: 12px; color: #6B7684; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 320px;
+  }
+  #level { color: #E8EAED; }
+
+  .conn {
+    font-size: 12px; font-weight: 600; color: #fff; background: #3A4350;
+    padding: 4px 10px; border-radius: 4px; white-space: nowrap;
+  }
+  .conn.connected { background: #2B6E39; }
+  .conn.disconnected { background: #E5484D; }
+
+  .monitors { flex: 0 0 auto; padding: 16px 24px 0; display: flex; gap: 24px; flex-wrap: wrap; }
+  .monitor-col { flex: 1 1 420px; min-width: 320px; display: flex; flex-direction: column; }
+  .cam {
+    height: 320px;
+    border-radius: 6px 6px 0 0;
+    background: #05070A;
+    border: 1px solid #242B35;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .cam.onair { border: 3px solid #E5484D; }
+  .cam.rejected { border: 2px dashed #F0A64A; }
+  .cam-label { position: absolute; top: 12px; left: 12px; font-size: 12px; color: #4CC3D9; }
+  .tally {
+    position: absolute; top: 10px; right: 12px; font-size: 12px; color: #9AA3AE;
+    border: 1px solid #3A4350; padding: 2px 8px; border-radius: 4px;
+  }
+  .tally.onair { color: #fff; font-weight: 600; background: #E5484D; border-color: #E5484D; }
+  .tally.offline { color: #6B7684; }
+  .tally.rejected { color: #F0A64A; border-color: #F0A64A; }
+  .cam-placeholder { font-size: 14px; color: #6B7684; }
+  .mic { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #6B7684; }
+
+  .caption {
+    min-height: 72px; padding: 12px 16px; background: #151A21; border: 1px solid #242B35;
+    border-top: none; border-radius: 0 0 6px 6px; font-size: 15px; line-height: 1.5; color: #9AA3AE;
+  }
+  .caption.onair { background: #1B1416; border-color: #4A2A2E; color: #FFFFFF; }
+
+  .lower { flex: 1 1 auto; min-height: 0; padding: 16px 24px 24px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .panel {
+    background: #151A21; border: 1px solid #242B35; border-radius: 6px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 8px; min-height: 260px;
+  }
+  .rundown-panel { flex: 1 1 320px; min-width: 280px; }
+  .control-panel { flex: 1 1 340px; min-width: 300px; }
+  .log-panel { flex: 1 1 320px; min-width: 280px; overflow: hidden; }
+
+  .panel-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
+  .panel-title { font-weight: 700; color: #E8EAED; }
+
+  .rundown-list { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .cue-row {
+    height: 30px; flex: 0 0 30px; display: flex; align-items: center; gap: 12px; padding: 0 10px;
+    border: none; border-radius: 4px; background: transparent; color: #C9CFD6; font-size: 13px; text-align: left;
+  }
+  .cue-row .cue-num { width: 20px; color: #9AA3AE; flex: 0 0 auto; }
+  .cue-row .cue-title { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cue-row .cue-tag { font-size: 11px; color: #6B7684; flex: 0 0 auto; }
+  .cue-row.done { color: #6B7684; }
+  .cue-row.now { background: #3A1D21; color: #FFFFFF; font-weight: 700; }
+  .cue-row.now .cue-tag { color: #FF8A8E; }
+  .cue-row.selected { outline: 1px solid #4CC3D9; outline-offset: -1px; }
+
+  .goto-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #10262B; border: 1px solid #4CC3D9; border-radius: 4px; padding: 8px 10px; font-size: 12px;
+  }
+  .goto-bar[hidden] { display: none; }
+  #goto-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .goto-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+  .goto-actions button { border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; }
+  #goto-confirm { background: #4CC3D9; color: #05070A; font-weight: 700; }
+  #goto-cancel { background: #242B35; color: #C9CFD6; }
+
+  .control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .ctrl-btn {
+    height: 76px; border-radius: 6px; border: 1px solid #3A4350; background: #1C222B; color: #E8EAED;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    font-size: 15px; font-weight: 700;
+  }
+  .ctrl-btn kbd { font-size: 11px; color: #9AA3AE; }
+  .ctrl-btn.primary { border-color: #4CC3D9; background: #10262B; }
+  .ctrl-btn.primary kbd { color: #8FDCEA; }
+  .ctrl-btn.abort { grid-column: span 2; border: none; background: #E5484D; color: #fff; font-size: 18px; font-weight: 900; }
+  .ctrl-btn.abort kbd { color: #FFE1E2; }
+
+  .auto { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  .auto-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
+  .auto-track { height: 6px; border-radius: 3px; background: #242B35; }
+  #auto-bar { width: 0%; height: 6px; border-radius: 3px; background: #F0A64A; transition: width 0.3s linear; }
+
+  .log { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .log-line { display: flex; gap: 10px; font-size: 11.5px; line-height: 1.5; }
+  .log-time { color: #6B7684; flex: 0 0 auto; }
+  .log-text { color: #C9CFD6; overflow-wrap: anywhere; }
+  .log-line.warn .log-text { color: #F0A64A; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="left">
+    <span class="app-title">무대감독 · 조정실</span>
+    <span id="cue-label" class="cue-label">CUE — / —</span>
+    <span id="cue-topic" class="cue-topic"></span>
+  </div>
+  <div class="right">
+    <span>관람객 수준 <b id="level">—</b></span>
+    <span id="conn" class="conn">연결 중…</span>
+  </div>
+</header>
+
+<div class="monitors">
+  <section class="monitor-col" aria-label="사회자 모니터">
+    <div class="cam offline" id="mon-mc">
+      <span class="cam-label">CAM 1 · 사회자</span>
+      <span class="tally offline" id="tag-mc">OFFLINE</span>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+        <circle cx="12" cy="12.5" r="3.5"></circle>
+        <path d="M8 6l1.5-2h5L16 6"></path>
+      </svg>
+      <span class="cam-placeholder">[사회자 카메라 영상 — 실기 연결 후]</span>
+      <span class="mic" id="mic-mc">MIC —</span>
+    </div>
+    <div class="caption" id="cap-mc"></div>
+  </section>
+
+  <section class="monitor-col" aria-label="도슨트 모니터">
+    <div class="cam offline" id="mon-docent">
+      <span class="cam-label">CAM 2 · 도슨트</span>
+      <span class="tally offline" id="tag-docent">OFFLINE</span>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+        <circle cx="12" cy="12.5" r="3.5"></circle>
+        <path d="M8 6l1.5-2h5L16 6"></path>
+      </svg>
+      <span class="cam-placeholder">[도슨트 카메라 영상 — 실기 연결 후]</span>
+      <span class="mic" id="mic-docent">MIC —</span>
+    </div>
+    <div class="caption" id="cap-docent"></div>
+  </section>
+</div>
+
+<div class="lower">
+  <section class="panel rundown-panel" aria-label="런다운">
+    <div class="panel-head">
+      <span class="panel-title">런다운</span>
+      <span id="rundown-summary">0개 중 0개 끝남</span>
+    </div>
+    <div id="rundown" class="rundown-list"></div>
+    <div id="goto-bar" class="goto-bar" hidden>
+      <span id="goto-text"></span>
+      <div class="goto-actions">
+        <button type="button" id="goto-confirm">이 큐로 이동</button>
+        <button type="button" id="goto-cancel">취소</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel control-panel" aria-label="진행 제어">
+    <div class="panel-head">
+      <span class="panel-title">진행 제어</span>
+      <span>키보드 단축키 그대로</span>
+    </div>
+    <div class="control-grid">
+      <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
+      <button type="button" id="btn-restart" class="ctrl-btn">이 큐 다시<kbd>R</kbd></button>
+      <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
+      <button type="button" id="btn-start" class="ctrl-btn">처음부터 시작<kbd>S</kbd></button>
+      <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
+    </div>
+    <div class="auto">
+      <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
+      <div class="auto-track"><div id="auto-bar"></div></div>
+    </div>
+  </section>
+
+  <section class="panel log-panel" aria-label="이벤트 로그">
+    <div class="panel-head">
+      <span class="panel-title">이벤트 로그</span>
+      <span id="log-warn-count">경고 0</span>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+// 이 파일은 빌드 과정이 없다 — 브라우저가 그대로 읽는 순수 JS 하나다.
+// 서버(Task 5)가 아직 없어 실제 연결로는 검증할 수 없다. 메시지 형식은
+// docs/superpowers/specs/2026-09-21-stage-dashboard-design.md 표를 그대로 따른다.
+
+// ── 상태 ──────────────────────────────────────────────────────────
+var ws = null;
+var reconnectTimer = null;
+var RECONNECT_MS = 2000;
+var LOG_MAX = 200;
+
+var rundownRows = [];     // [{id, title, topic, btn, tag}] — hello.cues 로 한 번만 짓는다
+var latestSnapshot = null;
+var selectedCueId = null; // 런다운 줄을 클릭해 "선택만" 된 큐 — 확인 전에는 이동하지 않는다
+var warnCount = 0;
+
+var CONN_LABEL = { connecting: "연결 중…", connected: "연결됨", disconnected: "연결 끊김 — 재접속 중" };
+var TALLY_TEXT = { offline: "OFFLINE", rejected: "거부됨", onair: "ON AIR", standby: "STANDBY" };
+var STATE_CLASSES = ["offline", "rejected", "onair", "standby"];
+
+// ── 접속 ──────────────────────────────────────────────────────────
+// 같은 호스트의 /ws 로 붙는다 — 대시보드가 어느 호스트·포트에 떠 있어도
+// 하드코딩 없이 맞는 곳으로 간다(REACHY_DASHBOARD_HOST/PORT 로 옮겨도 그대로 동작).
+function wsUrl() {
+  var scheme = location.protocol === "https:" ? "wss://" : "ws://";
+  return scheme + location.host + "/ws";
+}
+
+function setConn(state) {
+  var el = document.getElementById("conn");
+  el.textContent = CONN_LABEL[state] || state;
+  el.className = "conn " + state;
+}
+
+function connect() {
+  setConn("connecting");
+  ws = new WebSocket(wsUrl());
+  ws.addEventListener("open", function () { setConn("connected"); });
+  ws.addEventListener("close", scheduleReconnect);
+  // 에러 뒤에는 항상 close 가 따라오므로 재접속은 close 쪽 한 곳에서만 잡는다 —
+  // 여기서 또 스케줄하면 타이머가 두 벌 돌아 재접속이 두 번 겹칠 수 있다.
+  ws.addEventListener("error", function () { ws.close(); });
+  ws.addEventListener("message", function (ev) {
+    var msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch (err) {
+      // 서버가 규약에 안 맞는 것을 보냈다 — 페이지를 죽이지 않고 콘솔에만 남긴다.
+      console.warn("대시보드: 메시지를 해석할 수 없다", err);
+      return;
+    }
+    handleMessage(msg);
+  });
+}
+
+function scheduleReconnect() {
+  setConn("disconnected");
+  if (reconnectTimer) return;   // 이미 재접속을 기다리는 중이면 중복 예약하지 않는다
+  reconnectTimer = setTimeout(function () {
+    reconnectTimer = null;
+    connect();
+  }, RECONNECT_MS);
+}
+
+function sendCmd(cmd) {
+  // 콘솔(stage/console.py)이 받는 것과 같은 명령 문자열을 그대로 보낸다.
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn("대시보드: 연결이 없어 명령을 보내지 않는다 — " + cmd);
+    return;
+  }
+  ws.send(JSON.stringify({ cmd: cmd }));
+}
+
+// ── 메시지 종류별 렌더 — kind 하나에 함수 하나 ─────────────────────
+function handleMessage(msg) {
+  if (!msg || typeof msg.kind !== "string") return;
+  switch (msg.kind) {
+    case "hello":
+      renderHello(msg);
+      break;
+    case "snapshot":
+      renderSnapshot(msg);
+      break;
+    case "sent":
+      renderSent(msg);
+      break;
+    case "recv":
+    case "connect":
+    case "disconnect":
+    case "warn":
+    case "command":
+      appendLogFor(msg);
+      break;
+    default:
+      console.warn("대시보드: 모르는 메시지 종류 — " + msg.kind);
+  }
+}
+
+function renderHello(msg) {
+  var cues = Array.isArray(msg.cues) ? msg.cues : [];
+  buildRundown(cues);
+  var history = Array.isArray(msg.history) ? msg.history : [];
+  for (var i = 0; i < history.length; i++) {
+    appendLogFor(history[i]);
+  }
+  if (msg.snapshot) renderSnapshot(msg.snapshot);
+}
+
+function renderSnapshot(s) {
+  latestSnapshot = s;
+
+  var idx = indexOfCue(s.cue_id, s.cue_index);
+  var cue = idx >= 0 && idx < rundownRows.length ? rundownRows[idx] : null;
+  var title = cue ? cue.title : (s.cue_id || "—");
+  var num = typeof s.cue_index === "number" ? s.cue_index + 1 : "—";
+  var count = typeof s.cue_count === "number" ? s.cue_count : "—";
+  document.getElementById("cue-label").textContent =
+    "CUE " + pad2(num) + " / " + count + " · " + title;
+
+  var topicEl = document.getElementById("cue-topic");
+  var topic = cue ? cue.topic : "";
+  topicEl.textContent = topic;
+  topicEl.title = topic;   // 잘려도 마우스오버로 전문을 본다
+
+  document.getElementById("level").textContent = s.level || "—";
+
+  var connected = new Set(Array.isArray(s.connected) ? s.connected : []);
+  var rejected = new Set(Array.isArray(s.rejected) ? s.rejected : []);
+  setTally("mc", connected, rejected, s.speaking_role);
+  setTally("docent", connected, rejected, s.speaking_role);
+
+  refreshRundownTags();
+  refreshGotoBarForCurrent();
+  applyAutoProgress(s.question_wait_s, s.question_wait_total_s);
+}
+
+function renderSent(msg) {
+  var role = msg.role;
+  var fields = msg.fields || {};
+  if (msg.type === "say" && role && typeof fields.text === "string") {
+    var cap = document.getElementById("cap-" + role);
+    // 관람객 STT·로봇 대사가 그대로 온다 — textContent 로만 넣는다.
+    if (cap) cap.textContent = fields.text;
+  } else if (msg.type === "mic" && role) {
+    var mic = document.getElementById("mic-" + role);
+    if (mic) mic.textContent = fields.open ? "MIC ON" : "MIC OFF";
+  }
+  appendLogFor(msg);
+}
+
+// ── 로그 한 줄 ────────────────────────────────────────────────────
+function describeEvent(msg) {
+  var fields = msg.fields || {};
+  switch (msg.kind) {
+    case "sent":
+      if (msg.type === "say") return "say " + msg.role + " " + fields.cue_id + " seq=" + fields.seq;
+      if (msg.type === "mic") return "mic " + msg.role + " " + (fields.open ? "on" : "off");
+      if (msg.type === "abort") return "abort " + msg.role;
+      return msg.type + " " + msg.role;
+    case "recv":
+      if (msg.type === "heard") return "관람객> " + fields.text;
+      if (msg.type === "speaking_started") return "[" + msg.role + "] 발화 시작 seq=" + fields.seq;
+      if (msg.type === "speaking_ended") return "[" + msg.role + "] 발화 종료 seq=" + fields.seq;
+      return "[" + msg.role + "] " + msg.type;
+    case "connect":
+      return "[" + msg.role + "] 붙었다";
+    case "disconnect":
+      return "[" + msg.role + "] 끊겼다";
+    case "warn":
+      return msg.text || "";
+    case "command": {
+      var lines = Array.isArray(msg.lines) ? msg.lines.join(" ") : "";
+      return "명령 " + msg.cmd + " — " + (msg.ok ? "실행" : "거절됨") + (lines ? " " + lines : "");
+    }
+    default:
+      return String(msg.kind);
+  }
+}
+
+function isWarnLine(msg) {
+  return msg.kind === "warn" || (msg.kind === "command" && msg.ok === false);
+}
+
+function formatTime(t) {
+  // 서버는 epoch 초(time.time())를 보낸다 — 시간대는 브라우저가 알아서 맞춘다.
+  if (typeof t !== "number") return "--:--:--";
+  var d = new Date(t * 1000);
+  var two = function (n) { return String(n).padStart(2, "0"); };
+  return two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds());
+}
+
+function appendLogFor(msg) {
+  var warn = isWarnLine(msg);
+  var line = document.createElement("div");
+  line.className = warn ? "log-line warn" : "log-line";
+
+  var time = document.createElement("span");
+  time.className = "log-time";
+  time.textContent = formatTime(msg.t);
+
+  var text = document.createElement("span");
+  text.className = "log-text";
+  text.textContent = describeEvent(msg);   // 서버 문자열 — textContent 로만 넣는다
+
+  line.appendChild(time);
+  line.appendChild(text);
+
+  var log = document.getElementById("log");
+  log.appendChild(line);
+  while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;   // 최신이 아래 — 자동 스크롤
+
+  if (warn) {
+    warnCount += 1;
+    document.getElementById("log-warn-count").textContent = "경고 " + warnCount;
+  }
+}
+
+// ── 런다운 ────────────────────────────────────────────────────────
+function pad2(n) {
+  return typeof n === "number" ? String(n).padStart(2, "0") : String(n);
+}
+
+function indexOfCue(cueId, fallbackIndex) {
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === cueId) return i;
+  }
+  return typeof fallbackIndex === "number" ? fallbackIndex : -1;
+}
+
+function buildRundown(cues) {
+  // hello 는 세션에 한 번만 온다 — 여기서 버튼을 한 번 짓고, 이후 snapshot 은
+  // 클래스·텍스트만 갈아끼운다(rundownRows). 매번 다시 지으면 클릭 리스너를
+  // 새로 달아야 하고 스크롤 위치도 흔들린다.
+  var root = document.getElementById("rundown");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  rundownRows = [];
+
+  cues.forEach(function (c, i) {
+    var title = c.title || c.id;
+    var topic = c.topic || title;
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cue-row";
+
+    var num = document.createElement("span");
+    num.className = "cue-num";
+    num.textContent = String(i + 1).padStart(2, "0");
+
+    var titleSpan = document.createElement("span");
+    titleSpan.className = "cue-title";
+    titleSpan.textContent = title;   // 런다운 줄에는 title(짧은 이름)을 쓴다
+
+    var tag = document.createElement("span");
+    tag.className = "cue-tag";
+
+    btn.appendChild(num);
+    btn.appendChild(titleSpan);
+    btn.appendChild(tag);
+    btn.addEventListener("click", function () { selectCue(c.id); });
+    root.appendChild(btn);
+
+    rundownRows.push({ id: c.id, title: title, topic: topic, btn: btn, tag: tag });
+  });
+
+  refreshRundownTags();
+}
+
+function refreshRundownTags() {
+  var idx = latestSnapshot ? indexOfCue(latestSnapshot.cue_id, latestSnapshot.cue_index) : -1;
+  var done = 0;
+  rundownRows.forEach(function (row, i) {
+    row.btn.classList.remove("done", "now", "todo", "selected");
+    if (idx >= 0 && i < idx) {
+      row.btn.classList.add("done");
+      row.tag.textContent = "DONE";
+      done += 1;
+    } else if (i === idx) {
+      row.btn.classList.add("now");
+      row.tag.textContent = "ON AIR";
+    } else {
+      row.btn.classList.add("todo");
+      row.tag.textContent = "NEXT";
+    }
+    if (row.id === selectedCueId) row.btn.classList.add("selected");
+  });
+  document.getElementById("rundown-summary").textContent =
+    rundownRows.length + "개 중 " + done + "개 끝남";
+}
+
+// ── 큐 이동 확인 바 — 클릭은 선택만, 확인해야 이동한다 ─────────────
+function selectCue(id) {
+  var row = null;
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === id) { row = rundownRows[i]; break; }
+  }
+  if (!row) return;
+
+  selectedCueId = id;
+  refreshRundownTags();
+
+  var curIdx = latestSnapshot ? indexOfCue(latestSnapshot.cue_id, latestSnapshot.cue_index) : -1;
+  var rowIdx = rundownRows.indexOf(row);
+  var isCurrent = curIdx >= 0 && curIdx === rowIdx;
+  var label = row.btn.querySelector(".cue-num").textContent + " " + row.title;
+
+  var bar = document.getElementById("goto-bar");
+  var text = document.getElementById("goto-text");
+  var confirm = document.getElementById("goto-confirm");
+
+  if (isCurrent) {
+    // 지금 방송 중인 큐를 다시 누른 것 — 큐 이동이 아니라 "다시(r)" 를 권한다.
+    text.textContent = "\"" + label + "\" — 지금 방송 중이다. 다시 하려면 R.";
+    confirm.textContent = "이 큐 다시(R)";
+  } else {
+    text.textContent = "\"" + label + "\" 으로 이동";
+    confirm.textContent = "이 큐로 이동";
+  }
+  bar.hidden = false;
+  bar.dataset.current = isCurrent ? "1" : "";
+}
+
+function closeGotoBar() {
+  selectedCueId = null;
+  document.getElementById("goto-bar").hidden = true;
+  refreshRundownTags();
+}
+
+function refreshGotoBarForCurrent() {
+  // snapshot 이 갱신되며 선택해 둔 큐가 방금 현재 큐가 됐을 수 있다(운영자가
+  // 다른 경로로 이미 옮긴 경우) — 문구를 다시 맞춘다.
+  var stillThere = false;
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === selectedCueId) { stillThere = true; break; }
+  }
+  if (selectedCueId && stillThere) selectCue(selectedCueId);
+}
+
+document.getElementById("goto-confirm").addEventListener("click", function () {
+  if (!selectedCueId) return;
+  var isCurrent = document.getElementById("goto-bar").dataset.current === "1";
+  if (isCurrent) {
+    sendCmd("r");
+  } else {
+    sendCmd("g " + selectedCueId);
+  }
+  closeGotoBar();
+});
+document.getElementById("goto-cancel").addEventListener("click", closeGotoBar);
+
+// ── 진행 제어 버튼·자동 진행 표시 ───────────────────────────────────
+document.getElementById("btn-prev").addEventListener("click", function () { sendCmd("p"); });
+document.getElementById("btn-restart").addEventListener("click", function () { sendCmd("r"); });
+document.getElementById("btn-next").addEventListener("click", function () { sendCmd("n"); });
+document.getElementById("btn-start").addEventListener("click", function () { sendCmd("s"); });
+document.getElementById("btn-abort").addEventListener("click", function () { sendCmd("a"); });
+
+var KEY_CMD = { p: "p", r: "r", n: "n", s: "s", a: "a" };
+document.addEventListener("keydown", function (ev) {
+  // 수정키가 하나라도 눌려 있으면 무시한다 — 브라우저 단축키(예: Cmd+R 새로고침)
+  // 와 겹치지 않게 하기 위해서다.
+  if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return;
+  var cmd = KEY_CMD[ev.key.toLowerCase()];
+  if (!cmd) return;
+  ev.preventDefault();
+  sendCmd(cmd);
+});
+
+function setTally(role, connected, rejected, speakingRole) {
+  var mon = document.getElementById("mon-" + role);
+  var tag = document.getElementById("tag-" + role);
+  var cap = document.getElementById("cap-" + role);
+  var state;
+  if (rejected.has(role)) state = "rejected";
+  else if (!connected.has(role)) state = "offline";
+  else if (speakingRole === role) state = "onair";
+  else state = "standby";
+
+  [mon, tag, cap].forEach(function (el) {
+    STATE_CLASSES.forEach(function (c) { el.classList.remove(c); });
+    el.classList.add(state);
+  });
+  tag.textContent = TALLY_TEXT[state];
+}
+
+function applyAutoProgress(wait, total) {
+  var text = document.getElementById("auto-text");
+  var bar = document.getElementById("auto-bar");
+  if (wait === null || wait === undefined) {
+    text.textContent = "대기 전";
+    bar.style.width = "0%";
+    return;
+  }
+  var seconds = Math.max(0, Math.round(wait));
+  text.textContent = "침묵 " + seconds + "초 뒤 다음 큐로";
+  var t = typeof total === "number" && total > 0 ? total : wait;
+  var ratio = t > 0 ? Math.min(1, Math.max(0, 1 - wait / t)) : 0;
+  bar.style.width = Math.round(ratio * 100) + "%";
+}
+
+connect();
+</script>
+</body>
+</html>
