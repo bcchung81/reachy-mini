@@ -92,9 +92,22 @@ curl -s http://192.168.0.42:8000/api/daemon/status | python3 -c "import sys,json
 
 ---
 
-## 4. 로봇 대시보드에서 startup-app 을 비운다
+## 4. startup-app 을 비운다
 
-로봇 브라우저 대시보드(`http://<로봇IP>:8000`)에서 **자동 시작 앱을 없음으로** 둔다.
+~~로봇 브라우저 대시보드(`http://<로봇IP>:8000`)에서 자동 시작 앱을 없음으로 둔다.~~
+**2026-09-21 확인: 그 웹 대시보드는 SDK 업데이트로 없어졌다** — 접속하면
+"Web Dashboard Deprecated, replaced by the Reachy Mini Control desktop app"만
+뜬다. 데스크톱 앱을 새로 깔 필요 없이, 대시보드가 하던 일은 **REST API로 직접**
+되고 오히려 더 빠르다(`daemon/app/routers/apps.py::get_startup_app`/`set_startup_app`):
+
+```bash
+curl -s http://<로봇IP>:8000/api/apps/startup-app
+# {"startup_app": null}  ← 이게 나오면 이미 끝난 것, 손댈 것 없다
+
+# null 이 아니면 지운다:
+curl -s -X PUT http://<로봇IP>:8000/api/apps/startup-app \
+  -H 'Content-Type: application/json' -d '{"startup_app": null}'
+```
 
 LAN 으로 붙는 SDK 클라이언트는 로봇의 앱 락을 우회한다
 (`daemon/robot_app_lock.py`). 온보드 앱이 켜져 있으면 우리 앱과 모터를 두고 싸운다.

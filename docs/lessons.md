@@ -643,6 +643,23 @@
   그대로 부른다 — 여기서 파일을 고정해 두면 해설 모드에서 캐시가 헛돌고 조용히 느려진다.
 - 상한은 테스트로 묶었다: `tests/test_prompt_select.py::test_해설_프롬프트가_실제로_있고_상한을_넘지_않는다`.
 
+### SDK 업데이트로 로봇 웹 대시보드가 없어졌다 — REST API로 확인한다
+
+- **증상**(2026-09-21, 실기 mc, SDK 1.10.0): `docs/two-robot-setup.md` §4가 시키는 대로
+  `http://<로봇IP>:8000`에 접속했더니 "Web Dashboard Deprecated — replaced by the
+  Reachy Mini Control desktop app"만 뜨고, 자동시작 앱을 끄는 화면 자체가 없다.
+- **원인**: SDK가 올라오면서 브라우저 대시보드 UI가 빠졌다. 안내는 데스크톱 앱을
+  가리키지만, **새로 깔 필요 없다** — 대시보드가 부르던 REST 엔드포인트
+  (`daemon/app/routers/apps.py::get_startup_app`/`set_startup_app`)는 그대로 살아 있다.
+- **규칙**: 로봇 쪽 화면이 SDK 업데이트로 막혀 있으면, 그 화면이 아니라 **그 화면이
+  부르는 API**를 직접 두드린다.
+  ```bash
+  curl http://<로봇IP>:8000/api/apps/startup-app        # {"startup_app": null} 이면 끝
+  curl -X PUT http://<로봇IP>:8000/api/apps/startup-app \
+    -H 'Content-Type: application/json' -d '{"startup_app": null}'
+  ```
+  `docs/two-robot-setup.md` §4를 이 방법으로 갱신했다(취소선 + 대체).
+
 ---
 
 ## 측정 · 검증
