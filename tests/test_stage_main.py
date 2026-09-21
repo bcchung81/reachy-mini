@@ -136,6 +136,42 @@ def test_생성문의_화자_이름표를_걷고_경고한다(기록LLM):
     assert any("이름표" in w for w in 경고), 경고
 
 
+def test_warn_기본값은_print다(기록LLM, capsys):
+    """전체 리뷰 I2 — `build_generate(level, warn=print)` 의 **기본값**이
+    실제로 콘솔에 찍히는지 본다. 이 테스트가 없으면 기본값을 `lambda m: None`
+    으로 바꿔도 690개가 전부 통과했다 — 실제 호출부 둘(`main()`,
+    `scripts/pregen_mc_lines.py`)이 기본값에만 기대므로, 그러면 실기 경로의
+    이름표·상한 경고가 전부 무방비가 된다(조용한 실패 금지 규약 위반).
+    `warn` 을 일부러 넘기지 않는다.
+    """
+    기록LLM.답 = ["사회자: 좋은 설명이네요."]
+    generate = stage_main.build_generate(_레벨)
+    assert generate("mc", "지시", []) == "좋은 설명이네요."
+    assert "이름표" in capsys.readouterr().out
+
+
+def test_이력_끝이_assistant면_지시문_앞으로_접지_않는다(기록LLM):
+    """전체 리뷰 M1 — `if hist and hist[-1]["role"] == "user":` 를 `if hist:`
+    로 완화해도(역할을 안 보고 무조건 접어도) 통과하던 자리다. 질문 재촉 뒤
+    `director.py` 가 "사회자: …" 를 기록하면, 다음 사회자 생성은 자기 마지막
+    말을 지시문 앞에 이름표 없는 user 로 받는 실제 경로가 있다 — 그 반대(이력
+    끝이 assistant, 즉 방금 자기가 말한 차례)일 때는 접으면 안 된다.
+    """
+    generate = stage_main.build_generate(_레벨)
+    이력 = [
+        {"role": "assistant", "content": "도슨트: 해설"},
+        {"role": "assistant", "content": "사회자: 질문 받습니다"},
+    ]
+    generate("mc", "지시", 이력)
+    assert 기록LLM.본것 == [(
+        "지시",
+        [
+            {"role": "user", "content": "도슨트: 해설"},
+            {"role": "assistant", "content": "질문 받습니다"},
+        ],
+    )]
+
+
 def test_상대_턴까지_이어_쓴_생성문은_그_앞에서_자른다(기록LLM):
     """실측 docent:106 — 도슨트 한 발화 안에 사회자 반응이 이어 붙었다."""
     기록LLM.답 = ["설명을 마칩니다.", "사회자: 반응입니다."]

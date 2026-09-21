@@ -1149,6 +1149,12 @@ class Director:
         상한을 넘으면 앞에서 잘라낸다 — 자르는 쪽을 우리가 정해야 모델의
         컨텍스트 창이 말없이 자르는 것을 막는다.
         """
+        # 이 role 은 LLM 으로 갈 때는 쓰이지 않는다 — `stage/__main__.py::history_for`
+        # 가 **내용 앞의 이름표**(누가 한 줄인지)로 생성하는 역할의 시점(자기 줄
+        # 은 assistant, 남의 줄은 user)을 다시 정한다. 여기서는 그냥 "관람객이
+        # 말했나 로봇이 말했나" 만 가른다. 그러니 여기 role 을 "고쳐" 저 역할
+        # 매핑을 대신하려 하지 않는다 — 두 층의 뜻이 다른데 하나로 합치면 어느
+        # 한쪽을 바꿀 때 다른 쪽이 조용히 어긋난다(전체 리뷰 M3).
         role = "user" if line.startswith("관람객:") else "assistant"
         self.history.append({"role": role, "content": line})
         if len(self.history) > HISTORY_MAX:
