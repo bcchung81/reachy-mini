@@ -201,3 +201,26 @@ def test_모드_토글이_있고_m_명령을_보낸다():
     assert '"m "' in src          # sendCmd("m " + name)
     assert "solo_available" in src
     assert "msg.modes" in src
+
+
+def test_단독에서는_키보드_단축키도_진행_명령을_보내지_않는다():
+    """수준 리뷰 I1: disabled 속성은 버튼 클릭만 막을 뿐, 키보드 지름길(KEY_CMD)은
+    그것과 무관하게 그대로 sendCmd 를 불러 applySoloLockdown 의 버튼 잠금을 우회했다
+    (감독이 거절해 로그에 경고만 쌓이는, applySoloLockdown 자신의 주석이 막으려던
+    바로 그 상황을 키보드로는 재현했다). p/r/n/s 는 단독에서 막되 즉시 중단(a)은
+    살려 둔다 — 그래서 리터럴은 keydown 리스너 "본문 안"에서 확인한다(다른 자리에
+    같은 문자열이 있어도 소용없다)."""
+    src = _src()
+    body = _media_block(src, 'addEventListener("keydown"')
+    assert 'cmd !== "a"' in body
+    assert 'latestSnapshot.mode === "solo"' in body
+
+
+def test_단독으로_들어가면_열려_있던_이동_확인_바를_닫는다():
+    """수준 리뷰 I2: 런다운 행을 눌러 이동 확인 바가 열린 채 단독으로 전환되면,
+    확인·취소 버튼과 런다운 행이 함께 잠겨 운영자가 그 바를 닫을 방법이 없는 막다른
+    골목이 됐다. applySoloLockdown 이 단독으로 들어갈 때 스스로 바를 닫아야 한다 —
+    리터럴은 그 함수 본문 안에서 확인한다."""
+    src = _src()
+    body = _media_block(src, "function applySoloLockdown(isSolo)")
+    assert "closeGotoBar()" in body

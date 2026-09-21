@@ -857,6 +857,13 @@ function applySoloLockdown(isSolo) {
   document.getElementById("goto-cancel").disabled = isSolo;
   rundownRows.forEach(function (row) { row.btn.disabled = isSolo; });
 
+  // 확인 바가 열린 채(런다운 행을 눌러 선택해 둔 상태) 단독으로 전환되면, 위에서 막
+  // 확인·취소 버튼과 런다운 행이 함께 잠겨 바를 닫을 방법이 없는 막다른 골목이 된다
+  // (수준 리뷰 I2). 단독으로 들어가는 순간 열려 있던 확인 바를 스스로 닫는다 — 팟캐스트로
+  // 돌아오면 다시 누르면 그만이라 잃을 것이 없다. selectedCueId 가 이미 null 이면(바가
+  // 안 열려 있었으면) closeGotoBar 는 그냥 hidden 을 다시 세팅할 뿐이라 안전하다.
+  if (isSolo) closeGotoBar();
+
   document.getElementById("solo-banner").hidden = !isSolo;
 }
 
@@ -941,6 +948,12 @@ document.addEventListener("keydown", function (ev) {
   // `ev.code` 는 입력기 상태와 무관하게 항상 물리 키 이름(KeyN 등)이다.
   var cmd = KEY_CMD[ev.code];
   if (!cmd) return;
+  // 단독에서는 진행 버튼(prev/restart/next/start)이 disabled 지만, 키보드 지름길은
+  // DOM 의 disabled 속성과 무관하게 그대로 sendCmd 를 불러 버튼 잠금을 우회했다(수준
+  // 리뷰 I1) — applySoloLockdown 이 막으려던 "감독이 거절해 로그에 경고만 쌓이는"
+  // 상황을 키보드로는 그대로 재현한 것이다. 즉시 중단(a)만은 버튼과 마찬가지로 단독
+  // 에서도 살려 둔다.
+  if (cmd !== "a" && latestSnapshot && latestSnapshot.mode === "solo") return;
   ev.preventDefault();
   sendCmd(cmd);
 });
