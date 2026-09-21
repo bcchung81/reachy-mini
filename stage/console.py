@@ -12,6 +12,7 @@ HELP = """
   n  다음 큐로   |  p  이전 큐로     |  r  현재 큐 다시  |  s  시작
   a  즉시 중단   |  ?  도움말        |  q  종료
   g <큐id>  그 큐로 이동
+  l <수준>  관람객 수준 바꾸기(다음 큐부터)
 """
 
 
@@ -90,6 +91,13 @@ def dispatch(director: Director, cmd: str, out) -> None:
         if any(c["id"] == cue_id for c in director.cue_list()):
             director.abort()
         director.goto(cue_id)
+    elif cmd.startswith("l "):
+        # 관람객 수준(초등/중고등/일반/전문가) — **다음 큐부터** 적용된다. `n`·`g` 와
+        # 달리 먼저 멈추지 않는다: 지금 큐는 원래 수준으로 끝까지 가는 것이 사용자
+        # 결정이고, 바로 적용하려면 운영자가 이어서 `r` 을 누른다. 이름 검증·경고
+        # 문구는 `Director.set_level` 한 곳에만 둔다(`g` 와 같은 이유). 대시보드가
+        # 명령을 `.lower()` 해도 한글 수준 이름은 그대로다.
+        director.set_level(cmd[2:].strip())
     elif cmd == "?":
         out(HELP)
     elif cmd:

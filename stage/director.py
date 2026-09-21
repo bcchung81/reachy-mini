@@ -157,6 +157,8 @@ class Director:
         mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
         docent_min_chars: int = MIN_CHARS,
+        level_min_chars: dict[str, int] | None = None,
+        on_level_change: Callable[[str], None] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -177,7 +179,43 @@ class Director:
         # 바꾸면 그 전부가 같이 흔들린다. 감독이 수준에서 실제로 쓰는 것은 이
         # 수 하나뿐이라 수 하나만 받는다(이름은 `_level_name` 과 같은 결이다).
         # 사회자 몫은 이 값을 쓰지 않는다 — 위 `MIN_CHARS` 주석 참고.
+        #
+        # ~~기동 때 한 번 정해지고 바뀌지 않는다.~~ 2026-09-21부터 `_level_name` 과
+        # 함께 **큐를 시작할 때** 바뀔 수 있다(`set_level` → `_apply_pending_level`).
         self._docent_min_chars = docent_min_chars
+
+        # **관람객 수준 실시간 전환**(콘솔·대시보드 `l <수준>`). 셋이 한 묶음이다:
+        #   `_level_min_chars` — 고를 수 있는 수준 이름 → 도슨트 하한(levels.yaml 순서).
+        #                        dict 순서가 곧 페이지 버튼 순서다(`level_names`).
+        #   `_on_level_change` — 생성기(역할·수준별 페르소나)를 그 수준으로 바꾸는 훅.
+        #                        `stage/__main__.py::LevelSwitch.select` 가 온다.
+        #   `_level_pending`   — 다음 큐부터 적용할 이름. 없으면 None.
+        #
+        # 목록을 안 받으면 **지금 수준 하나만** 아는 감독이다(기존 호출부·테스트 그대로).
+        # 수준 프로필 전체가 아니라 이름 → 하한만 받는 이유는 위 `_docent_min_chars`
+        # 와 같다 — 감독이 수준에서 쓰는 것이 이 수 하나뿐이다.
+        self._level_min_chars = (
+            dict(level_min_chars) if level_min_chars else {level_name: docent_min_chars}
+        )
+        # **반쯤 끊긴 배선을 기동에서 막는다.** 대장 「`Director` 생성자 인자를 늘려도
+        # 배선 두 단계를 같이 안 고치면 늘 기본값으로 죽는다」 그대로의 자리다. 목록만
+        # 흘러오고 훅이 빠지면 `l` 이 받아들여져 브리프·캐시 키·하한은 새 수준으로
+        # 가는데 생성기는 옛 수준 페르소나로 남는다 — 초등 지시문을 전문가 말투로
+        # 해설하는데 경고는 "바꿨다" 뿐이라 아무도 모른다.
+        if len(self._level_min_chars) > 1 and on_level_change is None:
+            raise ValueError(
+                "관람객 수준 목록을 받았는데 생성기 전환 훅(on_level_change)이 없다 — "
+                "수준을 바꿔도 생성기가 옛 수준으로 남는다"
+            )
+        if level_name not in self._level_min_chars:
+            raise ValueError(
+                f"지금 관람객 수준 {level_name!r} 이 수준 목록에 없다: "
+                f"{list(self._level_min_chars)}"
+            )
+        # 목록이 하나뿐이면 `set_level` 이 대기를 만들 수 없으므로(모르는 이름이거나
+        # "이미 그 수준") 아무것도 안 하는 훅이 불릴 일도 없다.
+        self._on_level_change = on_level_change or (lambda name: None)
+        self._level_pending: str | None = None
 
         self._machine = TurnMachine()
         self.history: list[dict] = []
@@ -728,6 +766,55 @@ class Director:
                 )
             self._begin_cue(self._sheet.seek(i))
 
+    def set_level(self, name: str) -> None:
+        """관람객 수준을 바꾼다 — **다음 큐부터**(콘솔·대시보드 `l <수준>`).
+
+        사용자 결정(2026-09-21): 지금 큐는 원래 수준으로 끝까지 간다. 여기서 바로
+        바꾸면 사회자는 옛 수준 브리프로 연 큐를 도슨트가 새 수준 브리프·페르소나로
+        해설해 한 큐 안에서 수준이 섞인다(해설 폴백·받아치기 예비가 이 큐 도중에도
+        `_level_name` 을 본다). 적용은 `_begin_cue` 한 곳에서만 한다 — 바로 적용하려면
+        운영자가 `r` 을 누른다(= abort + start, 역시 `_begin_cue`).
+
+        **발화 중에도 거절하지 않는다.** 적용이 다음 큐라 지금 발화를 건드리지 않는다
+        — 콘솔 `n`·`g` 처럼 `abort()` 를 먼저 부를 이유도 없다.
+
+        결과는 전부 경고 한 줄로 남긴다(바꿈·취소·이미·모름). 운영자 화면(대시보드
+        로그)과 터미널에 같은 줄이 가야 "누가 언제 수준을 바꿨나" 를 로그로 따라간다.
+        """
+        with self._lock:
+            if name not in self._level_min_chars:
+                # 오타 한 번이 시연을 흔들면 안 된다 — 경고만. 고를 수 있는 것을 같이
+                # 보여 줘야 운영자가 그 자리에서 다시 친다.
+                self._warn(
+                    f"모르는 관람객 수준이다: {name!r} — 바꾸지 않는다"
+                    f"(고를 수 있는 것: {', '.join(self._level_min_chars)})"
+                )
+                return
+            if name == self._level_name:
+                if self._level_pending is not None:
+                    # 대시보드에서 적용된 버튼을 다시 누른 것 — "되돌리기" 로 읽는다.
+                    self._warn(
+                        f"관람객 수준 {self._level_name} → {self._level_pending} 대기를 "
+                        f"취소했다 — {self._level_name} 그대로 간다"
+                    )
+                    self._level_pending = None
+                else:
+                    self._warn(f"관람객 수준은 이미 {name} 이다 — 바꿀 것이 없다")
+                return
+            self._level_pending = name
+            self._warn(
+                f"관람객 수준 {self._level_name} → {name} — 다음 큐부터 적용(바로 하려면 r)"
+            )
+
+    def level_names(self) -> list[str]:
+        """고를 수 있는 관람객 수준 이름 — levels.yaml 순서(페이지 버튼 순서).
+
+        기동 뒤 바뀌지 않으므로 락이 필요 없다(`cue_list` 와 같다). 대시보드가 파일을
+        따로 읽지 않고 여기서 받는 이유: 감독이 받아들이는 이름과 버튼 이름이 한 곳에서
+        나와야 한다 — 따로 읽으면 `REACHY_LEVELS_PATH` 하나로 둘이 갈린다.
+        """
+        return list(self._level_min_chars)
+
     def cue_list(self) -> list[dict]:
         """런다운용 큐 목록. 큐시트는 기동 뒤 바뀌지 않으므로 락이 필요 없다.
 
@@ -776,7 +863,10 @@ class Director:
                 "connected": sorted(self._connected),
                 "solo_role": self.solo_role,
                 "rejected": sorted(self._rejected),
+                # `level` 은 지금 **적용된** 수준(이 큐가 도는 수준), `level_pending` 은
+                # 다음 큐부터 적용될 수준(없으면 None). 페이지는 둘을 다르게 칠한다.
                 "level": self._level_name,
+                "level_pending": self._level_pending,
             }
 
     def tick(self) -> None:
@@ -840,6 +930,14 @@ class Director:
                 f"{self._machine.speaking_role} 가 아직 말하는 중이다"
                 f"(큐 {self._machine.cue_id}) — 동시 발화를 막는다"
             )
+        # **대기 중인 관람객 수준은 여기서 적용한다 — 큐를 시작하는 유일한 자리라서.**
+        # start·next·previous·goto·관람객의 "다음"·침묵 자동 진행, 그리고 콘솔 `r`
+        # (abort + start)이 모두 여기를 지난다(`test_큐를_시작하는_모든_길이_대기_수준을_
+        # 적용한다`). 위 거절 **뒤**에 둔다: 발화 중이라 거절된 시작이 대기를 먹으면
+        # 화면의 수준은 바뀌었는데 흐르는 큐는 옛 수준이다. 아래 브리프·캐시 키·도슨트
+        # 사전 생성 **앞**에 둔다: 이 큐 전체가 새 수준으로 돌아야 한다.
+        if self._level_pending is not None:
+            self._apply_pending_level(cue)
         # **수준별 브리프를 여기서 한 번 가른다.** `brief_for` 는 이 섹션에
         # `briefs` 가 없으면 옛 `docent_brief` 로 폴백하므로, 아래 두 자리
         # (여는 대사 캐시 키·도슨트 사전 생성) 모두 이 한 쌍만 보면 된다.
@@ -910,6 +1008,50 @@ class Director:
         self._emit(
             self._machine.speak(self._who("mc"), cue.id, mc_text, gaze=cue.gaze)
         )
+
+    def _apply_pending_level(self, cue: Cue) -> None:
+        """대기 수준을 적용한다. **`self._lock` 을 쥔 채** `_begin_cue` 에서만 부른다.
+
+        **훅을 먼저 부른다.** 거꾸로면 훅이 터졌을 때 수준 표시·하한은 새 것인데
+        생성기만 옛 것인 반쪽 상태가 남는다.
+
+        **훅이 터져도 큐는 시작한다 — 옛 수준으로.** 예외를 올리면 대기가 남아 큐를
+        시작할 때마다 같은 예외가 나고, 침묵 자동 진행은 커서를 옮긴 **뒤** 여기서
+        터지므로 시연이 그 자리에서 굳는다. 곁다리 기능의 실패가 진행을 막으면 안
+        된다 — 소리 내고, 대기를 버리고(운영자가 다시 고르면 다시 해 본다), 브리프·
+        생성기·하한이 모두 옛 수준으로 맞는 상태로 간다. 대기를 **먼저** 비우는 이유도
+        이것이다(`test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시작한다`).
+
+        훅은 락 안에서 불린다 — `StageServer._send`·경고 콜백과 같은 규칙을 진다:
+        **감독 상태를 읽지 않고 블로킹하지 않는다.** 그래서 이름만 넘긴다. 실제 훅
+        (`stage/__main__.py::LevelSwitch.select`)은 대입 하나이고, 새 수준 생성기를
+        만드는 일(페르소나 파일 읽기)은 첫 생성 때 생성 스레드에서 한다 — 락 밖이다.
+
+        이 뒤에 띄우는 생성(`_spawn_generate`)은 새 생성기를 탄다. 앞 큐가 띄운 늦은
+        생성은 새 생성기로 돌든 옛 생성기로 돌든 **버려진다** — `_begin_cue` 가 세
+        슬롯의 세대를 모두 올리므로(도슨트는 새 생성으로, 받아치기 둘은 무효화로)
+        그 결과는 세대 검사에 걸린다.
+
+        ⚠️ 락 밖에서 읽히는 값이 하나 있다: `_docent_min_chars` 는 `_await_pending`
+        (→ `_warn_if_short`)이 락을 놓고 기다린 뒤 읽는다. 전에는 기동 뒤 안 바뀌어
+        상관없었다. 이제는 그 대기의 세대 확인 **직후**에 다음 큐가 시작되면(콘솔 `n`)
+        옛 큐의 대사를 새 수준 하한으로 잴 수 있다 — 그 대사는 곧바로 2구간의 세대
+        재확인에 걸려 "다음 턴으로 넘어갔다 — 버린다" 가 뒤따르므로 나가지 않는다.
+        틀릴 수 있는 것은 버려질 대사에 붙는 "너무 짧다" 경고 한 줄의 하한뿐이다.
+        """
+        name = self._level_pending
+        self._level_pending = None
+        try:
+            self._on_level_change(name)
+        except Exception as exc:  # noqa: BLE001 — 위 docstring: 진행을 막지 않는다
+            self._warn(
+                f"관람객 수준 {name} 전환 실패({type(exc).__name__}: {exc}) — "
+                f"{self._level_name} 그대로 간다"
+            )
+            return
+        self._level_name = name
+        self._docent_min_chars = self._level_min_chars[name]
+        self._warn(f"관람객 수준을 {name}(으)로 바꿨다 — {cue.id} 부터")
 
     def _spawn_generate(
         self, slot: str, role: str, brief: str, fallback: str, label: str

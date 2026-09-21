@@ -31,6 +31,7 @@ class Harness:
     def __init__(
         self, generate=None, expect_units=None, after=("", ""),
         sheet=None, level_name="일반", mc_lines=None, docent_min_chars=None,
+        levels=None, on_level_change=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -74,6 +75,12 @@ class Harness:
         # 여기서 수준 프로필 값으로 바꾸면 그것들이 전부 흔들린다. 수준별 하한을
         # 보는 테스트만 명시적으로 넘긴다.
         kw = {} if docent_min_chars is None else {"docent_min_chars": docent_min_chars}
+        # 수준 전환(`l <수준>`)을 보는 테스트만 넘긴다 — 안 넘기면 감독은 지금 수준
+        # 하나만 아는 채로 돈다(기존 테스트의 동작 그대로).
+        if levels is not None:
+            kw["level_min_chars"] = levels
+        if on_level_change is not None:
+            kw["on_level_change"] = on_level_change
         self.d = Director(
             sheet,
             generate=_gen,
@@ -2597,3 +2604,314 @@ def test_goto_모르는_큐는_말하는_중이어도_경고만_하고_거절하
     assert h.d.state is State.MC_SPEAKING
     assert h.sent == []
     assert len(h.warnings) == 1 and "c9" in h.warnings[0], h.warnings
+
+
+# ── (F) 관람객 수준 실시간 전환(`l <수준>`) ────────────────────────────
+#
+# 사용자 결정(2026-09-21): **다음 큐부터** 적용한다. 지금 큐는 원래 수준으로 끝까지
+# 가고, 바로 적용하려면 운영자가 `r` 을 누른다 — 한 큐 안에서 사회자·도슨트 수준이
+# 섞이지 않는다. 적용 지점은 큐를 시작하는 한 곳(`_begin_cue`)이다.
+#
+# 처음 수준은 **"중고등"** 으로 둔다 — `level_name` 의 기본값("일반")과 같은 값으로
+# 단언하면 배선이 끊겨도 통과한다(함정 ③).
+
+# data/levels.yaml 의 순서와 도슨트 하한. 리터럴로 박는다(함정 ⑤ — 로더에서 가져오지 않는다).
+_수준_하한 = {"초등": 70, "중고등": 120, "일반": 180, "전문가": 260}
+
+
+def _수준_브리프(tag):
+    return {
+        "초등": {"mc_brief": f"{tag} 초등 진행", "docent_brief": f"{tag} 초등 해설"},
+        "중고등": {"mc_brief": f"{tag} 중고등 진행", "docent_brief": f"{tag} 중고등 해설"},
+        "일반": {"mc_brief": f"{tag} 일반 진행", "docent_brief": f"{tag} 일반 해설"},
+        "전문가": {"mc_brief": f"{tag} 전문가 진행", "docent_brief": f"{tag} 전문가 해설"},
+    }
+
+
+def _수준_시트():
+    """수준마다 브리프가 다른 3큐 시트 — 어느 수준의 브리프가 쓰였는지 문자열로 가른다."""
+    return CueSheet([
+        Cue("c1", "첫째", "원문 c1", "옛 지시1", "partner", briefs=_수준_브리프("c1")),
+        Cue("c2", "둘째", "원문 c2", "옛 지시2", "partner", briefs=_수준_브리프("c2")),
+        Cue("c3", "셋째", "원문 c3", "옛 지시3", "partner", briefs=_수준_브리프("c3")),
+    ])
+
+
+def _수준_감독(hook=None, **kw):
+    kw.setdefault("sheet", _수준_시트())
+    kw.setdefault("level_name", "중고등")
+    kw.setdefault("docent_min_chars", 120)
+    return Harness(
+        levels=dict(_수준_하한),
+        on_level_change=(hook.append if hook is not None else (lambda name: None)),
+        **kw,
+    )
+
+
+def _수준(h):
+    s = h.d.snapshot()
+    return s["level"], s["level_pending"]
+
+
+def test_수준을_바꾸면_지금_큐가_아니라_다음_큐부터라고_알리고_대기한다():
+    """발화 중에도 거절하지 않는다 — 적용이 다음 큐라서 지금 발화를 건드리지 않는다."""
+    훅: list[str] = []
+    h = _수준_감독(훅)
+    h.d.start()                       # 사회자가 c1 을 말하는 중
+    h.warnings.clear()
+    h.d.set_level("초등")
+    assert h.warnings == ["관람객 수준 중고등 → 초등 — 다음 큐부터 적용(바로 하려면 r)"]
+    assert _수준(h) == ("중고등", "초등")
+    assert 훅 == []                   # 생성기는 아직 옛 수준이다(적용 때 바뀐다 — 아래 테스트)
+    assert h.d.state is State.MC_SPEAKING
+
+
+def test_대기_수준은_다음_큐를_시작할_때_캐시_키와_해설_브리프와_생성기에_한꺼번에_적용된다():
+    훅: list[str] = []
+    got = threading.Event()
+    seen: list[str] = []
+
+    def gen(role, brief, hist):
+        seen.append(brief)
+        if brief == "c2 초등 해설":
+            got.set()
+        return "해설"
+
+    # c2 의 **초등** 캐시만 넣는다 — 중고등으로 시작하면 미스(원문)가 나야 한다.
+    mc_lines = {cache_key("c2", "초등", "c2 초등 진행"): "초등용 c2 여는 대사"}
+    h = _수준_감독(훅, generate=gen, mc_lines=mc_lines)
+    h.d.start()
+    h.d.set_level("초등")
+    h.d.abort()
+    h.clear()
+    h.warnings.clear()
+    h.d.next()
+    assert h.says() == [("mc", "초등용 c2 여는 대사")]
+    assert got.wait(2.0), seen
+    assert 훅 == ["초등"]
+    assert h.warnings == ["관람객 수준을 초등(으)로 바꿨다 — c2 부터"]
+    assert _수준(h) == ("초등", None)
+
+
+def test_지금_큐는_대기_수준이_있어도_원래_수준으로_끝까지_간다(monkeypatch):
+    """도슨트 해설 폴백(`on_speaking_ended`)이 지금 큐의 수준을 본다 — `set_level` 이
+    그 자리에서 수준을 바꿔 버리면 사회자는 중고등, 도슨트는 초등인 큐가 나간다."""
+    import stage.director as director_mod
+
+    monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
+    gate = threading.Event()
+
+    def gen(role, brief, history):
+        gate.wait(5.0)                 # 유예를 넘겨 폴백(= 그 수준의 해설 지시문)으로 가게
+        return "늦은 대사"
+
+    h = _수준_감독(generate=gen)
+    h.d.start()
+    h.d.set_level("초등")
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "c1 중고등 해설"), h.says()
+    gate.set()
+
+
+def _듣는_중까지(h):
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")     # 받아치기 없는 큐 → 곧장 듣기(침묵 기한 0 + 8.0)
+    assert h.d.state is State.LISTENING
+
+
+def _다음(h):
+    h.d.start(); h.d.set_level("초등"); h.d.abort(); h.d.next()
+
+
+def _이전(h):
+    h.d.start(); h.d.abort(); h.d.next(); h.d.set_level("초등"); h.d.abort(); h.d.previous()
+
+
+def _이동(h):
+    h.d.start(); h.d.set_level("초등"); h.d.abort(); h.d.goto("c3")
+
+
+def _다시(h):
+    # 콘솔 `r` 과 같은 순서 — abort 뒤 start.
+    h.d.start(); h.d.set_level("초등"); h.d.abort(); h.d.start()
+
+
+def _들은_다음(h):
+    _듣는_중까지(h); h.d.set_level("초등"); h.d.on_heard("다음")
+
+
+def _침묵(h):
+    _듣는_중까지(h); h.d.set_level("초등"); h.clock.t += 8.0; h.d.tick()
+
+
+@pytest.mark.parametrize(
+    "길, 큐",
+    [(_다음, "c2"), (_이전, "c1"), (_이동, "c3"), (_다시, "c1"), (_들은_다음, "c2"), (_침묵, "c2")],
+    ids=["next", "previous", "goto", "restart", "heard", "silence"],
+)
+def test_큐를_시작하는_모든_길이_대기_수준을_적용한다(길, 큐):
+    """적용 지점은 `_begin_cue` 하나다. 길 하나라도 그것을 비껴가면 그 길로 넘어간
+    섹션만 옛 수준으로 돈다 — 특히 침묵 자동 진행은 운영자가 아무것도 안 누른 채
+    일어나므로 대기가 조용히 밀린다."""
+    훅: list[str] = []
+    h = _수준_감독(훅)
+    길(h)
+    assert 훅 == ["초등"]
+    assert f"관람객 수준을 초등(으)로 바꿨다 — {큐} 부터" in h.warnings, h.warnings
+    assert _수준(h) == ("초등", None)
+    assert h.d.snapshot()["cue_id"] == 큐
+
+
+def test_말하는_중이라_거절된_시작은_대기_수준을_쓰지_않는다():
+    """검증 → 부작용 순서(`_begin_cue` 머리 주석). 거절된 `s` 가 대기를 먹으면 수준
+    표시는 바뀌었는데 지금 흐르는 큐는 옛 수준이다 — 화면과 무대가 어긋난다."""
+    훅: list[str] = []
+    h = _수준_감독(훅)
+    h.d.start()
+    h.d.set_level("초등")
+    with pytest.raises(TurnError):
+        h.d.start()
+    assert _수준(h) == ("중고등", "초등")
+    assert 훅 == []
+
+
+def test_적용된_수준을_다시_고르면_대기를_취소한다():
+    훅: list[str] = []
+    h = _수준_감독(훅)
+    h.d.start()
+    h.d.set_level("초등")
+    assert _수준(h) == ("중고등", "초등")   # 전제: 취소할 대기가 있다
+    h.warnings.clear()
+    h.d.set_level("중고등")
+    assert h.warnings == ["관람객 수준 중고등 → 초등 대기를 취소했다 — 중고등 그대로 간다"]
+    assert _수준(h) == ("중고등", None)
+    h.d.abort()
+    h.d.next()
+    assert h.says()[-1] == ("mc", "원문 c2")
+    assert _수준(h) == ("중고등", None)
+    assert 훅 == []
+
+
+def test_대기도_없이_지금_수준을_고르면_이미_그_수준이라고만_한다():
+    h = _수준_감독()
+    h.d.set_level("중고등")
+    assert h.warnings == ["관람객 수준은 이미 중고등 이다 — 바꿀 것이 없다"]
+    assert _수준(h) == ("중고등", None)
+
+
+def test_모르는_수준은_고를_수_있는_것을_보여_주고_대기도_건드리지_않는다():
+    h = _수준_감독()
+    h.d.set_level("초등")
+    h.warnings.clear()
+    h.d.set_level("유치원")
+    assert h.warnings == [
+        "모르는 관람객 수준이다: '유치원' — 바꾸지 않는다(고를 수 있는 것: 초등, 중고등, 일반, 전문가)"
+    ]
+    assert _수준(h) == ("중고등", "초등")
+
+
+def test_수준을_바꾸면_도슨트_분량_하한도_그_수준을_따른다():
+    """하한이 옛 수준(일반 180자)에 남으면 전문가(260자)에서 200자 해설이 나와도
+    경고가 없다 — 수준을 바꾼 뒤에만 조용히 성능이 떨어진다."""
+    이백자 = "가" * 200
+    h = _수준_감독(level_name="일반", docent_min_chars=180,
+                  generate=lambda role, brief, hist: 이백자)
+    h.d.start()
+    h.d.set_level("전문가")
+    h.d.abort()
+    h.d.next()
+    h.warnings.clear()
+    h.ended("mc", "c2")                # 도슨트 해설(`role="docent"`)이 나가는 자리
+    assert h.says()[-1] == ("docent", 이백자)
+    assert "[c2] 생성 결과가 너무 짧다(200자, 하한 260자) — 그대로 쓴다" in h.warnings, h.warnings
+
+
+def test_새_큐의_생성은_생성기를_새_수준으로_바꾼_뒤에_띄운다(monkeypatch):
+    """훅을 `_spawn_generate` 뒤에 부르면 새 큐의 도슨트 해설이 **옛 수준의 페르소나**
+    (역할·분량 프롬프트)로 새 수준의 지시문을 받는다. 스레드 시작 시점에 따라 나기도
+    안 나기도 하는 경합이라, 스레드를 그 자리에서 돌려(`_즉시`) 결정적으로 본다."""
+    import types
+
+    import stage.director as director_mod
+
+    class _즉시:
+        def __init__(self, target, args=(), daemon=None):
+            self._run = lambda: target(*args)
+
+        def start(self):
+            self._run()
+
+    monkeypatch.setattr(director_mod, "threading", types.SimpleNamespace(
+        Thread=_즉시, Lock=threading.Lock, Event=threading.Event,
+    ))
+    현재 = {"수준": "중고등"}
+    seen: list[tuple[str, str]] = []
+
+    def gen(role, brief, hist):
+        seen.append((현재["수준"], brief))
+        return "해설"
+
+    h = Harness(
+        sheet=_수준_시트(), level_name="중고등", generate=gen, levels=dict(_수준_하한),
+        on_level_change=lambda name: 현재.__setitem__("수준", name),
+    )
+    h.d.start()
+    h.d.set_level("초등")
+    h.d.abort()
+    h.d.next()
+    assert seen == [("중고등", "c1 중고등 해설"), ("초등", "c2 초등 해설")]
+
+
+def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시작한다():
+    """훅 예외를 그대로 올리면 대기가 남아 **큐를 시작할 때마다** 같은 예외가 난다 —
+    침묵 자동 진행은 커서를 옮긴 뒤 `_begin_cue` 에서 터지므로 시연이 그 자리에서
+    굳는다. 곁다리 기능(수준 전환)의 실패가 진행을 막으면 안 된다: 소리 내고, 대기를
+    버리고, 옛 수준으로 간다(브리프·생성기·하한이 한 수준으로 맞는 상태)."""
+    def 터지는_훅(name):
+        raise RuntimeError("페르소나 없음")
+
+    h = Harness(
+        sheet=_수준_시트(), level_name="중고등", levels=dict(_수준_하한),
+        on_level_change=터지는_훅,
+        mc_lines={cache_key("c2", "중고등", "c2 중고등 진행"): "중고등용 c2 여는 대사"},
+    )
+    h.d.start()
+    h.d.set_level("초등")
+    h.d.abort()
+    h.clear()
+    h.warnings.clear()
+    h.d.next()
+    assert h.says() == [("mc", "중고등용 c2 여는 대사")]
+    assert h.warnings == [
+        "관람객 수준 초등 전환 실패(RuntimeError: 페르소나 없음) — 중고등 그대로 간다"
+    ]
+    assert _수준(h) == ("중고등", None)
+
+
+def test_수준_목록은_받은_순서대로_준다():
+    """페이지 버튼 순서다 — levels.yaml 순서(쉬운 것 → 어려운 것). 가나다순으로 정렬하면
+    일반·전문가·중고등·초등이 되어 버튼이 뒤섞인다."""
+    h = _수준_감독()
+    assert h.d.level_names() == ["초등", "중고등", "일반", "전문가"]
+
+
+def test_수준_목록을_받으면_전환_훅도_받아야_한다():
+    """목록만 흘러오고 훅이 빠지면 브리프·캐시 키·하한은 새 수준인데 생성기(페르소나)는
+    옛 수준으로 조용히 남는다 — 배선이 반쯤 끊긴 채 도는 것을 기동에서 막는다."""
+    with pytest.raises(ValueError, match="전환 훅"):
+        Director(
+            CueSheet([Cue("c1", "첫째", "m", "d", "partner")]),
+            generate=lambda r, b, h: "x", send=lambda r, c: None,
+            level_name="중고등", level_min_chars=dict(_수준_하한),
+        )
+
+
+def test_지금_수준이_수준_목록에_없으면_기동에서_막는다():
+    with pytest.raises(ValueError, match="수준 목록에 없다"):
+        Director(
+            CueSheet([Cue("c1", "첫째", "m", "d", "partner")]),
+            generate=lambda r, b, h: "x", send=lambda r, c: None,
+            level_name="유치원", level_min_chars=dict(_수준_하한),
+            on_level_change=lambda name: None,
+        )

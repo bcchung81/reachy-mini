@@ -7,7 +7,8 @@
     REACHY_DOCENT_UNIT     도슨트 로봇의 hardware id
     REACHY_LLM_URL         추론 서버 (llm.py 의 기본값을 따른다)
     REACHY_CUES_PATH       큐시트 경로 (기본 data/cues.yaml)
-    REACHY_AUDIENCE_LEVEL  관람객 수준 — 초등/중고등/일반/전문가 (기본 일반)
+    REACHY_AUDIENCE_LEVEL  처음 관람객 수준 — 초등/중고등/일반/전문가 (기본 일반).
+                           시연 중에는 콘솔·대시보드 `l <수준>` 으로 바꾼다(다음 큐부터)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
     REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
     REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만.
@@ -127,6 +128,10 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     정해진 뒤에야 만들 수 있으므로 병렬이 아니라 파이프라인이다. 그래서
     클라이언트를 역할별로 둬도 락은 하나다.
 
+    이 함수는 **한 수준**의 생성기를 만든다(프롬프트·상한이 수준의 함수라서).
+    시연 중 수준을 바꾸면 수준마다 하나씩 생기는데(`LevelSwitch`), 그때 이 락은
+    생성기마다 따로다 — 수준을 가로지르는 직렬화는 `LevelSwitch` 의 락이 맡는다.
+
     페르소나는 이제 역할·수준의 함수다(`stage/prompts.py`) — 도슨트만
     기술하던 문자열 하나(`_system_prompt`, 이 함수가 지웠다) 대신
     [공통 규약 + 역할 + 수준] 세 조각을 역할별로 조립한다.
@@ -190,6 +195,61 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     return generate
 
 
+class LevelSwitch:
+    """관람객 수준별 생성기를 **필요할 때 한 번씩** 만들고, 지금 수준의 것으로 넘긴다.
+
+    시연 중 수준을 바꿀 수 있게 되면서(콘솔·대시보드 `l <수준>`) 생성기 하나로는
+    모자라게 됐다 — 페르소나 프롬프트(`build_system_prompt(role, level)`)와 분량
+    상한이 수준의 함수라서다. `Director` 에는 이 객체가 `generate` 로, `select` 가
+    `on_level_change` 로 간다. 감독이 큐를 시작할 때 대기 수준을 적용하며 `select`
+    를 부르고, 그 뒤 띄우는 생성이 새 수준의 생성기를 탄다.
+
+    **`select` 는 대입 하나다.** 감독이 `Director._lock` 을 쥔 채 부르는 훅이라
+    (`StageServer._send`·경고 콜백과 같은 규칙) 감독 상태를 읽거나 블로킹하면 안
+    된다. 그래서 새 수준 생성기를 거기서 만들지 않는다(페르소나 파일을 읽는다) —
+    처음 쓰일 때 생성 스레드에서, 락 밖에서 만든다. 이 객체의 락은 생성 스레드만
+    쥔다 — 감독 락과 얽히지 않는다.
+
+    **처음 수준은 기동에서 바로 만든다.** 지금까지의 기동과 같다: 페르소나 파일이
+    깨져 있으면 시연 전에 죽는다. 나머지 수준은 고르기 전에는 안 만든다 — 한 번도
+    안 쓰는 수준의 클라이언트를 들고 있을 이유가 없다. 늦게 만든 수준에서 페르소나가
+    깨져 있으면 그 예외가 감독의 "LLM 생성 실패 — 폴백" 경고로 드러난다(조용하지 않다).
+
+    **호출 전체를 락 하나로 묶는다 — 수준을 가로질러.** `build_generate` 의 직렬화
+    락은 생성기마다 따로라, 수준을 바꾼 직후 앞 큐(옛 수준)의 늦은 생성과 새 큐(새
+    수준)의 도슨트 해설이 동시에 LLM 에 간다. 앞 것은 어차피 세대 검사로 버려지는데
+    새 큐의 임계경로가 그것과 추론 서버를 나눠 쓴다. 한 락으로 두면 "LLM 호출은
+    한 번에 하나" 가 수준을 바꿔도 그대로다.
+
+    지금 수준 이름은 **호출 때** 읽는다. 앞 큐가 띄운 생성이 락을 기다리다 새 수준
+    생성기로 돌 수는 있다 — 그 결과는 감독이 큐를 시작하며 세 슬롯의 세대를 모두
+    올렸으므로 버려진다(`Director._apply_pending_level` 주석).
+    """
+
+    def __init__(self, levels: dict, first, build: Callable, warn: Callable[[str], None]) -> None:
+        self._levels = levels
+        self._build = build
+        # 늦게 만드는 생성기도 **같은 경고 출구**(tee)를 받는다 — `build` 의 기본값
+        # `print` 로 새면 수준을 바꾼 뒤에만 이름표·분량 상한 경고가 대시보드에서
+        # 빠진다(최종 리뷰 Y1 과 같은 자리).
+        self._warn = warn
+        self._gens = {first.name: build(first, warn=warn)}
+        self._name = first.name
+        self._lock = threading.Lock()
+
+    def select(self, name: str) -> None:
+        """`Director` 의 수준 전환 훅. **대입만 한다** — 위 docstring 참고."""
+        self._name = name
+
+    def __call__(self, role: str, brief: str, history: list[dict]) -> str:
+        with self._lock:
+            name = self._name
+            gen = self._gens.get(name)
+            if gen is None:
+                gen = self._gens[name] = self._build(self._levels[name], warn=self._warn)
+            return gen(role, brief, history)
+
+
 def announce_level(lv, explicit: bool) -> None:
     """어느 수준으로 도는지 기동 때 밝힌다.
 
@@ -221,7 +281,11 @@ def main() -> None:
     # `os.environ` 을 보게 하면 "무엇을 찍는지" 와 "무엇으로 도는지" 가
     # 서로 다른 조회에서 나와 갈릴 여지가 생긴다.
     explicit = bool(os.environ.get("REACHY_AUDIENCE_LEVEL", "").strip())
-    level = level_of_env(load_levels())
+    # 수준 **목록**도 이 한 번의 읽기에서 나온다 — 시연 중 전환(`l <수준>`)이 고를 수
+    # 있는 이름과 하한, 수준별 생성기의 재료가 다 여기서 간다. 처음 수준은 여전히
+    # `REACHY_AUDIENCE_LEVEL` 이다.
+    levels = load_levels()
+    level = level_of_env(levels)
     announce_level(level, explicit)  # 수준이 잘못됐으면 이미 위에서 죽었다.
     host = os.environ.get("REACHY_DIRECTOR_HOST", "0.0.0.0")
     port = int(os.environ.get("REACHY_DIRECTOR_PORT", "8777"))
@@ -273,10 +337,20 @@ def main() -> None:
     # 생성기 경고(화자 이름표를 걷었다·분량 상한에서 잘랐다)만 터미널에 남고
     # 대시보드 이력에서 빠진다(최종 리뷰 Y1) — 감독의 "질문 유도가 없다"·"너무
     # 짧다" 경고는 화면에 뜨는데 그 **원인**인 상한 경고는 안 보이는 꼴이다.
+    #
+    # **관람객 수준 실시간 전환**(콘솔·대시보드 `l <수준>`, 다음 큐부터). 생성기는
+    # 한 수준짜리 `build_generate` 대신 `LevelSwitch` — 처음 수준 것은 여기서 바로
+    # 만들고 나머지는 처음 쓸 때 한 번씩 만든다. 감독에는 셋이 같이 가야 한다:
+    # 전환기(`generate`), 그것을 돌리는 훅(`on_level_change`), 고를 수 있는 이름과
+    # 하한(`level_min_chars`). 하나라도 빠지면 반쪽 전환이다 — 훅이 빠지면 감독이
+    # 기동에서 막고, 목록이 빠지면 "모르는 수준" 경고만 뜬다.
+    generate = LevelSwitch(levels, level, build_generate, warn=warn)
     server = StageServer(
-        CueSheet(load_cues()), build_generate(level, warn=warn), expect_units=expect,
+        CueSheet(load_cues()), generate, expect_units=expect,
         mc_lines=mc_lines, level_name=level.name,
         docent_min_chars=level.min_chars,
+        level_min_chars={name: lv.min_chars for name, lv in levels.items()},
+        on_level_change=generate.select,
         warn=warn, hub=hub,
     )
     stop = threading.Event()

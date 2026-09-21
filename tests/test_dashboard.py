@@ -41,6 +41,11 @@ class 가짜감독:
         # 계약 모양 그대로 — `Director.cue_list()` 는 {id, title, topic} 을 준다.
         return [{"id": "07-maritime", "title": "해상무선통신", "topic": "타이타닉"}]
 
+    def level_names(self):
+        # levels.yaml 의 네 개가 아닌 **둘**을 준다 — hello 가 파일을 따로 읽지 않고
+        # 감독이 준 목록을 그대로 싣는지 가른다.
+        return ["초등", "전문가"]
+
     def abort(self):
         self.calls.append("abort")
 
@@ -127,6 +132,7 @@ def test_접속하면_큐목록_이력_스냅샷을_한번에_준다(dash):
         m = json.loads(ws.recv(timeout=3))
         assert m["kind"] == "hello"
         assert m["cues"] == [{"id": "07-maritime", "title": "해상무선통신", "topic": "타이타닉"}]
+        assert m["levels"] == ["초등", "전문가"]      # 헤더의 수준 버튼(감독이 준 순서 그대로)
         assert m["snapshot"]["cue_id"] == "07-maritime"
         assert [e["text"] for e in m["history"] if e["kind"] == "warn"] == ["먼저 난 경고"]
 
@@ -148,6 +154,18 @@ def test_버튼_명령은_콘솔과_같은_경로로_실행되고_결과가_모�
         ws.send(json.dumps({"cmd": "g 07-maritime"}))
         _recv_until(ws, "command")
     assert dash["d"].calls == ["abort", "next", "abort", ("goto", "07-maritime")]
+
+
+def test_수준_버튼_명령은_소문자로_바꿔도_한글_이름이_그대로_감독에_닿는다(dash):
+    """서버는 명령을 `.lower()` 한다(콘솔과 같게). 수준 이름은 한글이라 영향이 없어야
+    한다 — 이 계약이 깨지면 버튼을 눌러도 "모르는 수준" 경고만 뜬다."""
+    dash["d"].set_level = lambda name: dash["d"].calls.append(("set_level", name))
+    with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
+        json.loads(ws.recv(timeout=3))
+        ws.send(json.dumps({"cmd": "L 전문가"}))
+        r = _recv_until(ws, "command")
+        assert (r["cmd"], r["ok"]) == ("l 전문가", True)
+    assert dash["d"].calls == [("set_level", "전문가")]
 
 
 def test_한_화면에서_누른_명령이_다른_화면에도_보인다(dash):

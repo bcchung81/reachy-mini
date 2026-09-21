@@ -656,6 +656,178 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
     assert seen["dash"] == []
 
 
+# ── 관람객 수준 실시간 전환: 수준별 생성기 전환기(`LevelSwitch`)와 그 배선 ──────────
+
+
+def _가짜_생성기_공장(만든것: list, 받은_warn: list | None = None):
+    """`build_generate(level, warn)` 대역. 만든 수준을 순서대로 적고, 생성 결과에
+    수준 이름을 박아 **어느 수준의 생성기가 돌았는지** 문자열로 가른다."""
+    def build(level, warn=print):
+        만든것.append(level.name)
+        if 받은_warn is not None:
+            받은_warn.append(warn)
+        return lambda role, brief, history: f"{level.name}:{role}:{brief}"
+    return build
+
+
+def test_수준_전환기는_처음_수준만_바로_만들고_나머지는_처음_쓸_때_한_번씩_만든다():
+    """고르기(`select`)는 감독이 락을 쥔 채 부르는 훅이다 — 거기서 생성기를 만들면
+    (페르소나 파일 읽기) 락 안에서 파일 I/O 를 한다. 만드는 일은 첫 생성 때 생성
+    스레드에서, 수준마다 한 번만. 처음 수준은 기동에서 바로 만든다 — 페르소나가
+    깨져 있으면 시연 전에 죽는 편이 낫다(지금까지의 기동과 같다)."""
+    levels = load_levels()
+    만든것: list[str] = []
+    받은: list = []
+
+    def 경고(m):
+        pass
+
+    sw = stage_main.LevelSwitch(levels, levels["중고등"], _가짜_생성기_공장(만든것, 받은), warn=경고)
+    assert 만든것 == ["중고등"]
+    assert sw("docent", "지시", []) == "중고등:docent:지시"
+    sw.select("전문가")
+    assert 만든것 == ["중고등"]
+    assert sw("mc", "받아치기", []) == "전문가:mc:받아치기"
+    assert sw("docent", "해설", []) == "전문가:docent:해설"
+    sw.select("중고등")
+    assert sw("docent", "다시", []) == "중고등:docent:다시"
+    assert 만든것 == ["중고등", "전문가"]
+    # 나중에 만든 생성기도 같은 경고 출구(tee)를 받는다 — 기본값 print 로 새면 이름표·
+    # 분량 상한 경고가 수준을 바꾼 뒤에만 대시보드에서 빠진다(최종 리뷰 Y1 과 같은 자리).
+    assert 받은 == [경고, 경고]
+
+
+def test_수준_전환기는_수준이_달라도_LLM_호출을_하나씩만_보낸다():
+    """`build_generate` 의 직렬화 락은 생성기마다 하나다. 수준별로 생성기를 따로 두면
+    앞 큐(옛 수준)의 늦은 생성과 새 큐(새 수준)의 도슨트 해설이 **동시에** LLM 에
+    간다 — 새 큐의 임계경로가 버려질 생성과 추론 서버를 나눠 쓴다. 전환기가 호출
+    전체를 한 락으로 묶는다(`test_LLM_호출이_직렬화된다` 와 같은 불변식)."""
+    levels = load_levels()
+    순서: list[str] = []
+    앞이_도는_중 = threading.Event()
+    놓아라 = threading.Event()
+    새것_시작 = threading.Event()
+
+    def build(level, warn=print):
+        def gen(role, brief, history):
+            순서.append(f"{level.name} 시작")
+            if level.name == "중고등":
+                앞이_도는_중.set()
+                놓아라.wait(3)
+            else:
+                새것_시작.set()
+            순서.append(f"{level.name} 끝")
+            return "x"
+        return gen
+
+    sw = stage_main.LevelSwitch(levels, levels["중고등"], build, warn=print)
+    앞 = threading.Thread(target=sw, args=("docent", "앞 큐", []))
+    앞.start()
+    assert 앞이_도는_중.wait(3)
+    sw.select("전문가")
+    새 = threading.Thread(target=sw, args=("docent", "새 큐", []))
+    새.start()
+    새것_시작.wait(0.3)      # 직렬화가 깨졌으면 새 생성이 여기서 앞 생성 도중에 시작한다
+    놓아라.set()
+    앞.join(3)
+    새.join(3)
+    assert 순서 == ["중고등 시작", "중고등 끝", "전문가 시작", "전문가 끝"]
+
+
+def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_넘긴다(monkeypatch):
+    """배선 하나라도 빠지면 `l` 이 반쯤만 돈다: 하한 목록이 빠지면 네 수준 중 지금
+    것만 알아 나머지는 "모르는 수준", 훅이 빠지면 감독이 기동에서 막고(ValueError),
+    전환기 대신 한 수준 생성기를 넘기면 페르소나가 처음 수준에 굳는다.
+    처음 수준은 기본값("일반")이 아닌 "초등"(함정 ③)."""
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
+    만든것: list[str] = []
+    monkeypatch.setattr(stage_main, "build_generate", _가짜_생성기_공장(만든것))
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
+    seen: dict = {}
+
+    class _멈춤(Exception):
+        pass
+
+    def fake_server(sheet, generate, **kw):
+        seen.update(kw, generate=generate)
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", fake_server)
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    assert list(seen["level_min_chars"].items()) == [
+        ("초등", 70), ("중고등", 120), ("일반", 180), ("전문가", 260),
+    ]
+    assert seen["generate"]("docent", "지시", []) == "초등:docent:지시"
+    seen["on_level_change"]("전문가")
+    assert seen["generate"]("docent", "지시", []) == "전문가:docent:지시"
+    assert 만든것 == ["초등", "전문가"]
+
+
+_수준_큐시트 = """\
+- id: c1
+  title: 첫째
+  mc: 원문 c1
+  docent_brief: 옛 지시
+  gaze: partner
+  briefs:
+    초등: {mc_brief: 초등 진행, docent_brief: 초등 해설}
+    중고등: {mc_brief: 중고등 진행, docent_brief: 중고등 해설}
+    일반: {mc_brief: 일반 진행, docent_brief: 일반 해설}
+    전문가: {mc_brief: 전문가 진행, docent_brief: 전문가 해설}
+"""
+
+
+def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkeypatch, tmp_path):
+    """대장 「`Director` 생성자 인자를 늘려도 배선 두 단계를 같이 안 고치면 늘 기본값으로
+    죽는다」 — `main()` → **진짜** `StageServer` → **진짜** `Director` 를 한 줄로 잇는다.
+    두 단계 중 어디서 `level_min_chars`/`on_level_change` 를 빠뜨려도 여기서 깨진다
+    (목록이 빠지면 "전문가" 가 모르는 수준, 훅이 빠지면 감독 생성에서 ValueError).
+    소켓·콘솔은 안 띄운다 — 진짜 서버를 만든 직후 멈춘다."""
+    cues = tmp_path / "cues.yaml"
+    cues.write_text(_수준_큐시트, encoding="utf-8")
+    monkeypatch.setenv("REACHY_CUES_PATH", str(cues))
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
+    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
+    만든것: list[str] = []
+    불린것: list[tuple[str, str, str]] = []
+    해설_받음 = threading.Event()
+
+    def build(level, warn=print):
+        만든것.append(level.name)
+
+        def gen(role, brief, history):
+            불린것.append((level.name, role, brief))
+            해설_받음.set()
+            return "해설"
+        return gen
+
+    monkeypatch.setattr(stage_main, "build_generate", build)
+    진짜 = stage_main.StageServer
+    seen: dict = {}
+
+    class _멈춤(Exception):
+        pass
+
+    def 붙잡기(*a, **kw):
+        seen["server"] = 진짜(*a, **kw)
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", 붙잡기)
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    d = seen["server"].director
+    assert d.level_names() == ["초등", "중고등", "일반", "전문가"]
+    d.set_level("전문가")
+    d.start()            # 로봇이 없어 say 는 "아직 붙지 않았다" 로 버려진다 — 생성만 본다
+    assert 해설_받음.wait(2.0), 불린것
+    assert 불린것 == [("전문가", "docent", "전문가 해설")]
+    assert 만든것 == ["초등", "전문가"]
+    assert d.snapshot()["level"] == "전문가"
+
+
 @pytest.mark.parametrize("빈값", ["", "   "])
 def test_대시보드_주소가_비어_있으면_모든_망이_아니라_노트북에서만_열고_경고한다(monkeypatch, capsys, 빈값):
     """`REACHY_DASHBOARD_HOST=` (빈 값) 은 `os.environ.get(…, 기본값)` 을 지나 빈 문자열로

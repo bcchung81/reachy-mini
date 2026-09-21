@@ -28,6 +28,8 @@ class StageServer:
         level_name: str = "일반",
         docent_min_chars: int = MIN_CHARS,
         hub=None,
+        level_min_chars: dict[str, int] | None = None,
+        on_level_change: Callable[[str], None] | None = None,
     ) -> None:
         self._warn = warn
         self._conns: dict[str, object] = {}
@@ -41,11 +43,19 @@ class StageServer:
         # `Director` 는 늘 기본값(빈 캐시·"일반"·40자)으로 돌고, `main()` 이
         # 아무리 제대로 읽어도 이 자리에서 끊긴다. `stage/__main__.py::main()`
         # 이 이 값들을 채워 넘긴다.
+        #
+        # `level_min_chars`/`on_level_change`(관람객 수준 실시간 전환)도 같은 길이다.
+        # 둘 중 목록만 닿고 훅이 빠지면 `Director` 가 기동에서 ValueError 로 막는다 —
+        # 반쯤 끊긴 배선으로 도는 것보다 낫다. `main()` → 여기 → `Director` 한 줄은
+        # `tests/test_stage_main.py::test_main_에서_감독까지_수준_전환이_끝까지_이어진다`
+        # 가 지킨다.
         self.director = Director(
             sheet, generate=generate, send=self._send,
             expect_units=expect_units, warn=warn,
             mc_lines=mc_lines, level_name=level_name,
             docent_min_chars=docent_min_chars,
+            level_min_chars=level_min_chars,
+            on_level_change=on_level_change,
         )
 
     def _publish(self, kind: str, **fields) -> None:

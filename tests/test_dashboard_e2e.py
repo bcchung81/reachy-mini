@@ -102,3 +102,50 @@ def test_대시보드의_s_가_진짜_감독을_돌려_사회자_say_와_발화_
     # 대시보드는 기동 안내 한 줄 말고는 아무 경고도 안 냈다(송신 실패·거절·큐 넘침 없음).
     # 위의 단언들이 "페이지에 닿았다" 의 짝이다.
     assert len(대시보드_경고) == 1 and 대시보드_경고[0].startswith("대시보드 — http://127.0.0.1:"), 대시보드_경고
+
+
+def test_대시보드의_수준_버튼이_진짜_감독에서_대기로_보였다가_s_에서_적용된다():
+    """관람객 수준 전환의 페이지 계약 — `hello.levels`, `snapshot.level`/`level_pending`,
+    명령 `l <수준>`, 그리고 페이지 로그에 남는 경고 두 줄. 페이지가 읽는 바로 그 필드를
+    진짜 감독에서 뽑는다(가짜 감독과만 맞춘 필드 이름은 바뀌어도 아무도 모른다).
+
+    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③). 로봇은 붙이지 않는다 — `s` 의
+    say 는 "아직 붙지 않았다" 로 버려지지만 큐 시작(= 수준 적용)은 그대로 일어난다."""
+    hub = DashboardHub()
+    warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
+    훅: list[str] = []
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 여는 대사", "도슨트 지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 해설",
+        warn=warn, hub=hub, level_name="중고등", docent_min_chars=120,
+        level_min_chars={"초등": 70, "중고등": 120, "일반": 180, "전문가": 260},
+        on_level_change=훅.append,
+    )
+    대시보드_경고: list[str] = []
+
+    with contextlib.ExitStack() as 정리:
+        dash = start_dashboard(hub, server.director, "127.0.0.1", 0, warn=대시보드_경고.append)
+        assert dash is not None, 대시보드_경고
+        정리.callback(dash.shutdown)
+        dport = dash.socket.getsockname()[1]
+        page = 정리.enter_context(connect(
+            f"ws://127.0.0.1:{dport}/ws", origin=f"http://127.0.0.1:{dport}", open_timeout=3,
+        ))
+        hello = json.loads(page.recv(timeout=3))
+        assert hello["levels"] == ["초등", "중고등", "일반", "전문가"]
+        assert (hello["snapshot"]["level"], hello["snapshot"]["level_pending"]) == ("중고등", None)
+
+        page.send(json.dumps({"cmd": "l 전문가"}))
+        w = _recv_until(page, lambda m: m["kind"] == "warn" and "다음 큐부터" in m["text"])
+        assert w["text"] == "관람객 수준 중고등 → 전문가 — 다음 큐부터 적용(바로 하려면 r)"
+        # 경고는 감독이 대기를 세운 **뒤** 락 안에서 실린다 — 그 뒤 첫 스냅샷은 대기를 보인다.
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
+        assert (snap["level"], snap["level_pending"]) == ("중고등", "전문가")
+
+        page.send(json.dumps({"cmd": "s"}))
+        w = _recv_until(page, lambda m: m["kind"] == "warn" and "바꿨다" in m["text"])
+        assert w["text"] == "관람객 수준을 전문가(으)로 바꿨다 — c1 부터"
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
+        assert (snap["level"], snap["level_pending"]) == ("전문가", None)
+
+    assert 훅 == ["전문가"]

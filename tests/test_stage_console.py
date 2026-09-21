@@ -18,15 +18,17 @@ from stage.machine import State, TurnError
 
 
 class Harness:
-    def __init__(self):
+    def __init__(self, sheet=None, **director_kw):
+        """`director_kw` 는 수준 전환(`l`)을 보는 테스트만 넘긴다(수준·캐시·훅)."""
         self.sent: list[tuple[str, str, dict]] = []
         self.all_sent: list[tuple[str, str, dict]] = []
         self.warnings: list[str] = []
         self.out: list[str] = []
-        sheet = CueSheet([
-            Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
-            Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience"),
-        ])
+        if sheet is None:
+            sheet = CueSheet([
+                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
+                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience"),
+            ])
         self.d = Director(
             sheet,
             generate=lambda role, brief, history: "도슨트 대사",
@@ -35,6 +37,7 @@ class Harness:
                 self.all_sent.append((role, cmd.type, cmd.fields)),
             ),
             warn=self.warnings.append,
+            **director_kw,
         )
 
     def seq_of(self, cue_id):
@@ -267,3 +270,55 @@ def test_dispatch_는_콘솔과_같은_n_경로다():
 
     console.dispatch(가짜감독(), "n", out=lambda m: None)
     assert calls == ["abort", "next"]
+
+
+def test_l_은_수준을_감독에_넘기고_진행을_멈추지_않는다():
+    """적용이 다음 큐라서 지금 발화를 끊을 이유가 없다 — `n`·`g` 와 달리 `abort()` 하지
+    않는다. 수준 이름 검증은 감독이 한다(경고 문구를 한 곳에 둔다, `g` 와 같은 이유)."""
+    import stage.console as console
+    calls = []
+
+    class 가짜감독:
+        def abort(self):
+            calls.append("abort")
+
+        def set_level(self, name):
+            calls.append(("set_level", name))
+
+    console.dispatch(가짜감독(), "l  초등 ", out=lambda m: None)
+    assert calls == [("set_level", "초등")]
+
+
+def test_도움말에_l_이_있다():
+    """운영자가 존재를 모르는 손잡이는 없는 것과 같다 — 언제 적용되는지까지 보여야
+    누르고 나서 "왜 안 바뀌지" 를 안 한다."""
+    h = Harness()
+    h.run(["?", "q"])
+    assert any("l <수준>  관람객 수준 바꾸기(다음 큐부터)" in m for m in h.out), h.out
+
+
+def test_l_뒤_r_은_대기_수준을_바로_적용한다():
+    """사용자 결정 — 바로 적용하려면 "이 큐 다시(R)". `r` 은 abort + start 라
+    `_begin_cue` 를 지나므로 같은 큐가 새 수준의 여는 대사(캐시)로 다시 열린다.
+    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③)."""
+    from stage.mc_cache import cache_key
+
+    def 브리프(수준):
+        return {"mc_brief": f"{수준} 진행", "docent_brief": f"{수준} 해설"}
+
+    sheet = CueSheet([
+        Cue("c1", "첫째", "원문 c1", "옛 지시", "partner",
+            briefs={n: 브리프(n) for n in ("초등", "중고등", "일반", "전문가")}),
+    ])
+    훅: list[str] = []
+    h = Harness(
+        sheet=sheet, level_name="중고등", docent_min_chars=120,
+        mc_lines={cache_key("c1", "초등", "초등 진행"): "초등용 c1 여는 대사"},
+        level_min_chars={"초등": 70, "중고등": 120, "일반": 180, "전문가": 260},
+        on_level_change=훅.append,
+    )
+    h.run(["s", "l 초등", "r", "q"])
+    assert [t for _, t in h.says()] == ["원문 c1", "초등용 c1 여는 대사"]
+    assert 훅 == ["초등"]
+    assert "관람객 수준을 초등(으)로 바꿨다 — c1 부터" in h.warnings, h.warnings
+    assert h.d.snapshot()["level"] == "초등"
