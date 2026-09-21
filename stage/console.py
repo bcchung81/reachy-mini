@@ -78,8 +78,18 @@ def dispatch(director: Director, cmd: str, out) -> None:
         director.abort()
     elif cmd.startswith("g "):
         # 대시보드 런다운의 이동. `n`·`p`·`r` 과 같은 모양으로 먼저 멈춘다.
-        director.abort()
-        director.goto(cmd[2:].strip())
+        #
+        # **단, 아는 큐일 때만 멈춘다.** 무조건 멈추면 말하는 도중의 오타(`g c9`)가
+        # 발화를 끊고 IDLE 에 남긴다 — 이동은 안 됐는데 시연만 멈춘 꼴이다.
+        # 모르는 id 도 `goto` 에 넘긴다: 경고 문구를 한 곳(`Director.goto`)에만
+        # 두기 위해서고, `goto` 가 모르는 id 를 발화 검사보다 먼저 보므로 말하는
+        # 중이어도 거절 대신 경고 한 줄로 끝난다. id 확인에 `cue_list()` 를 쓰는
+        # 것은 대시보드가 이미 쓰는 공개 조회라 가짜 감독이 새 메서드를 흉내 낼
+        # 필요가 없어서다.
+        cue_id = cmd[2:].strip()
+        if any(c["id"] == cue_id for c in director.cue_list()):
+            director.abort()
+        director.goto(cue_id)
     elif cmd == "?":
         out(HELP)
     elif cmd:

@@ -710,16 +710,22 @@ class Director:
         콘솔 `g` 가 `n`·`p`·`r` 처럼 먼저 `abort()` 한다. **커서를 옮기기 전에
         거절한다**: `previous()` 는 커서를 먼저 옮긴 뒤 `_begin_cue` 에서 거절당해
         커서만 움직인 채 남을 수 있는데, 이 메서드에는 그 틈을 만들지 않는다.
+
+        **모르는 id 를 발화 여부보다 먼저 본다.** 콘솔 `g` 는 id 를 모르면 시연을
+        멈추지 않고(오타 한 번이 발화를 끊으면 안 된다) 여기로 넘겨 경고만 받는다
+        — 순서가 반대면 말하는 도중의 오타가 "먼저 a 로 멈춘다" 는 엉뚱한 거절로
+        나가고 무엇을 잘못 쳤는지는 아무 데도 안 남는다. 둘 다 상태를 건드리기
+        전에 끝나므로 순서를 바꿔도 "커서를 옮기기 전에 거절" 은 그대로다.
         """
         with self._lock:
-            if self._machine.state in SPEAKING:
-                raise TurnError(
-                    f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
-                )
             i = self._sheet.find(cue_id)
             if i is None:
                 self._warn(f"모르는 큐다: {cue_id!r} — 이동하지 않는다")
                 return
+            if self._machine.state in SPEAKING:
+                raise TurnError(
+                    f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
+                )
             self._begin_cue(self._sheet.seek(i))
 
     def cue_list(self) -> list[dict]:

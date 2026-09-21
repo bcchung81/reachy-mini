@@ -629,5 +629,16 @@ def test_seek_범위_밖이면_소리_내서_실패하고_커서는_그대로다
     assert s.index == 1
 
 
+def test_seek_음수도_범위_밖이다():
+    """파이썬 음수 색인을 그대로 받으면 `seek(-1)` 이 **마지막 큐**를 조용히
+    시작한다 — 호출자의 계산 실수가 마무리 인사로 둔갑한다. 위로만 막으면 이
+    쪽이 열린다."""
+    s = _시트3()
+    s.seek(1)
+    with pytest.raises(IndexError):
+        s.seek(-1)
+    assert s.index == 1
+
+
 def test_cues_는_전체를_순서대로_준다():
     assert [c.id for c in _시트3().cues()] == ["a", "b", "c"]

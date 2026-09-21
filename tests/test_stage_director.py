@@ -2453,6 +2453,36 @@ def test_스냅샷은_현재_큐와_상태와_수준을_준다():
     assert s["rejected"] == []
 
 
+# 아래 셋은 위 테스트가 **기본값으로만** 단언한 칸(함정 3)을 기본값이 아닌 값으로
+# 다시 본다 — `"solo_role": None`·`"rejected": []`·`"speaking_role": "mc"` 처럼
+# 상수로 박아도 위 테스트는 통과한다.
+
+
+def test_스냅샷은_한_대만_붙으면_그_역할을_1인_모드로_준다():
+    h = Harness()
+    h.d.on_connect("mc")
+    s = h.d.snapshot()
+    assert s["connected"] == ["mc"]
+    assert s["solo_role"] == "mc"
+
+
+def test_스냅샷은_거부된_역할을_준다():
+    """`start()` 를 부르지 않는다 — 거부가 있으면 시작이 거절되는데, 운영자는
+    바로 그때 대시보드에서 **무엇이** 거부됐는지 봐야 한다."""
+    h = Harness()
+    h.d.reject("docent", "unit_id 가 다르다.")
+    s = h.d.snapshot()
+    assert s["rejected"] == ["docent"]
+
+
+def test_스냅샷은_도슨트가_말하는_중이면_도슨트를_준다():
+    h = Harness()
+    h.d.start()
+    h.ended("mc", "c1")                       # 사회자 → 도슨트 핸드오프
+    s = h.d.snapshot()
+    assert (s["state"], s["speaking_role"]) == ("docent_speaking", "docent")
+
+
 def test_스냅샷의_침묵_남은_시간은_듣는_중에만_센다():
     """`test_침묵이_한도를_넘으면_다음_큐로_간다` 의 준비 과정을 그대로 따라
     LISTENING + 침묵 기한이 걸린 상태를 만든 뒤, 시계를 3초 민다.
@@ -2493,14 +2523,46 @@ def test_큐_목록은_주제가_있으면_제목과_따로_준다():
     assert h.d.cue_list() == [{"id": "a", "title": "짧은이름", "topic": "긴 주제 문장"}]
 
 
+def _시트3():
+    """이웃하지 않은 큐로 뛰어 볼 수 있는 3큐 시트. 기본 2큐 시트에서는 어디로
+    뛰든 이웃이라 `goto` 가 `seek` 대신 `advance()`/`back()` 을 불러도 통과한다."""
+    return CueSheet([
+        Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
+        Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience"),
+        Cue("c3", "셋째", "사회자 셋째 대사", "셋째 지시", "partner"),
+    ])
+
+
+def _say_ids(h):
+    return [f["cue_id"] for _, t, f in h.sent if t == "say"]
+
+
 def test_goto_는_그_큐의_여는_대사부터_다시_시작한다():
-    h = Harness()
+    """c1 → c3 — 한 칸 건너뛴다. `advance()` 로 바꾸면 c2 가 시작된다."""
+    h = Harness(sheet=_시트3())
     h.d.start()
     h.d.abort()
     h.clear()
-    h.d.goto("c2")
-    assert h.says() == [("mc", "사회자 둘째 대사")]
-    assert h.d.snapshot()["cue_id"] == "c2"
+    h.d.goto("c3")
+    assert h.says() == [("mc", "사회자 셋째 대사")]
+    assert _say_ids(h) == ["c3"]
+    s = h.d.snapshot()
+    assert (s["cue_id"], s["cue_index"]) == ("c3", 2)
+
+
+def test_goto_는_뒤로도_건너뛴다():
+    """c3 → c1 — 뒤로 두 칸. `back()` 으로 바꾸면 c2, `advance()` 면 마지막
+    큐라 아무 데도 못 간다. 이전·다음 버튼과 다른 길이라는 것을 여기서 못박는다."""
+    h = Harness(sheet=_시트3())
+    h.d.start()
+    h.d.abort()
+    h.d.goto("c3")
+    h.d.abort()
+    h.clear()
+    h.d.goto("c1")
+    assert h.says() == [("mc", "사회자 첫 대사")]
+    assert _say_ids(h) == ["c1"]
+    assert h.d.snapshot()["cue_id"] == "c1"
 
 
 def test_goto_는_말하는_중이면_커서를_옮기기_전에_거절한다():
@@ -2520,3 +2582,18 @@ def test_goto_모르는_큐는_경고하고_아무것도_하지_않는다():
     h.d.goto("없는큐")
     assert h.says() == []
     assert any("모르는 큐" in w for w in h.warnings), h.warnings
+
+
+def test_goto_모르는_큐는_말하는_중이어도_경고만_하고_거절하지_않는다():
+    """모르는 id 는 발화 여부보다 **먼저** 본다. 콘솔 `g` 는 id 를 모르면 멈추지
+    않고 `goto` 에 넘겨 경고만 받는다 — 여기서 발화 중이라고 TurnError 가
+    나면 운영자는 "말하는 중이다, 먼저 a 로 멈춘다" 는 엉뚱한 안내를 받고
+    오타는 아무 데도 안 찍힌다."""
+    h = Harness()
+    h.d.start()                              # 사회자가 c1 을 말하는 중
+    h.clear()
+    h.warnings.clear()
+    h.d.goto("c9")
+    assert h.d.state is State.MC_SPEAKING
+    assert h.sent == []
+    assert len(h.warnings) == 1 and "c9" in h.warnings[0], h.warnings

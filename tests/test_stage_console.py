@@ -225,6 +225,9 @@ def test_g_는_먼저_멈추고_그_큐로_간다():
     calls = []
 
     class 가짜감독:
+        def cue_list(self):
+            return [{"id": "07-maritime", "title": "해상무선통신", "topic": "해상무선통신"}]
+
         def abort(self):
             calls.append("abort")
 
@@ -233,6 +236,22 @@ def test_g_는_먼저_멈추고_그_큐로_간다():
 
     console.dispatch(가짜감독(), "g 07-maritime", out=lambda m: None)
     assert calls == ["abort", ("goto", "07-maritime")]
+
+
+def test_g_의_모르는_큐는_진행_중인_시연을_멈추지_않는다():
+    """오타 한 번이 시연을 멈추면 안 된다. 예전에는 `abort()` 를 먼저 불러
+    사회자가 말하는 도중에 `g c9` 를 치면 발화가 끊기고 IDLE 에 남았다 —
+    이동은 안 됐는데 시연만 멈춘 꼴이다."""
+    import stage.console as console
+
+    h = Harness()
+    h.d.start()                              # 사회자가 c1 을 말하는 중
+    h.sent.clear()
+    h.warnings.clear()
+    console.dispatch(h.d, "g c9", out=h.out.append)
+    assert h.d.state is State.MC_SPEAKING
+    assert [(r, t) for r, t, _ in h.sent] == []          # abort 도 say 도 안 나갔다
+    assert len(h.warnings) == 1 and "c9" in h.warnings[0], h.warnings
 
 
 def test_dispatch_는_콘솔과_같은_n_경로다():
