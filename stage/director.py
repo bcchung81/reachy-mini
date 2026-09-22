@@ -591,7 +591,7 @@ class Director:
             # 해설 갈래에서만 세운다 — `:qa`(질문 응답) 뒤에는 받아치지 않으므로
             # 그 자리에서 생성을 띄우면 아무도 안 읽는 LLM 호출만 남는다.
             after_of: Cue | None = None
-            if cue_id == cue.id:
+            if cue_id == cue.id and not self._points:
                 # 수준별 브리프를 쓴다(계획 보완 Step 5b) — 옛 `cue.docent_brief`
                 # 를 그대로 두면 여기 폴백만 수준을 안 따라, 사전 생성이 늦어
                 # 유예시간을 넘길 때마다 초등이든 전문가든 같은 문장이 나간다.
@@ -601,6 +601,71 @@ class Director:
                 )
                 if cue.mc_after:
                     after_of = cue
+            elif cue_id == cue.id and self._points:
+                # 오프닝이 끝났다 — point0 답(이미 `_begin_cue` 가 스폰해 둔 슬롯)을
+                # 기다린다. 폴백은 포인트 원문이다: 지시문 전문을 읽는 것보다
+                # 포인트 한 줄을 읽는 쪽이 이 자리에서 덜 이상하다.
+                min_chars, _, _ = self._point_budget()
+                label0 = self._point_label(cue, 0)
+                pending = _Pending(
+                    "docent", "docent", label0, self._points[0], FB_BRIEF, label0,
+                    min_chars=min_chars,
+                )
+                if label0 == f"{cue.id}:docent" and cue.mc_after:
+                    after_of = cue  # 포인트가 1개뿐이면 이게 곧 마지막이다
+            elif (
+                cue_id.startswith(f"{cue.id}:pt")
+                and cue_id.endswith(":docent")
+                and cue_id != f"{cue.id}:docent"
+            ):
+                # **포인트 i(마지막 아님)의 도슨트 답이 끝났다 — 다음 포인트로.**
+                # 사회자가 짧은 다리 대사로 넘기고, 그 대사가 재생되는 동안
+                # 다음 포인트 답을 만든다(여는 대사가 첫 답의 시간을 사는 것과
+                # 같은 구조). 여기서는 기다릴 것이 없으므로 락을 놓지 않고
+                # 곧바로 내보낸다.
+                i = self._point_i
+                next_i = i + 1
+                next_point = self._points[next_i]
+                bridge_key = cache_key(cue.id, self._level_name, next_point)
+                bridge_text = self._mc_lines.get(bridge_key, "")
+                if not bridge_text:
+                    # 여는 대사 캐시와 같은 규칙 — 조용히 물러나지 않는다.
+                    # 키를 찍어 둬야 "사전 생성을 안 돌렸다" 와 "포인트 문구를
+                    # 고쳐 해시가 바뀌었다" 를 로그에서 가를 수 있다.
+                    self._warn(
+                        f"[{cue.id}:pt{next_i}] 다리 대사 캐시가 없다"
+                        f"({self._level_name}, key={bridge_key!r}) — 포인트 원문으로 잇는다"
+                    )
+                    bridge_text = next_point
+                self._point_i = next_i
+                # 이력에 **먼저** 넣고 생성을 띄운다 — 생성 스레드는
+                # `list(self.history)` 를 찍어가므로 순서가 바뀌면 도슨트가
+                # 방금 넘겨받은 말을 못 본 채 다음 답을 만든다(`_begin_cue`
+                # 의 `_remember` → `_spawn_generate` 순서와 같은 이유).
+                self._remember(f"사회자: {bridge_text}")
+                next_label = self._point_label(cue, next_i)
+                self._spawn_generate("docent", "docent", next_point, next_point, next_label)
+                self._emit(
+                    cmds
+                    + self._machine.speak(
+                        self._who("mc"), f"{cue.id}:pt{next_i}", bridge_text, gaze="audience",
+                    )
+                )
+                return
+            elif cue_id.startswith(f"{cue.id}:pt") and not cue_id.endswith(":docent"):
+                # 사회자의 다리 대사(포인트 i, i>=1)가 끝났다 — 위 갈래가 이미
+                # 띄워 둔 포인트 i 도슨트 답을 기다린다. 이 갈래는 `return`
+                # 하지 않는다: 아래 공용 대기·세대 검사 구간으로 떨어져야
+                # 한다(해설 갈래와 같은 길).
+                i = self._point_i
+                min_chars, _, _ = self._point_budget()
+                label_i = self._point_label(cue, i)
+                pending = _Pending(
+                    "docent", "docent", label_i, self._points[i], FB_BRIEF, label_i,
+                    min_chars=min_chars,
+                )
+                if label_i == f"{cue.id}:docent" and cue.mc_after:
+                    after_of = cue  # 이 포인트가 마지막이다 — 받아치기를 띄울 자리
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다.
                 # 그 답이 끝나면 아래 `:qa` 갈래가 사회자에게 한 번 더 묻게 한다.
@@ -1163,6 +1228,36 @@ class Director:
         self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
+    def _point_label(self, cue: Cue, i: int) -> str:
+        """포인트 i 도슨트 답의 발화 id. **마지막 포인트는 항상 종단 라벨**
+        (`f"{cue.id}:docent"`)을 써서 기존 받아치기 분기가 그대로 받게 한다.
+
+        이 한 줄이 이 기능 전체를 안전하게 만든다. 마지막 답이 다른 라벨을
+        쓰면 `on_speaking_ended` 의 `elif cue_id == f"{cue.id}:docent" and
+        cue.mc_after:` 와 그 아래(`_spawn_after`·관람객 창구 안내·침묵 기한)가
+        전부 포인트용으로 한 벌 더 복제돼야 한다 — 두 벌이 되는 순간 한쪽만
+        고쳐지는 자리가 된다. 포인트가 1개뿐이면 그 하나가 곧 마지막이라
+        기존 단일 라운드와 **완전히 같은 모양**이 된다.
+        """
+        if i == len(self._points) - 1:
+            return f"{cue.id}:docent"
+        return f"{cue.id}:pt{i}:docent"
+
+    def _point_budget(self) -> tuple[int, int, int]:
+        """(min_chars, max_sentences, max_chars) — 지금 수준의 포인트 분량.
+        배선이 안 됐으면(빈 dict) 도슨트 전체 하한/상한으로 물러난다 — 안전한 기본값.
+
+        **`[...]` 로 직접 찾지 않는다.** `_level_point_min_chars`/`_level_point_max`
+        는 `_level_min_chars` 와 달리 생성자에서 수준 목록과 대조하지 않는 맨
+        dict 다 — 비어 있거나(대부분의 기존 테스트) 한 수준이 빠져 있으면
+        KeyError 가 나고, 그것은 시연 중 섹션 한가운데서 터진다.
+        """
+        min_chars = self._level_point_min_chars.get(self._level_name, self._docent_min_chars)
+        max_sentences, max_chars = self._level_point_max.get(
+            self._level_name, (10**9, 10**9)  # 사실상 무제한 — 배선 전 테스트를 안 깬다
+        )
+        return min_chars, max_sentences, max_chars
+
     def _begin_cue(self, cue: Cue) -> None:
         # **먼저 거절한다.** 발화 중이면 아래 `speak()` 가 TurnError 를 던지는데,
         # 그 전에 이력에 사회자 대사를 넣고 생성 스레드를 갈아끼우면 거절된
@@ -1228,7 +1323,21 @@ class Director:
         # 사회자 대사만 수준을 따르고 해설은 수준과 무관해진다(계획 보완
         # Step 5b). 폴백도 같은 값을 줘야 한다 — `brief_for` 가 브리프 없는
         # 섹션에서는 옛 `docent_brief` 를 돌려주므로 폴백 의미가 그대로다.
-        self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
+        # **포인트가 있으면 첫 포인트만 띄운다.** 한 섹션의 해설을 짧은 왕복
+        # N회로 쪼개는 것이 포인트 라운드다(설계 §2). 여기서 N개를 한꺼번에
+        # 띄우면 `stage/__main__.py::build_generate` 의 LLM 락을 두세 벌이
+        # 동시에 노려, 정작 임계경로(지금 나갈 첫 답)가 뒤로 밀린다
+        # (`_spawn_after` 주석과 같은 이유). 두 번째 포인트부터는 앞 포인트의
+        # 답이 끝나는 자리(`on_speaking_ended` 의 포인트 갈래)에서 띄운다 —
+        # 사회자의 다리 대사가 그 시간을 산다.
+        points = cue.points_for(self._level_name)
+        self._points = points
+        self._point_i = 0
+        if points:
+            label0 = self._point_label(cue, 0)
+            self._spawn_generate("docent", "docent", points[0], points[0], label0)
+        else:
+            self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
 
         # **받아치기 슬롯 둘은 큐가 바뀔 때마다 반드시 갈아끼운다.**
         #

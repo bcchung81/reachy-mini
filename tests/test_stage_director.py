@@ -3269,3 +3269,136 @@ def test_포인트_분량_dict를_안_주면_빈_dict다():
     h = Harness()
     assert h.d._level_point_min_chars == {}
     assert h.d._level_point_max == {}
+
+
+# ── 포인트 라운드 라우팅 (Task 5) ──────────────────────────────────────
+#
+# 한 섹션의 해설을 짧은 왕복 N회로 쪼갠다. **마지막 포인트의 도슨트 답은
+# 언제나 종단 라벨(`{cue.id}:docent`)** 이라 기존 받아치기 갈래가 그대로
+# 받는다 — 그 아래(받아치기 생성·관람객 창구 안내·침묵 기한)는 한 줄도
+# 안 바뀐다. 포인트가 없는 큐는 지금까지와 완전히 같은 길을 탄다.
+
+
+def _포인트_큐(points, mc_after="받아치기"):
+    return Cue(
+        "c1", "제목", "사회자 오프닝", "옛 지시문(폴백용)", "partner",
+        mc_after=mc_after,
+        briefs={
+            "일반": {"mc_brief": "mb", "docent_brief": "옛 지시문(폴백용)", "points": points},
+        },
+    )
+
+
+def test_포인트가_2개면_두_라운드_뒤_받아치기로_합류한다():
+    sheet = CueSheet([_포인트_큐(["p1", "p2"])])
+    h = Harness(
+        sheet=sheet,
+        mc_lines={cache_key("c1", "일반", "p2"): "다리대사(p2로)"},
+        generate=lambda role, brief, hist: f"[{brief} 답]",
+    )
+    h.d.start()
+    assert h.says() == [("mc", "사회자 오프닝")]
+
+    h.ended("mc", "c1")  # 오프닝 끝 — point0(p1) 도슨트 답을 기다렸다 보낸다
+    assert h.says()[-1] == ("docent", "[p1 답]")
+    assert h.d._machine.cue_id == "c1:pt0:docent"
+
+    h.ended("docent", "c1:pt0:docent")  # point0 답 끝 — 다리대사(p2)로 넘어간다
+    assert h.says()[-1] == ("mc", "다리대사(p2로)")
+    assert h.d._machine.cue_id == "c1:pt1"
+
+    h.ended("mc", "c1:pt1")  # 다리대사 끝 — point1(p2, 마지막) 도슨트 답을 기다린다
+    assert h.says()[-1] == ("docent", "[p2 답]")
+    assert h.d._machine.cue_id == "c1:docent"  # 종단 라벨 — 기존 받아치기 분기가 받는다
+
+    h.ended("docent", "c1:docent")  # 마지막 포인트 끝 — 기존 받아치기 분기가 그대로 돈다
+    assert h.says()[-1][0] == "mc"  # 받아치기(mc_after 계열)
+    assert h.d._machine.cue_id == "c1:after"
+    h.ended("mc", "c1:after")       # 받아치기까지 끝나야 관람객 차례다
+    assert h.d.state is State.LISTENING
+
+
+def test_포인트가_1개면_기존_단일_라운드와_같은_모양이다():
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.d._machine.cue_id == "c1:docent"  # 포인트 1개는 바로 종단 라벨
+    assert h.says()[-1] == ("docent", "[p1 답]")
+    h.ended("docent", "c1:docent")
+    assert h.says()[-1][0] == "mc"
+
+
+def test_points가_없는_큐는_기존_경로_그대로다():
+    """회귀 방지 — 이 계획의 가장 중요한 단언."""
+    h = Harness(after=("받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.d._machine.cue_id == "c1:docent"
+    h.ended("docent", "c1:docent")
+    assert h.d._machine.cue_id == "c1:after"
+    h.ended("mc", "c1:after")
+    assert h.d.state is State.LISTENING
+
+
+def test_다리_대사_캐시가_없으면_경고하고_포인트_원문으로_잇는다():
+    """조용히 물러나지 않는다 — 여는 대사 캐시와 같은 규칙(`_begin_cue`)."""
+    sheet = CueSheet([_포인트_큐(["p1", "p2"])])
+    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:pt0:docent")
+    assert h.says()[-1] == ("mc", "p2")   # 포인트 원문으로 이었다
+    assert any("다리 대사 캐시가 없다" in w for w in h.warnings), h.warnings
+
+
+def test_포인트_답은_포인트_하한으로_짧음을_잰다():
+    """도슨트 하한(수백 자)으로 재면 의도적으로 짧은 포인트 답이 매번 오탐이다."""
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(
+        sheet=sheet,
+        generate=lambda role, brief, hist: "짧은 답.",
+        docent_min_chars=180,
+        level_point_min_chars={"일반": 5},
+        level_point_max={"일반": (2, 95)},
+    )
+    h.d.start()
+    h.ended("mc", "c1")
+    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
+
+
+def test_포인트_분량_배선이_없으면_도슨트_하한으로_물러난다():
+    """`_level_point_min_chars` 는 수준 대조를 안 하는 맨 dict 라 빠진 수준이
+    있을 수 있다 — `[...]` 로 찾으면 섹션 한가운데서 KeyError 다."""
+    h = Harness(level_point_min_chars={"전문가": 90}, docent_min_chars=180)
+    assert h.d._point_budget() == (180, 10**9, 10**9)
+
+
+def test_다음_큐로_가면_포인트_상태가_초기화된다():
+    """포인트 큐 다음에 포인트 없는 큐가 오면 `_points` 가 안 비어 첫 갈래가
+    엉뚱하게 포인트 경로로 샌다 — `_begin_cue` 가 매번 다시 세운다."""
+    sheet = CueSheet([_포인트_큐(["p1", "p2"]), Cue("c2", "둘째", "둘째 대사", "둘째 지시", "audience")])
+    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.d._points == ["p1", "p2"]
+    h.d.abort()      # 운영자가 섹션 한가운데서 멈추고(`a`)
+    h.d.next()       # 다음 섹션으로 넘긴다(`n`)
+    assert h.d._points == []
+    assert h.d._point_i == 0
+    h.ended("mc", "c2")
+    assert h.d._machine.cue_id == "c2:docent"   # 기존 단일 라운드 경로
+
+
+def test_받아치기가_없는_포인트_큐는_마지막_답_뒤_곧장_듣는다():
+    """마지막 포인트가 종단 라벨을 쓰므로 `and cue.mc_after` 조건도 그대로
+    먹는다 — 받아치기가 없으면 기존 큐와 똑같이 곧장 관람객 차례다."""
+    sheet = CueSheet([_포인트_큐(["p1", "p2"], mc_after="")])
+    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:pt0:docent")
+    h.ended("mc", "c1:pt1")
+    assert h.d._machine.cue_id == "c1:docent"
+    h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
