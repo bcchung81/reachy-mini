@@ -6,7 +6,9 @@ PAGE = pathlib.Path(__file__).parent.parent / "stage" / "dashboard_page.html"
 IDS = ["conn", "cue-label", "level", "mon-mc", "mon-docent", "tag-mc", "tag-docent",
        "cap-mc", "cap-docent", "rundown", "goto-bar", "goto-confirm", "goto-cancel",
        "btn-prev", "btn-restart", "btn-next", "btn-start", "btn-abort",
-       "auto-text", "auto-bar", "log"]
+       "auto-text", "auto-bar", "log",
+       "vid-mc", "vid-docent", "cam-reason-mc", "cam-reason-docent",
+       "cam-toggle-mc", "cam-toggle-docent", "standby-toggle-mc", "standby-toggle-docent"]
 
 
 def _src():
@@ -281,3 +283,29 @@ def test_더_좁아서_줄바꿈되면_패널이_납작해지지_않는다():
     assert narrow, blocks
     assert re.search(r"\.stage-grid\s*\{[^}]*flex-direction:\s*column", narrow[0]), narrow[0]
     assert re.search(r"\.panel\s*\{[^}]*min-height:\s*2\d\dpx", narrow[0]), narrow[0]
+
+
+def test_카메라_video_요소가_있다():
+    src = _src()
+    assert 'id="vid-mc"' in src and "<video" in src
+    assert 'id="vid-docent"' in src
+
+
+def test_카메라_켜기_끄기_버튼이_c_명령을_보낸다():
+    src = _src()
+    assert re.search(r'sendCmd\(\s*"c\s*"\s*\+\s*"mc"', src) or "sendCmd(\"c \" + role" in src
+
+
+def test_대기모드_버튼이_z_명령을_보낸다():
+    src = _src()
+    assert "sendCmd(\"z \" + role" in src or re.search(r'sendCmd\(\s*"z\s*"', src)
+
+
+def test_rtc_메시지_kind를_처리한다():
+    src = _src()
+    assert '"rtc"' in src and "RTCPeerConnection" in src
+
+
+def test_스냅샷의_cameras_사유를_칸에_표시한다():
+    src = _src()
+    assert "s.cameras" in src or "snap.cameras" in src
