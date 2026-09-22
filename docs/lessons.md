@@ -1622,3 +1622,29 @@
   덮지 않는다(감독 로그의 마지막 세션과 어긋나지 않게).
 - **박제**: `tests/test_reachy_start.py::test_start_robot_은_지난_시뮬_앱_로그를_실기_안내로_덮고_감독_로그에_대상을_적는다`,
   `::test_start_sim_은_감독을_루프백에_두고_앱마다_역할과_포트를_짝짓는다`(머리줄 `target=sim`).
+
+### PyGObject 로 `webrtcbin` offer 를 꺼낼 때 **reply 를 붙잡지 않으면** SDP 가 비거나 프로세스가 말없이 죽는다
+
+- **증상**(2026-09-22, 대시보드 카메라 WebRTC 스파이크 — 사회자 로봇 실측): 로봇이 보낸 offer 가 `t=0 0` 한 줄뿐이라
+  Chrome 이 `Failed to parse SessionDescription … Expect line: v=` 로 거절했다. 순서를 고치자 이번에는 offer 를
+  만든 직후 **파이썬 프로세스가 로그 한 줄 없이 사라졌다.**
+- **원인**: `offer = promise.get_reply().get_value("offer")` 한 줄로 꺼내면 임시 `reply` 가 곧바로 풀리면서 offer 가
+  가리키던 SDP 메모리까지 풀린다(PyGObject 3.46 · GStreamer 1.26.2). 같은 코드에서 `reply` 를 변수에 붙잡아 둔 재현
+  스크립트는 온전한 SDP(`v=0`·`m=video`·H.264 `42c01f`)를 냈다. 첫 실행은 여기에 더해 `set-local-description` 에
+  넘긴 **뒤에** 텍스트를 읽어 빈 SDP 를 얻었다.
+- **규칙**: `reply = promise.get_reply()` 로 붙잡고, offer·promise·reply 를 **연결이 사는 동안** 참조로 들고 있는다.
+  SDP 텍스트(`offer.sdp.as_text()`)는 `set-local-description` 을 부르기 **전에** 뽑는다.
+- **박제**: 아직 없음 — 스파이크 코드는 버렸다. 카메라 구현 계획에서 로봇 앱 쪽 offer 생성 경로를 이 규칙대로 짜고,
+  실기 스모크(offer 에 `m=video` 와 `a=rtpmap:96 H264` 가 있는지)로 고정한다.
+
+### 원격 `pkill -f`/`pgrep -f` 는 **그 명령을 실은 원격 셸 자신**도 잡는다 — ssh 가 255 로 끊긴다
+
+- **증상**(2026-09-22, 같은 스파이크): `ssh 로봇 'pkill -f spike_robot.py; …'` 가 출력 없이 종료 코드 255 로 끝났다.
+  `[s]pike_robot` 로 괄호 요령을 써도 같은 명령 줄의 `rm -f /tmp/spike_robot.py` 때문에 또 끊겼다.
+- **원인**: ssh 는 원격에서 `bash -c '<명령 전체>'` 를 돌린다 — 그 셸의 argv 에 명령 문자열이 통째로 들어 있어
+  `-f`(전체 명령 줄 대조)가 자기 셸을 잡아 죽인다. 괄호 요령은 **패턴 자신**만 피하고, 같은 줄의 다른 곳(경로·인자)에
+  남은 이름은 못 피한다.
+- **규칙**: 원격 명령 줄에 대상 이름을 **어디에도 그대로 쓰지 않는다** — `pgrep -f "python -u /tmp/[s]pik"` 처럼
+  괄호로 끊고, 지울 파일은 `rm -f /tmp/spik*` 처럼 글로브로 쓴다. 가장 안전한 것은 띄울 때 pid 를 파일로 남기고
+  그 pid 만 죽이는 것이다. (`reachy.sh` 의 `sweep` 은 맥에서 돌고 패턴이 변수 안이라 해당 없다.)
+- **박제**: 운영 규칙이라 테스트 없음.
