@@ -57,6 +57,108 @@ def test_환경변수로_해상도를_바꾼다(monkeypatch):
     assert "width=320" in st._pipeline_str() and "height=240" in st._pipeline_str()
 
 
+class _FakeElement:
+    """`Gst.Element` 대역 — `set_state` 호출만 기록한다."""
+
+    def __init__(self):
+        self.state = None
+
+    def set_state(self, state):
+        self.state = state
+        return True
+
+
+class _FakePad:
+    """`Gst.Pad` 대역 — `get_peer()` 만 흉내 낸다."""
+
+    def __init__(self, peer=None):
+        self._peer = peer
+
+    def get_peer(self):
+        return self._peer
+
+
+class _FakeQueue(_FakeElement):
+    def __init__(self, sink_pad):
+        super().__init__()
+        self._sink_pad = sink_pad
+
+    def get_static_pad(self, name):
+        assert name == "sink"
+        return self._sink_pad
+
+
+class _FakeTee(_FakeElement):
+    def __init__(self):
+        super().__init__()
+        self.released = []
+
+    def release_request_pad(self, pad):
+        self.released.append(pad)
+
+
+class _FakePipe:
+    """`Gst.Pipeline` 대역 — `remove`/`get_by_name` 호출만 기록한다."""
+
+    def __init__(self, tee):
+        self._tee = tee
+        self.removed = []
+
+    def get_by_name(self, name):
+        return self._tee if name == "camtee" else None
+
+    def remove(self, element):
+        self.removed.append(element)
+
+    def set_state(self, state):
+        pass
+
+
+def test_stop_viewer는_큐와_tee_요청패드를_반납한다():
+    """리뷰 결함(Important): `start_viewer` 가 시청자마다 만드는 `queue` 참조를 어디에도
+    저장하지 않아, `stop_viewer` 가 `webrtcbin` 만 지우고 `queue`/tee 요청 패드를 그대로
+    남겼다 — 다른 시청자가 남아 파이프라인을 통째로 안 내리는 한, 대시보드 재접속마다
+    고아 `queue` 가 tee 에 쌓이는 누수였다.
+
+    실제 GStreamer 파이프라인을 열지 않고(이 태스크의 다른 테스트들과 같은 한계 —
+    `libcamerasrc`/`v4l2h264enc` 가 이 맥에 없고, `_pipeline_str()` 이 항상 붙이는
+    `extra-controls` 속성은 `x264enc` 에는 없는 속성이라 `videotestsrc`+`x264enc` 조합으로도
+    `Gst.parse_launch` 가 바로 깨진다 — 실측 확인했다) 북키핑만 가짜 `Gst.Element`/`Pipeline`
+    대역으로 단위 시험한다. 실제 파이프라인 위에서의 확인은 Task 13 실기 검증에 맡긴다."""
+    tee = _FakeTee()
+    tee_pad_a = object()  # "a" 의 queue 에 링크된 tee 요청 패드(센티널)
+    tee_pad_b = object()  # "b" 것 — 건드리면 안 된다
+    queue_a = _FakeQueue(sink_pad=_FakePad(peer=tee_pad_a))
+    queue_b = _FakeQueue(sink_pad=_FakePad(peer=tee_pad_b))
+    wb_a = _FakeElement()
+    wb_b = _FakeElement()
+
+    st = camera_rtc.RtcStreamer(send_rtc=lambda *a: None, find=_finder(set()))
+    st._pipe = _FakePipe(tee)
+    st._webrtcbins = {"a": wb_a, "b": wb_b}
+    st._queues = {"a": queue_a, "b": queue_b}
+
+    st.stop_viewer("a")
+
+    # "a" 항목은 webrtcbin·queue 딕셔너리 양쪽에서 다 지워진다.
+    assert "a" not in st._webrtcbins
+    assert "a" not in st._queues
+    # 남은 시청자 "b" 는 그대로다 — 다른 시청자가 있으면 파이프라인 전체를 안 내린다.
+    assert "b" in st._webrtcbins
+    assert "b" in st._queues
+    # "a" 의 queue 와 wb 는 파이프라인에서 빠지고 NULL 로 내려간다.
+    assert queue_a in st._pipe.removed
+    assert wb_a in st._pipe.removed
+    from gi.repository import Gst
+
+    assert queue_a.state == Gst.State.NULL
+    assert wb_a.state == Gst.State.NULL
+    # tee 는 "a" 의 요청 패드만 반납받는다 — "b" 는 안 건드린다.
+    assert tee.released == [tee_pad_a]
+    # 파이프라인 자체는 살아있다(남은 시청자가 있으므로 NULL 로 안 내려간다).
+    assert st._pipe is not None
+
+
 def _has(name):
     import gi
 

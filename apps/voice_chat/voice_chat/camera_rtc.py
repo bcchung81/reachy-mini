@@ -43,6 +43,7 @@ class RtcStreamer:
         self._warn = warn
         self._pipe = None
         self._webrtcbins: dict[str, object] = {}
+        self._queues: dict[str, object] = {}
         self._lock = threading.Lock()
 
     # ── 가능 여부 ─────────────────────────────────────────────────
@@ -127,6 +128,7 @@ class RtcStreamer:
             wb.connect("on-ice-candidate", lambda e, m, c, v=viewer: self._send_rtc(
                 v, {"candidate": c, "sdpMLineIndex": m}))
             self._webrtcbins[viewer] = wb
+            self._queues[viewer] = queue
 
     def stop_viewer(self, viewer: str) -> None:
         import camera_in
@@ -141,6 +143,19 @@ class RtcStreamer:
                 return
             wb.set_state(Gst.State.NULL)
             self._pipe.remove(wb)
+            queue = self._queues.pop(viewer, None)
+            if queue is not None:
+                # queue 의 sink 패드에 링크된 tee 의 요청(src) 패드 — 풀어주지 않으면
+                # 남은 시청자가 있어 파이프라인을 통째로 내리지 않을 때 tee 에 고아로
+                # 남는다(자원 누수 — 대시보드 재접속마다 쌓인다).
+                sink_pad = queue.get_static_pad("sink")
+                tee_pad = sink_pad.get_peer() if sink_pad is not None else None
+                queue.set_state(Gst.State.NULL)
+                self._pipe.remove(queue)
+                if tee_pad is not None:
+                    tee = self._pipe.get_by_name("camtee") if self._pipe is not None else None
+                    if tee is not None:
+                        tee.release_request_pad(tee_pad)
             if not self._webrtcbins:
                 self._pipe.set_state(Gst.State.NULL)
                 self._pipe = None
