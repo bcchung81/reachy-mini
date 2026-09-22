@@ -44,6 +44,9 @@ class Handlers:
     on_mic: Callable[[bool], None]
     on_gaze: Callable[[str], None]
     on_abort: Callable[[], None]
+    on_camera: Callable[[str, bool], None]
+    on_rtc: Callable[[str, dict], None]
+    on_standby: Callable[[bool], None]
 
 
 class StageClient:
@@ -54,6 +57,7 @@ class StageClient:
         handlers: Handlers,
         unit_id: str | None = None,
         version: str = "",
+        caps: list[str] | None = None,
         warn: Callable[[str], None] = print,
     ) -> None:
         self._url = url
@@ -61,6 +65,7 @@ class StageClient:
         self._h = handlers
         self._unit_id = unit_id
         self._version = version
+        self._caps = caps
         self._warn = warn
         self._ws = None
 
@@ -76,6 +81,9 @@ class StageClient:
 
     def error(self, where: str, detail: str) -> None:
         self._send("error", where=where, detail=detail)
+
+    def rtc(self, viewer: str, payload: dict) -> None:
+        self._send("rtc", viewer=viewer, **payload)
 
     def _send(self, type_: str, **fields) -> None:
         assert type_ in _ROBOT_MSGS, type_
@@ -118,6 +126,7 @@ class StageClient:
                 self._send(
                     "hello", role=self._role, unit_id=self._unit_id,
                     version=self._version,
+                    **({"caps": self._caps} if self._caps is not None else {}),
                 )
                 try:
                     while not should_stop():
@@ -167,6 +176,13 @@ class StageClient:
                 self._h.on_gaze(msg.get("target", "audience"))
             elif t == "abort":
                 self._h.on_abort()
+            elif t == "camera":
+                self._h.on_camera(msg.get("viewer", ""), bool(msg.get("on")))
+            elif t == "rtc":
+                payload = {k: v for k, v in msg.items() if k not in ("type", "viewer")}
+                self._h.on_rtc(msg.get("viewer", ""), payload)
+            elif t == "standby":
+                self._h.on_standby(bool(msg.get("on")))
         except Exception as exc:  # noqa: BLE001
             # **핸들러의 예외는 연결 문제가 아니다.** 여기서 새면 run() 의 바깥
             # except 가 "연결이 끊어졌다" 로 오판해 소켓을 닫고 재접속하고, 감독은

@@ -80,6 +80,9 @@ def collector():
         on_mic=lambda open_: got.append(("mic", open_)),
         on_gaze=lambda target: got.append(("gaze", target)),
         on_abort=lambda: got.append(("abort",)),
+        on_camera=lambda viewer, on: got.append(("camera", viewer, on)),
+        on_rtc=lambda viewer, payload: got.append(("rtc", viewer, payload)),
+        on_standby=lambda on: got.append(("standby", on)),
     )
 
 
@@ -255,6 +258,9 @@ def test_핸들러_예외는_연결을_끊지_않는다():
         on_mic=lambda o: got.append(("mic", o)),
         on_gaze=lambda t: None,
         on_abort=boom,
+        on_camera=lambda viewer, on: None,
+        on_rtc=lambda viewer, payload: None,
+        on_standby=lambda on: None,
     )
     c = StageClient("ws://x", "mc", handlers, warn=warns.append)
     calls = {"n": 0}
@@ -275,3 +281,90 @@ def test_객체가_아닌_JSON_은_경고하고_넘어간다():
     c = StageClient("ws://x", "mc", collector()[1], warn=warns.append)
     c._on_raw("[1, 2]")
     assert any("객체" in w for w in warns)
+
+
+# ── 카메라·RTC·대기모드 (Task 2) ─────────────────────────────────────
+
+
+def test_hello에_caps를_싣는다():
+    got, handlers = collector()
+    client = StageClient("ws://x", "mc", handlers, caps=["camera"])
+    ws = FakeWS()
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    # `run()` 은 바깥(재접속)·안쪽(수신) 이중 루프라 `should_stop` 이 두 곳에서
+    # 각각 불린다. `lambda: True` 는 바깥 루프 진입 자체를 막아 hello 가
+    # 나가지 않는다 — `run_once()` 와 같은 관용구(접속 후 ws 가 닫히면 멈춘다)
+    # 를 그대로 쓴다.
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert ws.sent[0] == {"type": "hello", "role": "mc", "unit_id": None,
+                           "version": "", "caps": ["camera"]}
+
+
+def test_caps_없으면_hello에서_뺀다():
+    got, handlers = collector()
+    client = StageClient("ws://x", "mc", handlers)
+    ws = FakeWS()
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert "caps" not in ws.sent[0]
+
+
+def test_camera_지시가_on_camera로_간다():
+    got, handlers = collector()
+    ws = FakeWS(inbox=[{"type": "camera", "viewer": "v1", "on": True}])
+    client = StageClient("ws://x", "mc", handlers)
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert ("camera", "v1", True) in got
+
+
+def test_rtc_지시가_on_rtc로_간다():
+    got, handlers = collector()
+    ws = FakeWS(inbox=[{"type": "rtc", "viewer": "v1", "sdp": {"type": "answer", "sdp": "v=0"}}])
+    client = StageClient("ws://x", "mc", handlers)
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert ("rtc", "v1", {"sdp": {"type": "answer", "sdp": "v=0"}}) in got
+
+
+def test_standby_지시가_on_standby로_간다():
+    got, handlers = collector()
+    ws = FakeWS(inbox=[{"type": "standby", "on": True}])
+    client = StageClient("ws://x", "mc", handlers)
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert ("standby", True) in got
+
+
+def test_rtc_송신은_viewer와_페이로드를_싣는다():
+    got, handlers = collector()
+    client = StageClient("ws://x", "mc", handlers)
+    ws = FakeWS()
+    client._ws = ws
+    client.rtc("v1", {"sdp": {"type": "offer", "sdp": "v=0"}})
+    assert ws.sent[-1] == {"type": "rtc", "viewer": "v1", "sdp": {"type": "offer", "sdp": "v=0"}}
