@@ -1118,6 +1118,17 @@ def test_생성_결과가_너무_짧으면_경고한다():
     assert any("짧다" in w for w in h.warnings), h.warnings
 
 
+def test_min_chars_오버라이드가_있으면_그것으로_짧음을_잰다():
+    """받아치기 슬롯이 아니라 도슨트 슬롯이라도, pending.min_chars 가 있으면
+    self._docent_min_chars(수십~수백자) 대신 그 값으로 짧음을 잰다 — 포인트
+    라운드가 의도적으로 짧게 답해도 "너무 짧다" 오탐이 안 나야 한다."""
+    h = Harness(generate=lambda role, brief, hist: "한 문장짜리 짧은 답입니다.")
+    h.d._warn_if_short("한 문장짜리 짧은 답입니다.", "테스트", "docent", min_chars=5)
+    assert not any("너무 짧다" in w for w in h.warnings)
+    h.d._warn_if_short("한 문장짜리 짧은 답입니다.", "테스트", "docent", min_chars=500)
+    assert any("너무 짧다" in w for w in h.warnings)
+
+
 # 50자. `MIN_CHARS`(40)는 넘지만 어느 수준의 `min_chars`(초등 70 … 전문가 260)에도
 # 못 미치는 길이다 — 고정 하한과 수준 하한이 **갈리는 구간**이 여기다.
 _50자 = "전파는 눈에 보이지 않지만 우리 생활 구석구석에 아주 널리 쓰입니다. 궁금한 점 있으세요?"

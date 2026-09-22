@@ -152,6 +152,13 @@ class _Pending(NamedTuple):
     fallback: str        # 생성이 늦거나 실패했을 때 읽을 것
     fallback_kind: str   # 그 폴백이 무엇인지(로그용, 위 FB_* 중 하나)
     label: str           # 경고에 찍을 이름
+    # 있으면 `_warn_if_short` 가 `role` 별 기본 하한
+    # (`self._docent_min_chars`/`MIN_CHARS`) 대신 이 값으로 짧음을 잰다.
+    # 포인트 라운드(해설을 여러 짧은 교환으로 쪼갠 것)가 의도적으로 짧게
+    # 답해도 매번 "너무 짧다" 오탐이 나지 않게 하려는 자리다. NamedTuple의
+    # 마지막 필드라 기본값을 둘 수 있다 — 기존 6개 위치 인자 호출부는
+    # 그대로 두고 None 이 채워진다.
+    min_chars: int | None = None
 
 
 class UnitMismatch(RuntimeError):
@@ -1506,7 +1513,7 @@ class Director:
         # 그래서 길이를 잰다. 폴백에 이 검사를 걸면 "생성 실패" 경고 뒤에 "생성
         # 결과가 짧다" 는 **틀린** 경고가 덧붙어, 로그만 보면 LLM 이 실제로 37자를
         # 냈다고 오판한다(QA_FALLBACK 이 37자, MIN_CHARS 가 40이다).
-        self._warn_if_short(text, label, pending.role)
+        self._warn_if_short(text, label, pending.role, pending.min_chars)
         return text
 
     def _take_fallback(self, pending: "_Pending") -> str:
@@ -1523,10 +1530,12 @@ class Director:
         정상적인 받아치기가 전부 미달로 찍힌다(`_warn_if_short` 주석 참고).
         """
         if pending.fallback_kind in _GENERATED_FALLBACKS:
-            self._warn_if_short(pending.fallback, pending.label, pending.role)
+            self._warn_if_short(pending.fallback, pending.label, pending.role, pending.min_chars)
         return pending.fallback
 
-    def _warn_if_short(self, text: str, label: str, role: str) -> None:
+    def _warn_if_short(
+        self, text: str, label: str, role: str, min_chars: int | None = None
+    ) -> None:
         """**진짜 생성 결과**가 해설·반응이라기엔 짧으면 소리 낸다. 그대로 쓴다 —
         버리면 정적이 되는데 그게 더 나쁘다.
 
@@ -1555,8 +1564,14 @@ class Director:
         `_spawn_generate(slot, role, …)` 로 들어와 `_Pending.role` 에 실려 여기까지
         온다. 슬롯 이름을 `_Pending` 에 실어 `"docent"` 하드코딩 버그를 고친 것과
         **같은 방식**이다(`on_speaking_ended` 의 세대 재확인 주석 참고).
+
+        `min_chars` 를 주면(`_Pending.min_chars`, 포인트 라운드용) 위 역할별
+        기본 하한을 무시하고 그 값으로 잰다 — 의도적으로 짧게 답하는 자리에서
+        역할 기본 하한을 그대로 쓰면 매번 "너무 짧다" 오탐이 난다.
         """
-        limit = self._docent_min_chars if role == "docent" else MIN_CHARS
+        limit = min_chars if min_chars is not None else (
+            self._docent_min_chars if role == "docent" else MIN_CHARS
+        )
         if len(text) < limit:
             # **무엇에 못 미쳤는지 같이 적는다.** 하한이 역할·수준마다 다르므로
             # 글자 수만 찍으면 로그를 보는 사람이 그게 미달인지 판단할 수 없다.
