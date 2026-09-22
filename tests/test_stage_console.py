@@ -385,3 +385,59 @@ def test_l_뒤_r_은_대기_수준을_바로_적용한다():
     assert 훅 == ["초등"]
     assert "관람객 수준을 초등(으)로 바꿨다 — c1 부터" in h.warnings, h.warnings
     assert h.d.snapshot()["level"] == "초등"
+
+
+class _가짜카메라:
+    def __init__(self):
+        self.toggled = []
+
+    def toggle(self, role):
+        self.toggled.append(role)
+
+
+def test_z_는_대기모드를_토글한다():
+    """`z` 는 대시보드와 같은 경로로 `Director.toggle_standby` 를 부른다(Task 4)."""
+    import stage.console as console
+
+    class 가짜감독:
+        def __init__(self):
+            self.toggled_standby = []
+
+        def toggle_standby(self, role):
+            self.toggled_standby.append(role)
+
+    d = 가짜감독()
+    console.dispatch(d, "z mc", out=lambda m: None)
+    assert d.toggled_standby == ["mc"]
+
+
+def test_c_는_카메라를_토글한다():
+    """`c` 는 대시보드와 같은 경로로 `CameraRelay.toggle` 을 부른다(Task 3)."""
+    import stage.console as console
+
+    class 가짜감독:
+        pass
+
+    cam = _가짜카메라()
+    console.dispatch(가짜감독(), "c docent", out=lambda m: None, camera=cam)
+    assert cam.toggled == ["docent"]
+
+
+def test_카메라_객체가_없으면_c_는_조용히_무시하지_않고_안내한다():
+    """`camera` 기본값 `None` — 카메라 중계가 없는 감독(예: 아직 안 붙인 배포)에서
+    `c` 를 눌러도 조용히 삼키지 않고 안내한다."""
+    import stage.console as console
+
+    class 가짜감독:
+        pass
+
+    out = []
+    console.dispatch(가짜감독(), "c mc", out=out.append, camera=None)
+    assert any("카메라" in m for m in out)
+
+
+def test_도움말에_z_와_c_가_있다():
+    h = Harness()
+    h.run(["?", "q"])
+    assert any("z <mc|docent>  대기모드 켜고 끄기" in m for m in h.out), h.out
+    assert any("c <mc|docent>  카메라 스트림 켜고 끄기" in m for m in h.out), h.out
