@@ -120,11 +120,11 @@ def test_stop_viewer는_큐와_tee_요청패드를_반납한다():
     남겼다 — 다른 시청자가 남아 파이프라인을 통째로 안 내리는 한, 대시보드 재접속마다
     고아 `queue` 가 tee 에 쌓이는 누수였다.
 
-    실제 GStreamer 파이프라인을 열지 않고(이 태스크의 다른 테스트들과 같은 한계 —
-    `libcamerasrc`/`v4l2h264enc` 가 이 맥에 없고, `_pipeline_str()` 이 항상 붙이는
-    `extra-controls` 속성은 `x264enc` 에는 없는 속성이라 `videotestsrc`+`x264enc` 조합으로도
-    `Gst.parse_launch` 가 바로 깨진다 — 실측 확인했다) 북키핑만 가짜 `Gst.Element`/`Pipeline`
-    대역으로 단위 시험한다. 실제 파이프라인 위에서의 확인은 Task 13 실기 검증에 맡긴다."""
+    실제 GStreamer 파이프라인을 열지 않고(`libcamerasrc`/`v4l2h264enc` 가 이 맥에 없다는
+    이 태스크의 다른 테스트들과 같은 한계) 북키핑만 가짜 `Gst.Element`/`Pipeline` 대역으로
+    단위 시험한다 — `stop_viewer` 가 무엇을 지우고 무엇을 남기는지가 관심사지, 인코더별
+    파이프라인 절이 실제로 파싱되는지는 아래 `test_*_파이프라인이_실제로_파싱된다` 들의
+    관심사다(따로 시험한다). 실제 파이프라인 위에서의 확인은 Task 13 실기 검증에 맡긴다."""
     tee = _FakeTee()
     tee_pad_a = object()  # "a" 의 queue 에 링크된 tee 요청 패드(센티널)
     tee_pad_b = object()  # "b" 것 — 건드리면 안 된다
@@ -168,6 +168,52 @@ def _has(name):
     if not Gst.is_initialized():
         Gst.init(None)
     return Gst.ElementFactory.find(name) is not None
+
+
+def _parse_with_encoder(encoder: str, monkeypatch) -> None:
+    """지정한 인코더 하나만 사다리에서 고르게 하고, 실제 `Gst.parse_launch()` 로 파이프라인
+    문자열을 파싱해 본다. 기존 문자열 검사 테스트들(`test_파이프라인_문자열에_기본값이_들어간다`
+    등)은 `_pipeline_str()` 이 돌려주는 **문자열**만 봐서, 인코더 종류와 상관없이 V4L2 전용
+    `extra-controls` 속성을 붙이던 결함(리뷰 실측: `x264enc` 에서
+    `no property "extra-controls" in element "x264enc"`)을 못 잡았다 — 이 헬퍼가 그 공백을
+    메운다. 로봇 전용 `libcamerasrc` 대신 이 맥에 있는 `videotestsrc` 를 소스로 쓴다."""
+    monkeypatch.setenv("REACHY_CAMERA_SRC", "videotestsrc is-live=true")
+    present = {encoder, "rtph264pay", "h264parse", "webrtcbin", "videotestsrc"}
+    st = camera_rtc.RtcStreamer(send_rtc=lambda *a: None, find=_finder(present))
+    assert st._encoder_name() == encoder  # 사다리가 딴 인코더를 고르면 이 시험이 무의미해진다
+    chain = st._pipeline_str()
+
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+
+    if not Gst.is_initialized():
+        Gst.init(None)
+    pipe = Gst.parse_launch(chain)  # 인코더에 없는 속성을 넣으면 여기서 GLib.Error 가 뜬다
+    assert pipe is not None
+    pipe.set_state(Gst.State.NULL)
+
+
+@pytest.mark.skipif(not _has("v4l2h264enc"), reason="이 맥에 v4l2h264enc 가 없다(로봇 전용)")
+def test_v4l2h264enc_파이프라인이_실제로_파싱된다(monkeypatch):
+    """프로덕션 기본 경로 — extra-controls 절은 이번 수정으로 안 바뀌었다. 이 맥에는 이
+    요소가 없어 항상 skip 되지만(로봇 전용), 실기에서 돌면 이 시험도 같이 돈다."""
+    _parse_with_encoder("v4l2h264enc", monkeypatch)
+
+
+@pytest.mark.skipif(not _has("x264enc"), reason="이 맥에 x264enc 가 없다")
+def test_x264enc_파이프라인이_실제로_파싱된다(monkeypatch):
+    """사다리 2순위 — 고치기 전에는 여기서 정확히
+    `no property "extra-controls" in element "x264enc"` 로 깨졌다(리뷰가 이 맥에서 재현)."""
+    _parse_with_encoder("x264enc", monkeypatch)
+
+
+@pytest.mark.skipif(not _has("openh264enc"), reason="이 맥에 openh264enc 가 없다")
+def test_openh264enc_파이프라인이_실제로_파싱된다(monkeypatch):
+    """사다리 3순위 — 같은 결함이 여기서도 났을 것이다(`extra-controls` 는
+    `openh264enc` 에도 없는 속성)."""
+    _parse_with_encoder("openh264enc", monkeypatch)
 
 
 @pytest.mark.skipif(not _has("x264enc") or not _has("webrtcbin"),

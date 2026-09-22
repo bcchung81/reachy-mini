@@ -66,6 +66,39 @@ class RtcStreamer:
                 return name
         return None
 
+    def _encoder_clause(self, encoder: str, fps: str, kbps: str) -> str:
+        """인코더별 gst-launch 절. **`extra-controls` 는 V4L2 전용 속성이다** — 다른
+        인코더에 붙이면 `Gst.parse_launch()` 가 그 자리에서 `no property "extra-controls"`
+        로 깨진다(리뷰 실측, 이 맥에서 `x264enc` 로 재현됨). 속성 이름·단위는 이 맥에서
+        `Gst.ElementFactory.make(name).list_properties()` 로 실측했다(`gst-inspect-1.0`
+        바이너리가 이 venv 에 없어 PyGObject introspection 으로 대신함, gst-inspect 와
+        같은 API):
+
+            x264enc:     bitrate(kbit/sec, guint) · key-int-max(프레임 수, 0=자동)
+            openh264enc: bitrate(bit/sec, guint)  · gop-size(프레임 수)
+            v4l2h264enc: extra-controls 로만 노출(V4L2 컨트롤 문자열) — 그대로 둔다.
+
+        목표는 인코더 사이에 정확히 같은 숫자가 아니라 **같은 결과**(해상도·fps·대략 같은
+        비트레이트·1초 안팎의 키프레임 간격)다.
+        """
+        if encoder == "v4l2h264enc":
+            return (
+                f'{encoder} extra-controls="controls,repeat_sequence_header=1,'
+                f'video_bitrate={int(kbps) * 1000},h264_i_frame_period={fps}"'
+            )
+        if encoder == "x264enc":
+            # bitrate 는 x264enc 에서 kbit/sec 다 — REACHY_CAMERA_STREAM_KBPS 와 단위가 같다.
+            return f"{encoder} bitrate={int(kbps)} key-int-max={fps}"
+        if encoder == "openh264enc":
+            # bitrate 는 openh264enc 에서 bit/sec 다 — v4l2h264enc 의 video_bitrate 와 같은 단위.
+            return f"{encoder} bitrate={int(kbps) * 1000} gop-size={fps}"
+        # 사다리에 없는 이름이 오면(방어적) V4L2 절 모양을 기본값으로 쓴다 — 여기 오면 이미
+        # _encoder_name() 이 알려진 이름만 돌려주므로 실제로는 닿지 않는다.
+        return (
+            f'{encoder} extra-controls="controls,repeat_sequence_header=1,'
+            f'video_bitrate={int(kbps) * 1000},h264_i_frame_period={fps}"'
+        )
+
     # ── 파이프라인 조립 ───────────────────────────────────────────
     def _pipeline_str(self) -> str:
         src = config.get("REACHY_CAMERA_SRC", "libcamerasrc")
@@ -82,8 +115,7 @@ class RtcStreamer:
         )
         return (
             f"{source} "
-            f'! {encoder} extra-controls="controls,repeat_sequence_header=1,'
-            f'video_bitrate={int(kbps) * 1000},h264_i_frame_period={fps}" '
+            f"! {self._encoder_clause(encoder, fps, kbps)} "
             f"! video/x-h264,stream-format=byte-stream,alignment=au,"
             f"level=(string)3.1,profile=(string)constrained-baseline "
             f"! h264parse ! rtph264pay config-interval=-1 pt=96 aggregate-mode=zero-latency "
