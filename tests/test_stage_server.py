@@ -723,3 +723,33 @@ def test_camera_오류는_camera로도_간다(server):
                 break
             time.sleep(0.02)
         assert "파이프라인 실패" in server.camera.snapshot()["mc"]["reason"]
+
+
+def test_거절된_사칭_연결이_기존_로봇의_카메라를_안_끈다(strict_server):
+    """리뷰 Important 1 — `self.camera.on_robot_hello` 를 `director.on_hello` 의
+    `UnitMismatch` 검사보다 **먼저** 부르면, 거절된 사칭 연결(이 역할로 붙은 적이
+    없다)의 caps 가 이미 `CameraRelay._recompute` 를 돌려 자리에 계속 붙어 있는
+    정상 로봇의 카메라를 경고 한 줄 없이 꺼 버린다. `director.on_hello` 자신이
+    거절 검사를 caps 기록보다 먼저 두는 것(그 주석 참고)과 같은 순서를
+    `handler()` 도 지켜야 한다."""
+    with connect(url_of(strict_server)) as mc:
+        # 정상 mc(unit_id 가 기대값과 일치)가 먼저 붙어 카메라 능력을 알린다.
+        mc.send(json.dumps({"type": "hello", "role": "mc", "unit_id": "AAA",
+                            "version": "1.9.0", "caps": ["camera"]}))
+        m = recv(mc)
+        assert m["type"] == "mic", f"접속 직후 mic 재동기화가 아니라 {m} 가 왔다"
+        assert strict_server.camera.snapshot()["mc"]["available"] is True
+
+        # 다른 unit_id 로 같은 mc 자리에 사칭 연결이 붙으려 한다 — caps 에는
+        # camera 가 없다(뒤바뀐/오배선된 앱을 흉내낸다). UnitMismatch 로 거절돼야
+        # 하고, 이 연결은 `_conns` 에 한 번도 등록되지 않는다.
+        with connect(url_of(strict_server)) as impostor:
+            impostor.send(json.dumps({"type": "hello", "role": "mc", "unit_id": "BBB",
+                                      "version": "1.9.0", "caps": []}))
+            with pytest.raises(Exception):
+                impostor.recv(timeout=2)          # 감독이 연결을 닫는다
+        assert _wait_warning(strict_server, "뒤바뀌었는지")
+
+        # 거절 경로는 finally 를 안 타므로(등록된 적이 없다) 되돌릴 기회도 없다
+        # — 애초에 꺼지지 않았어야 한다. 정상 mc 의 카메라는 그대로 켜져 있다.
+        assert strict_server.camera.snapshot()["mc"]["available"] is True

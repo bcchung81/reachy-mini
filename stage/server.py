@@ -125,7 +125,6 @@ class StageServer:
                         return
                     role = r
                     caps = self._caps_field(role, msg)
-                    self.camera.on_robot_hello(role, caps)
                     try:
                         self.director.on_hello(
                             role, msg.get("unit_id"), msg.get("version", ""), caps
@@ -139,6 +138,13 @@ class StageServer:
                         self.director.reject(role, str(exc))
                         role = None
                         return
+                    # `director.on_hello` 가 던지지 않은 뒤에만 부른다 —
+                    # `director.on_hello` 자신이 거절 검사를 caps 기록보다 먼저
+                    # 두는 것과 같은 이유다. 거꾸로 앞에 두면(리뷰 Important 1)
+                    # `UnitMismatch` 로 거절된 사칭 로봇(이 역할로 붙은 적이
+                    # 없다)의 caps 가 이미 `_recompute` 를 돌려, 자리에 계속
+                    # 붙어 있는 정상 로봇의 카메라를 경고 한 줄 없이 꺼 버린다.
+                    self.camera.on_robot_hello(role, caps)
                     with self._lock:
                         old = self._conns.get(role)
                         self._conns[role] = ws
