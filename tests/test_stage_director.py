@@ -3196,6 +3196,23 @@ def test_모르는_역할은_경고하고_바꾸지_않는다():
     assert any("모르는 역할" in w for w in h.warnings)
 
 
+def test_끊긴_역할은_경고하고_대기모드를_바꾸지_않는다():
+    """리뷰 I7 — 예전에는 `role not in ROLES` 만 봐서, 끊긴(`_connected` 에 없는) 역할도
+    대기로 넣을 수 있었다. `standby` 지시는 붙지 않은 소켓이라 조용히 버려지는데
+    `_standby` 에는 남고, `on_connect` 는 `_standby` 를 안 지우므로(그 자리는
+    `on_disconnect` 몫) 그 로봇이 나중에 다시 붙어도 감독은 계속 "대기 중" 으로
+    본다 — 로봇은 지시를 받은 적이 없어 멀쩡히 깨어 있는데 진행에서는 계속 빠지는
+    유령 대기 상태다."""
+    h = Harness()
+    h.d.on_connect("docent")          # mc 는 붙지 않는다
+    h.d.toggle_standby("mc")
+    assert h.d.snapshot()["standby"] == []
+    assert any("[mc]" in w and "붙어 있지 않다" in w for w in h.warnings)
+    # 이어서 mc 가 붙어도 유령 대기가 아니다 — 정상적으로 1인 모드 판정이 된다.
+    h.d.on_connect("mc")
+    assert h.d.solo_role is None
+
+
 def test_대기_중이어도_기존_1인_모드_테스트는_그대로_돈다():
     """`_standby` 가 비어 있으면 `connected - standby == connected` 라 기존 동작이
     안 바뀐다는 것을 한 번 더 확인한다 — 회귀 방지용 스모크."""

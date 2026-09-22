@@ -335,9 +335,16 @@ class Director:
         # 옛 능력이 남아 단독이 켜진다. 지금 로봇 앱은 `caps` 를 안 보내 늘 빈 집합이다.
         self._caps: dict[str, set[str]] = {}
         # 대기모드에 들어간 역할. 새 상태기계를 만들지 않는다 — `solo_role` 이 이 값을
-        # 보므로, 대기 진입은 그 로봇이 "끊겼다" 와 같은 모양으로 진행에서 빠진다
-        # (재배정·마이크 재동기화까지 `on_disconnect` 와 같은 길을 탄다). 끊기면 지운다
-        # (`_caps` 와 같은 수명 — 다시 붙는 앱은 새로 판단한다).
+        # 보므로, **재배정만**은 그 로봇이 "끊겼다" 와 같은 모양으로 진행에서 빠진다.
+        # ~~재배정·마이크 재동기화까지 `on_disconnect` 와 같은 길을 탄다~~ — **틀렸다**
+        # (M3, 최종 전체 브랜치 리뷰 — 이 주석이 `toggle_standby` 의 정정된 docstring과
+        # 모순됐었다). 마이크 재동기화는 같은 길이 **아니다**: `on_disconnect` 는
+        # LISTENING 이고 리스너가 끊겼을 때만 남은 로봇에게 마이크를 다시 연다. 반면
+        # `toggle_standby` 는 `_abort_locked()` 로 **무조건** IDLE 로 돌아가므로(같은 락을
+        # 쥔 같은 스레드 안이라 그 뒤 상태가 바뀔 여지 자체가 없다) 마이크가 다시 열리는
+        # 일이 없다 — 운영자가 이어서 진행 명령으로 재동기화시킨다(자세한 근거는
+        # `toggle_standby` docstring). 끊기면 지운다(`_caps` 와 같은 수명 — 다시 붙는
+        # 앱은 새로 판단한다).
         self._standby: set[str] = set()
 
     # ── 상태 ──────────────────────────────────────────────────────
@@ -965,6 +972,15 @@ class Director:
         with self._lock:
             if role not in ROLES:
                 self._warn(f"모르는 역할이다: {role!r} — 대기모드를 바꾸지 않는다")
+                return
+            if role not in self._connected:
+                # 리뷰 I7 — 끊긴 로봇을 대기로 넣으면 `standby` 지시는 붙지 않은
+                # 소켓이라 조용히 버려지는데(`_send`), `_standby` 에는 그 역할이
+                # 남는다. `on_connect` 는 `_standby` 를 지우지 않으므로(그 자리는
+                # `on_disconnect` 몫이다) 이 로봇이 나중에 다시 붙어도 감독은
+                # 계속 "대기 중" 으로 본다 — 로봇 자신은 지시를 받은 적이 없어
+                # 멀쩡히 깨어 있는데 진행에서는 계속 빠진다. 유령 대기 상태다.
+                self._warn(f"[{role}] 이 붙어 있지 않다 — 대기모드를 바꾸지 않는다")
                 return
             entering = role not in self._standby
             if entering:
