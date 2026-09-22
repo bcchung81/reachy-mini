@@ -142,3 +142,9 @@ def test_조립된_프롬프트_전부에_이름표_금지_규칙이_있다():
         for role in ("mc", "docent"):
             p = build_system_prompt(role, lv)
             assert "이름표" in p, (role, name)
+
+
+def test_다리_대사_프롬프트에_포인트_문구가_들어간다():
+    from stage.prompts import build_bridge_prompt
+    out = build_bridge_prompt("패러데이가 1831년에 무엇을 실험했는지")
+    assert "패러데이가 1831년에 무엇을 실험했는지" in out

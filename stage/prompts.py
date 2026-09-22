@@ -97,3 +97,26 @@ def build_system_prompt(role: str, level: Level) -> str:
     amount = _amount_for(role, level)
     return "\n\n".join([persona, _COMMON, amount,
                         level.vocabulary, level.depth, level.numbers, level.sources])
+
+
+# 다리 대사 생성에 심는 톤 예시(설계 §5 "사회자 말투 카드"). 라운드마다 포인트
+# 내용이 달라 고정 문구는 못 쓰지만, 톤은 few-shot 으로 통제한다.
+_BRIDGE_TONE_EXAMPLES = (
+    "오, 그런데 이런 것도 있다면서요?",
+    "잠깐, 그거 말고 다른 것도 궁금한데요.",
+    "그렇군요. 그럼 이건 어때요?",
+)
+
+
+def build_bridge_prompt(next_point: str) -> str:
+    """다음 포인트로 자연스럽게 넘어가는 사회자 다리 대사를 만들라는 지시문.
+
+    `stage/__main__.py::build_generate` 의 `gen("mc", 이 결과, [])` 로 호출된다 —
+    분량은 시스템 프롬프트의 사회자 고정 규칙(`_amount_for` role="mc")이 이미 준다.
+    """
+    examples = "\n".join(f"- {e}" for e in _BRIDGE_TONE_EXAMPLES)
+    return (
+        f"도슨트에게 다음 소주제를 물어볼 차례다: {next_point}. "
+        "직전 답을 짧게 받지 말고, 새 소주제로 자연스럽게 넘어가는 한두 마디를 만든다. "
+        f"예시 톤(그대로 베끼지 말고 참고만 한다):\n{examples}"
+    )
