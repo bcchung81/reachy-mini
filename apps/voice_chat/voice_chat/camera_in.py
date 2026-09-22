@@ -25,6 +25,7 @@ _pipe = None
 _last = 0.0
 _lock = threading.Lock()
 _watcher = None
+_rtc_active = False
 
 
 def _enabled() -> bool:
@@ -40,6 +41,14 @@ def _idle_s() -> float:
     시연 내내 열어 둘 수는 없다. 그래서 **연속 질문 동안만 열고 유휴면 닫는다.**
     """
     return float(config.get("REACHY_CAMERA_IDLE_S", "20"))
+
+
+def note_rtc_active(active: bool) -> None:
+    """`camera_rtc.RtcStreamer` 가 스트림을 켜고 끌 때 부른다. 카메라는 한 프로세스만
+    열 수 있어 스트림 중에는 비전 캡처가 물러난다 — 그 파이프라인이 이미 최신 프레임을
+    돌려주므로(4단계에서 공유), 지금은 단순히 비전 캡처를 쉰다."""
+    global _rtc_active
+    _rtc_active = active
 
 
 def _settle_s() -> float:
@@ -158,6 +167,9 @@ def _arm_watcher() -> None:
 def grab_jpeg() -> bytes | None:
     """프레임 한 장을 JPEG 로. 실패하면 **None** — 대화는 계속된다."""
     global _pipe, _last
+    if _rtc_active:
+        print("  [카메라] RTC 스트림 중이라 비전 캡처를 쉰다", flush=True)
+        return None
     if not _enabled():
         return None
     if platform.system() != "Linux":
