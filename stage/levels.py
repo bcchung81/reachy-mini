@@ -16,7 +16,10 @@ DEFAULT_LEVEL = "일반"
 
 # 숫자 네 필드와 문자열 네 필드를 나눠 둔다 — `load_levels` 가 타입별로 다른
 # 검사를 하기 때문이다(리뷰: 존재만 보고 타입을 안 봤다).
-_INT_FIELDS = ("min_sentences", "max_sentences", "min_chars", "max_chars")
+_INT_FIELDS = (
+    "min_sentences", "max_sentences", "min_chars", "max_chars",
+    "point_min_sentences", "point_max_sentences", "point_min_chars", "point_max_chars",
+)
 _STR_FIELDS = ("vocabulary", "depth", "numbers", "sources")
 _FIELDS = _INT_FIELDS + _STR_FIELDS
 
@@ -32,6 +35,10 @@ class Level:
     max_sentences: int
     min_chars: int
     max_chars: int
+    point_min_sentences: int
+    point_max_sentences: int
+    point_min_chars: int
+    point_max_chars: int
     vocabulary: str
     depth: str
     numbers: str

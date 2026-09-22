@@ -23,6 +23,10 @@ def _valid_raw() -> dict:
             "max_sentences": 3,
             "min_chars": 70,
             "max_chars": 120,
+            "point_min_sentences": 1,
+            "point_max_sentences": 1,
+            "point_min_chars": 30,
+            "point_max_chars": 60,
             "vocabulary": "말",
             "depth": "말",
             "numbers": "말",
@@ -30,6 +34,33 @@ def _valid_raw() -> dict:
         }
         for name in ("초등", "중고등", "일반", "전문가")
     }
+
+
+def _valid_raw_without_points() -> dict:
+    """포인트 필드를 뺀 옛 데이터. 포인트 필드 검증 테스트 용."""
+    return {
+        name: {
+            "min_sentences": 2,
+            "max_sentences": 3,
+            "min_chars": 70,
+            "max_chars": 120,
+            "vocabulary": "말",
+            "depth": "말",
+            "numbers": "말",
+            "sources": "말",
+        }
+        for name in ("초등", "중고등", "일반", "전문가")
+    }
+
+
+def _valid_raw_with_points() -> dict:
+    raw = _valid_raw()
+    for name in raw:
+        raw[name].update(
+            point_min_sentences=1, point_max_sentences=1,
+            point_min_chars=30, point_max_chars=60,
+        )
+    return raw
 
 
 def _write(tmp_path: pathlib.Path, raw: dict) -> pathlib.Path:
@@ -41,6 +72,21 @@ def _write(tmp_path: pathlib.Path, raw: dict) -> pathlib.Path:
 def test_수준_넷이_모두_있다():
     lv = load_levels()
     assert set(lv) == {"초등", "중고등", "일반", "전문가"}
+
+
+def test_포인트_분량_필드가_있다(tmp_path):
+    p = _write(tmp_path, _valid_raw_with_points())
+    lv = load_levels(p)
+    assert lv["초등"].point_min_chars == 30
+    assert lv["초등"].point_max_chars == 60
+    assert lv["초등"].point_min_sentences == 1
+    assert lv["초등"].point_max_sentences == 1
+
+
+def test_포인트_분량_필드가_없으면_거절한다(tmp_path):
+    p = _write(tmp_path, _valid_raw_without_points())  # 포인트 필드 없는 옛 데이터
+    with pytest.raises(LevelError, match="point_min"):
+        load_levels(p)
 
 
 def test_분량이_수준을_따라_커진다():
