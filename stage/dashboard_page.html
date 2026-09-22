@@ -141,10 +141,15 @@
   }
   .cam.onair { border: 3px solid #E5484D; }
   .cam.rejected { border: 2px dashed #F0A64A; }
-  .cam-label { position: absolute; top: 12px; left: 12px; font-size: 12px; color: #4CC3D9; }
+  /* z-index: 1 — .cam-video(뒤 DOM 순서, absolute, 명시 z-index 없음=auto)가 같은 칸을
+     inset:0 으로 덮는다. 절대위치 형제는 z-index 가 같으면(둘 다 auto) DOM 순서로 쌓여
+     나중에 오는 video 가 위로 온다 — 영상이 뜨는 순간 라벨·탤리(OFFLINE/ON AIR)가
+     가려져 버린다(리뷰 Important). .cam-controls 가 이미 쓰는 값(1)과 맞춘다 — 새 값을
+     만들 이유가 없다. */
+  .cam-label { position: absolute; top: 12px; left: 12px; font-size: 12px; color: #4CC3D9; z-index: 1; }
   .tally {
     position: absolute; top: 10px; right: 12px; font-size: 12px; color: #9AA3AE;
-    border: 1px solid #3A4350; padding: 2px 8px; border-radius: 4px;
+    border: 1px solid #3A4350; padding: 2px 8px; border-radius: 4px; z-index: 1;
   }
   .tally.onair { color: #fff; font-weight: 600; background: #E5484D; border-color: #E5484D; }
   .tally.offline { color: #6B7684; }

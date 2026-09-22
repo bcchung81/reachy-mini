@@ -309,3 +309,18 @@ def test_rtc_메시지_kind를_처리한다():
 def test_스냅샷의_cameras_사유를_칸에_표시한다():
     src = _src()
     assert "s.cameras" in src or "snap.cameras" in src
+
+
+def test_카메라_라벨과_탤리는_영상_위에_쌓인다():
+    """`.cam-video` 는 `position: absolute; inset: 0` 로 CAM 칸 전체를 덮고, DOM 순서상
+    `.cam-label`/`.tally` **뒤**에 온다. 절대위치 형제는 z-index 가 같으면(둘 다 auto)
+    DOM 순서로 겹쳐 나중에 오는 쪽(영상)이 위로 온다 — 영상이 뜨는 순간(`video.hidden =
+    false`) 운영자가 한눈에 보는 카메라 라벨과 방송 탤리(OFFLINE/ON AIR)가 가려진다(리뷰
+    Important). `.cam-controls` 가 이미 쓰는 `z-index: 1` 과 같은 값으로 라벨·탤리를
+    그 위에 고정한다 — `.cam-video` 자체는 명시 z-index 가 없으면 auto 라 1보다 낮게 쌓여
+    손대지 않아도 된다."""
+    src = _src()
+    label_rule = _css_rule(src, ".cam-label")
+    assert re.search(r"z-index\s*:\s*[1-9]\d*", label_rule), label_rule
+    tally_rule = _css_rule(src, ".tally")
+    assert re.search(r"z-index\s*:\s*[1-9]\d*", tally_rule), tally_rule
