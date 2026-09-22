@@ -3135,3 +3135,70 @@ def test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객�
     s = h.d.snapshot()
     assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
     assert h.says() == []
+
+
+# ── 대기모드 (Task 4) ──────────────────────────────────────────────
+
+
+def test_대기_진입은_solo_role을_남은_로봇으로_만든다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    assert h.d.solo_role is None
+    h.d.toggle_standby("mc")
+    assert h.d.solo_role == "docent"
+    assert h.d.snapshot()["standby"] == ["mc"]
+
+
+def test_대기_해제는_solo_role을_되돌린다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.toggle_standby("mc")
+    assert h.d.solo_role is None
+    assert h.d.snapshot()["standby"] == []
+
+
+def test_둘_다_대기로_두는_것은_거절한다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.toggle_standby("docent")
+    assert h.d.snapshot()["standby"] == ["mc"]
+    assert any("진행할 로봇이 없다" in w for w in h.warnings)
+
+
+def test_대기_전환은_말하던_것을_먼저_멈춘다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    assert h.d.state is State.MC_SPEAKING
+    h.d.toggle_standby("docent")
+    assert h.d.state is State.IDLE
+
+
+def test_로봇이_끊기면_대기_목록에서도_지운다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.on_disconnect("mc")
+    assert h.d.snapshot()["standby"] == []
+
+
+def test_모르는_역할은_경고하고_바꾸지_않는다():
+    h = Harness()
+    h.d.toggle_standby("아무거나")
+    assert h.d.snapshot()["standby"] == []
+    assert any("모르는 역할" in w for w in h.warnings)
+
+
+def test_대기_중이어도_기존_1인_모드_테스트는_그대로_돈다():
+    """`_standby` 가 비어 있으면 `connected - standby == connected` 라 기존 동작이
+    안 바뀐다는 것을 한 번 더 확인한다 — 회귀 방지용 스모크."""
+    h = Harness()
+    h.d.on_connect("mc")
+    assert h.d.solo_role == "mc"
