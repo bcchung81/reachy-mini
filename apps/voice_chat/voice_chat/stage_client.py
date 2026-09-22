@@ -12,8 +12,8 @@ from typing import Callable
 
 from websockets.exceptions import ConnectionClosed
 
-_ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error"})
-_DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort"})
+_ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error", "rtc"})
+_DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort", "camera", "rtc", "standby"})
 
 RETRY_S = 2.0
 # `ws.recv(timeout=...)` 폴링 주기.
