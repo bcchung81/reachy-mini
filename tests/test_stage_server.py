@@ -672,3 +672,54 @@ def test_caps_가_문자열_목록이_아니면_경고하고_없는_것으로_�
         assert f"[mc] hello 의 caps 가 문자열 목록이 아니다 — 무시한다: {보인_값}" in server.warnings
         assert server.director.snapshot()["solo_available"] is False
         assert server.director.snapshot()["connected"] == ["mc"]   # 연결은 살아 붙어 있다
+
+
+# ── Task 6 — CameraRelay 배선: hello caps·연결·rtc·오류, 허브를 안 타는 raw 송신 ──
+
+from stage.camera import CameraRelay
+
+
+def test_server는_camera_속성을_스스로_만든다(server):
+    assert isinstance(server.camera, CameraRelay)
+
+
+def test_hello의_caps가_camera로_전달된다(server):
+    with connect(url_of(server)) as ws:
+        _hello_caps(ws, "mc", ["camera"])
+    assert server.camera.snapshot()["mc"]["available"] is True
+
+
+def test_연결이_끊기면_camera에도_알린다(server):
+    with connect(url_of(server)) as ws:
+        _hello_caps(ws, "mc", ["camera"])
+    for _ in range(50):
+        if server.camera.snapshot()["mc"]["available"] is False:
+            break
+        time.sleep(0.02)
+    assert server.camera.snapshot()["mc"]["available"] is False
+
+
+def test_rtc는_camera로_라우팅되고_허브_이력에_안_쌓인다(server_hub):
+    with connect(url_of(server_hub)) as mc:
+        _hello_caps(mc, "mc", ["camera"])
+        events = []
+        vid = server_hub.camera.add_viewer(events.append)
+        mc.send(json.dumps({"type": "rtc", "viewer": vid, "sdp": {"type": "offer", "sdp": "v=0"}}))
+        for _ in range(50):
+            if events:
+                break
+            time.sleep(0.02)
+        assert events and events[0]["kind"] == "rtc"
+        assert not any(k == "recv" and f.get("type") == "rtc" for k, f in server_hub.hub.events)
+        assert not any(k == "sent" and f.get("type") == "rtc" for k, f in server_hub.hub.events)
+
+
+def test_camera_오류는_camera로도_간다(server):
+    with connect(url_of(server)) as ws:
+        _hello_caps(ws, "mc", ["camera"])
+        ws.send(json.dumps({"type": "error", "where": "camera", "detail": "파이프라인 실패"}))
+        for _ in range(50):
+            if "파이프라인 실패" in server.camera.snapshot()["mc"]["reason"]:
+                break
+            time.sleep(0.02)
+        assert "파이프라인 실패" in server.camera.snapshot()["mc"]["reason"]
