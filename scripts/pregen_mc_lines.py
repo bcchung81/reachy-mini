@@ -25,6 +25,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from stage.cues import load_cues
 from stage.levels import LEVEL_NAMES, load_levels
 from stage.mc_cache import cache_key, cache_path, load_mc_lines
+from stage.prompts import build_bridge_prompt
 from stage.__main__ import build_generate
 
 
@@ -34,6 +35,13 @@ def _valid_keys(cues) -> set[str]:
     `wanted`(이번 실행이 고른 수준)가 아니라 **전체 수준**을 본다 — 안 그러면
     "이번엔 초등만 돌렸다" 는 이유만으로 다른 수준의 멀쩡한 키가 고아로
     잘못 잡힌다.
+
+    다리 대사 키(`cache_key(cue.id, name, point_text)`)도 포함한다 — 안 그러면
+    이 스크립트가 방금 생성해 둔 다리 대사가 **다음 실행에서 고아로 오판**돼
+    "지워도 되는지 확인한다" 는 경고가 뜬다. 사람이 그 경고를 믿고 지우면
+    `Director` 가 그 키를 못 찾아 원문 포인트 텍스트를 그대로 낭독하는 폴백이
+    조용히 되살아난다 — 이 스크립트를 시연 전에 돌리는 이유 자체가 그 폴백을
+    막는 것이므로, 여기서 틀리면 존재 이유가 뒤집힌다.
     """
     keys = set()
     for cue in cues:
@@ -41,6 +49,8 @@ def _valid_keys(cues) -> set[str]:
             mc_brief, _ = cue.brief_for(name)
             if mc_brief:
                 keys.add(cache_key(cue.id, name, mc_brief))
+            for point_text in cue.points_for(name):
+                keys.add(cache_key(cue.id, name, point_text))
     return keys
 
 
@@ -94,6 +104,20 @@ def main() -> None:
                 # 이 항목은 이미 파일에 남아 있다.
                 _append_entry(p, key, text)
                 print(f"  {cue.id}/{name}: {text}", flush=True)
+
+                # 포인트 왕복(큐가 여러 짧은 교환으로 쪼개진 경우)의 다리
+                # 대사도 같은 캐시·같은 키 형식으로 미리 만든다 — 없으면
+                # `Director` 가 원문 포인트 텍스트를 그대로 낭독하는 폴백으로
+                # 빠진다(드물어야 하는데, 그건 이 스크립트를 시연 전에 돌려
+                # 캐시를 채워 둔다는 전제 위에서다).
+                for point_i, point_text in enumerate(cue.points_for(name)):
+                    pkey = cache_key(cue.id, name, point_text)
+                    if pkey in out:
+                        continue
+                    ptext = gen("mc", build_bridge_prompt(point_text), [])
+                    out[pkey] = ptext
+                    _append_entry(p, pkey, ptext)
+                    print(f"  {cue.id}/{name}/pt{point_i} 다리대사: {ptext}", flush=True)
     finally:
         # 도중에 예외가 나도 여기까지는 반드시 실행된다 — 시연 담당자가
         # "몇 개까지 만들고 어디서 죽었는지" 를 알아야 다음 실행에서 재개할

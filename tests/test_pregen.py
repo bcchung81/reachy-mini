@@ -268,6 +268,38 @@ def test_이어_붙이기가_끝_개행이_없어도_YAML_을_깨지_않는다(t
     assert not p.read_text(encoding="utf-8").startswith("\n"), 설명
 
 
+def test_points_for가_준_소주제마다_다리_대사를_사전_생성한다(monkeypatch, tmp_path):
+    """`points_for(level)` 가 여러 소주제를 돌려주면, 그 각각에 대해
+    `cache_key(cue.id, level, point_text)` 로 다리 대사가 생성돼 오프닝 대사와
+    **같은 파일·같은 키 형식**으로 쌓여야 한다 — `Director` 가 그 키로 찾는다
+    (`stage/director.py`). 안 그러면 캐시 미스로 원문 포인트 텍스트가 그대로
+    낭독되는 폴백이 매번 발동한다."""
+    _고정_수준(monkeypatch, "일반")
+    briefs = {
+        lvl: {"mc_brief": "브리프", "docent_brief": "해설", "points": ["p1", "p2"]}
+        for lvl in LEVEL_NAMES
+    }
+    cue = Cue("c1", "제목", "mc", "옛 지시문", "partner", briefs=briefs)
+    monkeypatch.setattr(pregen, "load_cues", lambda: [cue])
+    monkeypatch.setattr(pregen, "load_levels", lambda: {lvl: lvl for lvl in LEVEL_NAMES})
+    out_path = tmp_path / "mc_lines.yaml"
+    _캐시_경로_고정(monkeypatch, out_path)
+    monkeypatch.setattr(
+        pregen, "build_generate",
+        lambda level: (lambda role, brief, hist: f"[{brief}] 생성"),
+    )
+
+    pregen.main()
+
+    key_p1 = cache_key("c1", "일반", "p1")
+    key_p2 = cache_key("c1", "일반", "p2")
+    written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert key_p1 in written, f"p1 다리 대사 키가 캐시에 없다: {written}"
+    assert key_p2 in written, f"p2 다리 대사 키가 캐시에 없다: {written}"
+    assert "p1" in written[key_p1], "p1 용 프롬프트(build_bridge_prompt)로 생성되지 않았다"
+    assert "p2" in written[key_p2], "p2 용 프롬프트(build_bridge_prompt)로 생성되지 않았다"
+
+
 def test_고아_키_개수를_보고한다(monkeypatch, tmp_path, capsys):
     """지금 큐시트에 없는 낡은 키가 새 항목 옆에 쌓이면 사람이 어느 줄이
     현행인지 못 가린다 — 지우지는 않되 개수는 보고해야 한다."""
