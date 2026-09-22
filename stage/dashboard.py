@@ -242,7 +242,11 @@ class DashboardServer:
         lines: list[str] = []
         ok = True
         try:
-            self._dispatch(self._director, cmd, lines.append)
+            # `camera=self._camera` 를 안 넘기면 `console.dispatch` 의 `c` 분기가
+            # 항상 `camera is None` 으로 보고 거절한다 — 대시보드의 카메라 켜기/끄기
+            # 버튼이 조용히 아무 일도 안 하게 된다(실기에서 직접 눌러 보고서야
+            # 드러났다, 13개 태스크 리뷰·최종 리뷰 모두 이 호출부를 안 봤다).
+            self._dispatch(self._director, cmd, lines.append, camera=self._camera)
         except Exception as exc:  # noqa: BLE001 — 콘솔과 같다: 거절은 보여주고 계속
             ok = False
             lines.append(f"거절됨: {exc}")

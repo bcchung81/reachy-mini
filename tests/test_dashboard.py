@@ -354,6 +354,7 @@ class _가짜카메라:
     def __init__(self):
         self._deliver = {}
         self._n = 0
+        self.toggled = []
 
     def add_viewer(self, deliver):
         self._n += 1
@@ -366,6 +367,9 @@ class _가짜카메라:
 
     def on_viewer_rtc(self, viewer, msg):
         self.last_viewer_rtc = (viewer, msg)
+
+    def toggle(self, role):
+        self.toggled.append(role)
 
     def snapshot(self):
         return {"mc": {"available": True, "enabled": True, "reason": ""},
@@ -406,6 +410,21 @@ def test_rtc_메시지는_camera로_간다(dash_cam):
             time.sleep(0.02)
         viewer, msg = dash_cam["cam"].last_viewer_rtc
         assert msg == {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}
+
+
+def test_c_명령은_카메라_토글로_간다(dash_cam):
+    """실기 검증(Task 13) 중 발견 — `_on_command` 가 `self._dispatch(...)` 를 부를 때
+    `camera=self._camera` 를 안 넘겨서, 대시보드에서 카메라 켜기/끄기 버튼을 눌러도
+    console.dispatch 의 `c` 분기가 `camera is None` 으로 보고 "카메라 기능을 쓸 수
+    없다" 로 거절했다 — 실기에서 직접 눌러 보고서야 드러났다(13개 태스크 리뷰와
+    최종 전체 브랜치 리뷰 모두 이 경로를 안 봤다). `z`(대기모드)는 `camera` 를 안
+    쓰므로 같은 결함이 없다."""
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        json.loads(ws.recv(timeout=3))
+        ws.send(json.dumps({"cmd": "c mc"}))
+        r = _recv_until(ws, "command")
+        assert (r["cmd"], r["ok"]) == ("c mc", True), r
+    assert dash_cam["cam"].toggled == ["mc"]
 
 
 def test_rtc가_dict가_아니면_경고하고_연결을_유지한다(tmp_path):
