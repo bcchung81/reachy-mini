@@ -116,8 +116,17 @@ def make_camera_handlers(client, log=print):
     """카메라 시청 시작/끊기·원격 SDP·ICE 를 `RtcStreamer` 로 잇는다.
 
     `client.rtc` 로 로봇→감독 송신을 한다 — `RtcStreamer` 는 소켓을 모른다.
+
+    **`on_error=`** 는 `client.error("camera", …)` 로 감독에게 실패를 올린다(리뷰 I2).
+    `warn=log` 는 터미널에만 남고 감독·대시보드에는 안 닿는다 — `CameraRelay.on_robot_error`
+    (대시보드 카메라 칸의 "사유" 문구를 채우는 자리, 테스트도 있다)가 프로덕션에서 한 번도
+    안 불리면, 파이프라인이 죽어도 화면은 조용히 "정상"(`reason: ""`)으로 보인다 — C1 과
+    같은 부류의 소리 없는 실패다. `warn` 은 그대로 둔다(터미널 로그는 계속 남긴다).
     """
-    streamer = RtcStreamer(send_rtc=client.rtc, warn=log)
+    streamer = RtcStreamer(
+        send_rtc=client.rtc, warn=log,
+        on_error=lambda detail: client.error("camera", detail),
+    )
 
     def on_camera(viewer: str, on: bool) -> None:
         (streamer.start_viewer if on else streamer.stop_viewer)(viewer)

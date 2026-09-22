@@ -37,10 +37,19 @@ def _default_find(name: str) -> bool:
 class RtcStreamer:
     def __init__(self, send_rtc: Callable[[str, dict], None],
                  find: Callable[[str], bool] = _default_find,
-                 warn: Callable[[str], None] = print) -> None:
+                 warn: Callable[[str], None] = print,
+                 on_error: Callable[[str], None] | None = None) -> None:
         self._send_rtc = send_rtc
         self._find = find
         self._warn = warn
+        # 로봇→감독 `error{where:"camera"}` 를 보내는 자리(리뷰 I2). `warn` 은 터미널
+        # 로그만 남기고 감독·대시보드에는 안 닿는다 — 이 콜백이 없으면
+        # `CameraRelay.on_robot_error`(테스트도 있는 멀쩡한 경로)가 프로덕션에서
+        # **한 번도** 안 불려, 대시보드 카메라 칸의 "사유" 가 실패해도 영원히
+        # `reason: ""` 로 남는다(C1 과 같은 부류의 조용한 실패). 기본은 아무것도
+        # 안 한다 — `main.py::make_camera_handlers` 가 `client.error("camera", …)`
+        # 로 채운다.
+        self._on_error = on_error or (lambda detail: None)
         self._pipe = None
         self._webrtcbins: dict[str, object] = {}
         self._queues: dict[str, object] = {}
@@ -50,11 +59,26 @@ class RtcStreamer:
     def available(self) -> bool:
         if config.get("REACHY_VISION", "1").lower() in ("0", "false", "no"):
             return False
-        if not self._find(config.get("REACHY_CAMERA_SRC", "libcamerasrc").split()[0]):
+        try:
+            if not self._find(config.get("REACHY_CAMERA_SRC", "libcamerasrc").split()[0]):
+                return False
+            if self._encoder_name() is None:
+                return False
+            return all(self._find(n) for n in _REQUIRED)
+        except Exception as exc:
+            # `_find`(기본 `_default_find`)는 `import gi`·`Gst.init` 을 부른다 — 이
+            # 저장소의 `pyproject.toml` 은 PyGObject 를 **Linux 전용**으로 선언한다,
+            # 그러니 비-Linux/오설정 환경에서는 여기서 예외가 나는 게 실제로
+            # 일어날 수 있는 일이다(리뷰 I4). `main.py` 의 caps 프로브
+            # (`RtcStreamer(...).available()`)는 try/except 없이 이 값을 직접
+            # 부르므로, 여기서 삼키지 않으면 **앱 기동 전체**가 죽는다 — 오디오
+            # 경로가 장치를 못 찾으면 리스너 스레드 하나만 접는 것과 달리 훨씬
+            # 나쁜 실패 모양이다. "카메라 없음" 으로 물러나는 것이 맞다.
+            self._warn(
+                f"  [카메라] available() 확인 중 오류({type(exc).__name__}: {exc}) "
+                "— 카메라 없음으로 처리한다"
+            )
             return False
-        if self._encoder_name() is None:
-            return False
-        return all(self._find(n) for n in _REQUIRED)
 
     def _encoder_name(self) -> str | None:
         for name in _ENCODER_LADDER:
@@ -137,14 +161,30 @@ class RtcStreamer:
                 return
             if self._pipe is None:
                 if not self.available():
-                    self._warn("  [카메라] 스트림을 열 수 없다(available()=False)")
+                    msg = "카메라를 쓸 수 없다(available()=False)"
+                    self._warn(f"  [카메라] 스트림을 열 수 없다({msg})")
+                    self._on_error(msg)   # 리뷰 I2 — 감독/대시보드에도 사유를 준다
                     return
-                camera_in.close()
-                camera_in.note_rtc_active(True)
-                if not Gst.is_initialized():
-                    Gst.init(None)
-                self._pipe = Gst.parse_launch(self._pipeline_str())
-                self._pipe.set_state(Gst.State.PLAYING)
+                try:
+                    camera_in.close()
+                    camera_in.note_rtc_active(True)
+                    if not Gst.is_initialized():
+                        Gst.init(None)
+                    self._pipe = Gst.parse_launch(self._pipeline_str())
+                    self._pipe.set_state(Gst.State.PLAYING)
+                except Exception as exc:
+                    # `Gst.parse_launch()` 가 이 인코더에 없는 속성을 만나면 여기서
+                    # 터진다(`_encoder_clause` 의 `extra-controls` 결함이 실제로
+                    # 났던 자리, 이제는 방어선이 하나 더 붙는다 — 리뷰 I2). 이미
+                    # 켠 배타 플래그를 되돌린다 — 안 그러면 `camera_in` 의 JPEG
+                    # 스냅샷 경로가 실패한 스트림 때문에 영영 막힌다.
+                    self._warn(
+                        f"  [카메라] 파이프라인을 못 열었다({type(exc).__name__}: {exc})"
+                    )
+                    self._on_error(f"파이프라인 실패: {type(exc).__name__}: {exc}")
+                    self._pipe = None
+                    camera_in.note_rtc_active(False)
+                    return
             tee = self._pipe.get_by_name("camtee")
             queue = Gst.ElementFactory.make("queue")
             queue.set_property("leaky", 2)  # downstream — 느린 시청자가 다른 시청자를 안 막는다
@@ -224,11 +264,17 @@ class RtcStreamer:
         from gi.repository import Gst
 
         def on_offer(promise, _):
-            # **reply 를 붙잡는다.** 한 줄로 꺼내면 SDP 메모리가 풀린다(PyGObject 함정).
-            reply = promise.get_reply()
-            offer = reply.get_value("offer")
-            text = offer.sdp.as_text()   # set-local-description **전에** 뽑는다.
-            webrtcbin.emit("set-local-description", offer, Gst.Promise.new())
-            self._send_rtc(viewer, {"sdp": {"type": "offer", "sdp": text}})
+            try:
+                # **reply 를 붙잡는다.** 한 줄로 꺼내면 SDP 메모리가 풀린다(PyGObject 함정).
+                reply = promise.get_reply()
+                offer = reply.get_value("offer")
+                text = offer.sdp.as_text()   # set-local-description **전에** 뽑는다.
+                webrtcbin.emit("set-local-description", offer, Gst.Promise.new())
+                self._send_rtc(viewer, {"sdp": {"type": "offer", "sdp": text}})
+            except Exception as exc:
+                # GStreamer 시그널 콜백 안의 예외는 GLib 메인루프가 삼키고 stderr 에만
+                # 찍는다 — 감독/대시보드는 절대 못 본다(리뷰 I2, "negotiation exception").
+                self._warn(f"  [카메라] offer 협상 실패({viewer}): {type(exc).__name__}: {exc}")
+                self._on_error(f"offer 협상 실패: {type(exc).__name__}: {exc}")
 
         webrtcbin.emit("create-offer", None, Gst.Promise.new_with_change_func(on_offer, None))

@@ -216,6 +216,58 @@ def test_openh264enc_파이프라인이_실제로_파싱된다(monkeypatch):
     _parse_with_encoder("openh264enc", monkeypatch)
 
 
+# ── 최종 전체 브랜치 리뷰 I4 — available() 은 find 가 터져도 죽지 않는다 ──────
+
+
+def test_available은_find가_터져도_예외를_내지_않고_False를_돌려준다():
+    """리뷰 I4 — `available()` → `self._find`(기본 `_default_find`)는 `import gi`·
+    `Gst.init` 을 부른다. PyGObject 가 이 파이썬에 없거나(이 저장소의 `pyproject.toml`
+    은 이걸 Linux 전용으로 선언한다) 초기화가 실패하면 예외가 난다 — `main.py:400` 의
+    caps 프로브는 try/except 없이 `available()` 을 직접 부르므로, 여기서 안 삼키면
+    **앱 기동 전체**가 죽는다. 실제 `gi` 부재를 흉내 내지 않고, 주입한 `find` 가
+    터지는 것만으로 같은 실패 모양을 재현한다(이 파일의 기존 가짜 주입 방식과 같다)."""
+    def boom(name):
+        raise RuntimeError("gi 를 못 불러온다(흉내)")
+
+    warnings: list[str] = []
+    st = camera_rtc.RtcStreamer(send_rtc=lambda *a: None, find=boom, warn=warnings.append)
+    assert st.available() is False
+    assert any("오류" in w for w in warnings), warnings
+
+
+# ── 최종 전체 브랜치 리뷰 I2 — 실패는 warn 뿐 아니라 on_error 로도 나간다 ──────
+
+
+def test_available이_False면_start_viewer가_on_error를_부른다():
+    """리뷰 I2 — `RtcStreamer` 는 실패해도 `warn`(터미널)만 불러 `CameraRelay.on_robot_error`
+    (감독·대시보드 경로)가 프로덕션에서 한 번도 안 불렸다. `available()==False` 는
+    `start_viewer` 의 가장 흔한 실패 지점이다."""
+    errors: list[str] = []
+    st = camera_rtc.RtcStreamer(
+        send_rtc=lambda *a: None, find=_finder(set()),
+        warn=lambda m: None, on_error=errors.append,
+    )
+    st.start_viewer("v1")
+    assert errors, "available()=False 인데 on_error 가 안 불렸다"
+    assert "카메라" in errors[0]
+
+
+def test_파이프라인_조립_실패도_on_error로_간다(monkeypatch):
+    """리뷰 I2 — `Gst.parse_launch()` 실패(예: 인코더에 없는 속성, 실제로 이 저장소에서
+    `x264enc` 로 재현된 적이 있다)도 `on_error` 로 나가야 한다. `_pipeline_str()` 을
+    일부러 안 맞는 문자열로 바꿔 실제 `Gst.parse_launch()` 가 터지게 한다."""
+    present = {"libcamerasrc", "v4l2h264enc", "rtph264pay", "h264parse", "webrtcbin"}
+    errors: list[str] = []
+    st = camera_rtc.RtcStreamer(
+        send_rtc=lambda *a: None, find=_finder(present),
+        warn=lambda m: None, on_error=errors.append,
+    )
+    st._pipeline_str = lambda: "이런요소는없다123 ! fakesink"
+    st.start_viewer("v1")
+    assert errors, "파이프라인 조립이 실패했는데 on_error 가 안 불렸다"
+    assert st._pipe is None, "실패한 파이프라인이 남아 다음 시청자를 막는다"
+
+
 @pytest.mark.skipif(not _has("x264enc") or not _has("webrtcbin"),
                      reason="이 맥에 x264enc/webrtcbin 이 없다")
 def test_videotestsrc로_실제_프레임이_간다(monkeypatch):
