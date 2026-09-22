@@ -31,6 +31,8 @@ class StageServer:
         hub=None,
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
+        level_point_min_chars: dict[str, int] | None = None,
+        level_point_max: dict[str, tuple[int, int]] | None = None,
         camera: CameraRelay | None = None,
     ) -> None:
         self._warn = warn
@@ -58,6 +60,8 @@ class StageServer:
             docent_min_chars=docent_min_chars,
             level_min_chars=level_min_chars,
             on_level_change=on_level_change,
+            level_point_min_chars=level_point_min_chars,
+            level_point_max=level_point_max,
         )
         self.camera = camera if camera is not None else CameraRelay(
             send_robot=self._send_raw, warn=warn,

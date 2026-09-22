@@ -32,6 +32,7 @@ class Harness:
         self, generate=None, expect_units=None, after=("", ""),
         sheet=None, level_name="일반", mc_lines=None, docent_min_chars=None,
         levels=None, on_level_change=None,
+        level_point_min_chars=None, level_point_max=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -81,6 +82,10 @@ class Harness:
             kw["level_min_chars"] = levels
         if on_level_change is not None:
             kw["on_level_change"] = on_level_change
+        if level_point_min_chars is not None:
+            kw["level_point_min_chars"] = level_point_min_chars
+        if level_point_max is not None:
+            kw["level_point_max"] = level_point_max
         self.d = Director(
             sheet,
             generate=_gen,
@@ -3252,3 +3257,15 @@ def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
     h.d.toggle_standby("docent")
     assert h.d.state is State.IDLE
     assert h.mics() == [], f"대기 전환 뒤에 마이크 커맨드가 나갔다: {h.sent}"
+
+
+def test_포인트_분량_dict가_감독까지_닿는다():
+    h = Harness(level_point_min_chars={"일반": 60}, level_point_max={"일반": (2, 95)})
+    assert h.d._level_point_min_chars["일반"] == 60
+    assert h.d._level_point_max["일반"] == (2, 95)
+
+
+def test_포인트_분량_dict를_안_주면_빈_dict다():
+    h = Harness()
+    assert h.d._level_point_min_chars == {}
+    assert h.d._level_point_max == {}

@@ -350,6 +350,10 @@ def main() -> None:
         mc_lines=mc_lines, level_name=level.name,
         docent_min_chars=level.min_chars,
         level_min_chars={name: lv.min_chars for name, lv in levels.items()},
+        level_point_min_chars={name: lv.point_min_chars for name, lv in levels.items()},
+        level_point_max={
+            name: (lv.point_max_sentences, lv.point_max_chars) for name, lv in levels.items()
+        },
         on_level_change=generate.select,
         warn=warn, hub=hub,
     )

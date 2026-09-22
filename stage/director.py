@@ -179,6 +179,8 @@ class Director:
         docent_min_chars: int = MIN_CHARS,
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
+        level_point_min_chars: dict[str, int] | None = None,
+        level_point_max: dict[str, tuple[int, int]] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -236,6 +238,14 @@ class Director:
         # "이미 그 수준") 아무것도 안 하는 훅이 불릴 일도 없다.
         self._on_level_change = on_level_change or (lambda name: None)
         self._level_pending: str | None = None
+
+        # 포인트 라운드 도슨트 답의 분량(하한·상한) — `_level_min_chars`와 같은 결
+        # (Level 객체 전체가 아니라 쓰는 수만 받는다). 없으면 빈 dict — 포인트가
+        # 없는 큐만 쓰는 감독(대부분의 기존 테스트)은 이 값을 아예 안 본다.
+        self._level_point_min_chars = dict(level_point_min_chars or {})
+        self._level_point_max = dict(level_point_max or {})
+        self._points: list[str] = []
+        self._point_i: int = 0
 
         self._machine = TurnMachine()
         self.history: list[dict] = []

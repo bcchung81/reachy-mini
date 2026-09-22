@@ -915,6 +915,8 @@ def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkey
 
     d = seen["server"].director
     assert d.level_names() == ["초등", "중고등", "일반", "전문가"]
+    levels = load_levels()
+    assert d._level_point_min_chars["일반"] == levels["일반"].point_min_chars
     d.set_level("전문가")
     d.start()            # 로봇이 없어 say 는 "아직 붙지 않았다" 로 버려진다 — 생성만 본다
     assert 해설_받음.wait(2.0), 불린것
