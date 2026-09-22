@@ -501,7 +501,8 @@ start_ports_free 8000 8001; echo "rc=$?"
     assert ":8777 를 이미 쥔 것이 있다" in first
     assert "python3.1 4242" in first
     assert ":8000 비어 있음" in first
-    # stop 이 감독을 안 쓸어낸다 — 8777/8778 을 쥔 감독은 그 터미널에서 q 로 끝낸다.
+    # `./reachy.sh stop` 이 감독·대시보드도 쓸어낸다(stop_director_dashboard) — 다만 옆 시연을
+    # 살려 두고 싶으면 그 감독 터미널에서 q 로 끝내는 길도 안내한다.
     assert "그 감독 터미널에서 q" in first and "./reachy.sh stop" in first
     assert "이미 쥔" not in second
 
@@ -664,6 +665,57 @@ printf '%s\n' \
         ".venv/bin/python -u apps/voice_chat/voice_chat/main.py",
         "/Users/x/reachy-mini/.venv/bin/python3.12 apps/voice_chat/voice_chat/main.py",
     ]
+
+
+# ── stop 이 감독·대시보드도 쓸어낸다 ────────────────────────────────
+# 사용자 요청(2026-09-22): `stop` 을 직접 치면 감독(`python -m stage`)·대시보드도 끝나야 한다.
+# `robot down` 은 이 함수를 안 부른다 — 한 대만 내리고 옆 시연은 살려 둬야 하는 경로라서다.
+def test_감독_스윕_패턴은_m_stage로_끝나는_것만_잡는다():
+    """`-u` 유무 상관없이 실제 감독 실행은 잡되, "stage" 를 이름에 담은 무관한 프로세스는
+    안 잡아야 한다 — `[-]m stage$` 가 pgrep -f 에 그대로 들어간다."""
+    r = subprocess.run(
+        ["bash", "-c", r'''
+printf '%s\n' \
+  ".venv/bin/python -m stage" \
+  ".venv/bin/python -u -m stage" \
+  "/Users/x/reachy-mini/.venv/bin/python3.12 -m stage" \
+  "python -m stage_experiment" \
+  "vim stage/__main__.py" \
+  | grep -E "[-]m stage$"
+'''],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert r.stdout.splitlines() == [
+        ".venv/bin/python -m stage",
+        ".venv/bin/python -u -m stage",
+        "/Users/x/reachy-mini/.venv/bin/python3.12 -m stage",
+    ]
+
+
+def test_stop_director_dashboard는_감독을_쓸고_8777_8778을_쥔_것도_죽인다(tmp_path):
+    r = _source(r'''
+SWEPT=""
+sweep() { SWEPT="$SWEPT $1"; }
+lsof() {
+  case "$*" in
+    *TCP:8777*) echo 4242 ;;
+    *TCP:8778*) echo 4343 ;;
+  esac
+}
+KILLED=""
+kill() { KILLED="$KILLED $*"; }
+stop_director_dashboard
+echo "SWEPT=$SWEPT"
+echo "KILLED=$KILLED"
+''', tmp_path)
+    assert "SWEPT= [-]m stage$" in r.stdout, r.stdout
+    assert "KILLED= 4242 4343" in r.stdout, r.stdout
+
+
+def test_최상위_stop_명령은_stop_all과_stop_director_dashboard를_둘_다_부른다():
+    """디스패처 배선 확인 — 문자열 하나가 계약이다(`case "$cmd" in … stop) …`)."""
+    text = (ROOT / "reachy.sh").read_text()
+    assert "stop)  stop_all; stop_director_dashboard ;;" in text
 
 
 # ── 절대경로 인터프리터 (M6) ──────────────────────────────────────

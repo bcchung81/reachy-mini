@@ -16,7 +16,7 @@
 #   ./reachy.sh robot deploy|logs|status|fix  실기 운영 — 재배포·실시간 로그·상태·복구
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
 #   ./reachy.sh logs [줄수]            마지막 세션 로그 + **실시간 이어보기** (--no-follow 로 끔)
-#   ./reachy.sh stop                   띄운 것 전부 종료 (고아까지 쓸어낸다)
+#   ./reachy.sh stop                   띄운 것 전부 종료 (감독·대시보드 포함, 고아까지 쓸어낸다)
 #   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
 #   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
 #
@@ -319,6 +319,23 @@ stop_all() {
   # 앱 $APP_PROC_PAT)이 이미 같은 프로세스를 잡고, 낡은 pid 파일은 **재사용된 남의 pid** 를 죽일
   # 수 있다(kill_pidfile 은 그 pid 가 무엇인지 안 본다). 예전 실행이 남긴 파일만 치운다.
   rm -f "$LOG_DIR"/start-*.pid
+}
+
+# **최상위 `stop` 전용이다 — `robot_down` 은 안 부른다.** `robot down` 도 `stop_all` 을 지나는데,
+# 시연 중 한 대를 내렸다 올리려다 옆 터미널의 감독 콘솔까지 죽이면 안 된다(원래 `start_ports_free`
+# 의 경고가 이 이유로 8777/8778 을 stop 이 안 건드린다고 했다). 하지만 운영자가 **직접**
+# `./reachy.sh stop` 을 친 것은 "전부 내려라" 는 뜻이므로, 그 경로에서만 감독·대시보드도 함께
+# 쓸어낸다. 패턴(`python -m stage`, `-u` 유무 상관없이 끝이 `-m stage`)과 포트(8777/8778) 둘 다
+# 본다 — 패턴이 못 잡는 변형 실행도 포트 쪽이 잡는다.
+stop_director_dashboard() {
+  sweep "[-]m stage$" "무대감독"
+  local p pid
+  for p in 8777 8778; do
+    pid=$(lsof -tnP -iTCP:"$p" -sTCP:LISTEN 2>/dev/null)
+    [ -n "$pid" ] || continue
+    echo "   ${c_dim}:$p 를 쥔 것 정리: $pid${c_off}"
+    kill $pid 2>/dev/null
+  done
 }
 
 # 앱 프로세스를 찾는 패턴 — **파이썬이 그 파일을 돌리는 것만.** 경로만 보면 `pgrep -f` 가
@@ -1031,11 +1048,12 @@ start_ports_free() {  # port...
     fi
   done
   [ "$bad" = "0" ] && return 0
-  # `stop` 은 감독(`python -m stage`)을 **쓸지 않는다** — `robot down` 도 stop 을 지나는데,
-  # 시연 중 한 대를 내렸다 올리려다 옆 터미널의 감독 콘솔까지 죽이면 안 된다. 그래서
-  # 8777/8778 은 stop 으로 안 비워진다고 바로 말한다(예전 문구는 stop 이 다 쓴다고 했다).
+  # **`./reachy.sh stop` 이 감독·대시보드(8777/8778)까지 쓸어낸다** — 단 `robot down`(한 대만
+  # 내리고 옆 시연은 살려 둬야 하는 경로)이 지나는 `stop_all` 안에는 없다, `stop` 커맨드 자신의
+  # 몫(`stop_director_dashboard`)으로 따로 뗐다. 그러니 옆 터미널에서 시연 중인 감독을 이 창에서
+  # 실수로 죽이지 않으려면 `stop` 대신 그 감독 터미널에서 q 로 끝낸다.
   echo "   ${c_dim}위 프로세스를 내린 뒤 다시 — 데몬·앱(8000/8001)이면 ./reachy.sh stop 이 쓸어낸다.${c_off}"
-  echo "   ${c_dim}감독·대시보드(8777/8778)는 stop 이 건드리지 않는다 — 그 감독 터미널에서 q, 터미널이 없으면 위 PID 를 kill${c_off}"
+  echo "   ${c_dim}감독·대시보드(8777/8778)도 ./reachy.sh stop 이 쓸어낸다 — 옆 시연을 살려 두려면 그 감독 터미널에서 q, 터미널이 없으면 위 PID 를 kill${c_off}"
   return 1
 }
 
@@ -1458,7 +1476,7 @@ case "$cmd" in
   serve) run_serve "$@" ;;
   robot) run_robot "$@" ;;
   check) say_step "상태"; status ;;
-  stop)  stop_all ;;
+  stop)  stop_all; stop_director_dashboard ;;
   logs)  show_logs "$@" ;;
   # 측정·예열도 이 진입점 하나로 통한다 — 파이썬 도구는 scripts/ 에 있지만
   # 인터프리터(.venv 강제)·작업 디렉토리·환경을 여기서 보장해 주는 것이 안전하다.
