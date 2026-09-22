@@ -361,6 +361,30 @@ def test_standby_지시가_on_standby로_간다():
     assert ("standby", True) in got
 
 
+def test_핸들러는_나중에_채울_수_있다():
+    """`main.py::stage_run` 이 `client = StageClient(url, role, None, ...)` 로 먼저
+    만들고 카메라 팩토리가 `client.rtc` 를 참조한 뒤 `set_handlers()` 로 채우는
+    순서를 그대로 흉내낸다 — 순환 의존(Handlers 는 client.rtc 를, client 생성은
+    Handlers 를 필요로 함)을 끊는 자리다.
+
+    `run_once()` 와 같은 관용구(접속 후 ws 가 닫히면 멈춘다)를 쓴다 — 바깥(재접속)·
+    안쪽(수신) 이중 루프라 단순 호출 횟수 카운터로는 `recv()` 가 한 번도 안 불리고
+    끝나 버린다(브리프 초안의 `n[0] > 1` 이 그 함정이었다, 직접 실행해서 확인함).
+    """
+    got, handlers = collector()
+    client = StageClient("ws://x", "mc", None)
+    client.set_handlers(handlers)
+    ws = FakeWS(inbox=[{"type": "abort"}])
+    calls = {"n": 0}
+
+    def connect_fn(url):
+        calls["n"] += 1
+        return ws
+
+    client.run(should_stop=lambda: calls["n"] >= 1 and ws.closed, connect_fn=connect_fn)
+    assert ("abort",) in got
+
+
 def test_rtc_송신은_viewer와_페이로드를_싣는다():
     got, handlers = collector()
     client = StageClient("ws://x", "mc", handlers)

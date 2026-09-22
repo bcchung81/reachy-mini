@@ -18,6 +18,7 @@
 import contextlib
 import sys
 import threading
+import time
 from pathlib import Path
 
 from reachy_mini import ReachyMini, ReachyMiniApp
@@ -30,6 +31,7 @@ from voice_loop import voice_loop  # noqa: E402
 import os
 
 import config as _config  # noqa: E402
+from camera_rtc import RtcStreamer  # noqa: E402
 from stage_client import Handlers, StageClient  # noqa: E402
 
 ROLES = ("mc", "docent")
@@ -108,6 +110,50 @@ def make_abort(speaker, player, log=print):
         log("  [감독 abort — 발화·모션 중단]")
 
     return on_abort
+
+
+def make_camera_handlers(client, log=print):
+    """카메라 시청 시작/끊기·원격 SDP·ICE 를 `RtcStreamer` 로 잇는다.
+
+    `client.rtc` 로 로봇→감독 송신을 한다 — `RtcStreamer` 는 소켓을 모른다.
+    """
+    streamer = RtcStreamer(send_rtc=client.rtc, warn=log)
+
+    def on_camera(viewer: str, on: bool) -> None:
+        (streamer.start_viewer if on else streamer.stop_viewer)(viewer)
+
+    def on_rtc(viewer: str, payload: dict) -> None:
+        streamer.on_remote(viewer, payload)
+
+    return streamer, on_camera, on_rtc
+
+
+def make_standby_worker(reachy_mini, speaker, player, log=print):
+    """대기모드 진입/해제. **블로킹 SDK 호출을 감독 메시지 수신 스레드에서 안 돌린다**
+    — `SayRunner` 와 같은 이유로 작은 워커 스레드에 맡긴다. 순서는 `reachy.sh` 의
+    `robot_wake()` 와 같다(기상: 모터 켜기 → 3초 → wake_up)."""
+    lock = threading.Lock()
+
+    def enter():
+        speaker.stop()
+        if player is not None:
+            player.cancel()
+        with lock:
+            reachy_mini.goto_sleep()
+            reachy_mini.disable_motors()
+        log("  [대기모드 진입]")
+
+    def exit_():
+        with lock:
+            reachy_mini.enable_motors()
+            time.sleep(3)
+            reachy_mini.wake_up()
+        log("  [대기모드 해제]")
+
+    def on_standby(on: bool) -> None:
+        threading.Thread(target=(enter if on else exit_), daemon=True).start()
+
+    return on_standby
 
 
 def role_of_env() -> str | None:
@@ -349,18 +395,32 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
 
         on_mic = make_mic_sink(mic_open, has_listener=lambda: listener_alive(voice_thread))
 
+        # caps: 이 로봇이 카메라 스트림을 실제로 열 수 있을 때만 싣는다(재배포 안 된
+        # 옛 앱은 아예 안 실어 감독이 그 로봇에 camera 지시를 보내지 않는다).
+        caps = ["camera"] if RtcStreamer(send_rtc=lambda *a: None).available() else []
+
+        # **순환 의존을 끊는 순서다.** `Handlers` 의 `on_camera`/`on_rtc` 는
+        # `RtcStreamer(send_rtc=client.rtc, ...)` 로 이 `client` 자신을 참조해야
+        # 하는데, `client` 생성에는 `Handlers` 가 필요하다 — 그래서 `client` 를
+        # 핸들러 없이 먼저 만들고, 카메라·대기모드 팩토리를 그 뒤에, `Handlers`
+        # 조립과 `set_handlers()` 를 가장 마지막에 한다.
         client = StageClient(
-            url,
-            role,
-            Handlers(
-                on_say=say_runner.on_say,
-                on_mic=on_mic,
-                on_gaze=lambda target: print(f"  [시선 {target}]"),
-                on_abort=make_abort(speaker, player),
-            ),
+            url, role, None,   # 핸들러는 카메라 팩토리가 client.rtc 를 참조한 뒤 채운다
             unit_id=_unit_id(reachy_mini),
             version=_sdk_version(),
+            caps=caps,
         )
+        camera_streamer, on_camera, on_rtc = make_camera_handlers(client)
+        on_standby = make_standby_worker(reachy_mini, speaker, player)
+        client.set_handlers(Handlers(
+            on_say=say_runner.on_say,
+            on_mic=on_mic,
+            on_gaze=lambda target: print(f"  [시선 {target}]"),
+            on_abort=make_abort(speaker, player),
+            on_camera=on_camera,
+            on_rtc=on_rtc,
+            on_standby=on_standby,
+        ))
 
         # 사회자만 듣는다. 도슨트는 감독의 지시만 받는다.
         if role == "mc":
@@ -378,6 +438,7 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
             voice_thread.start()
 
         client.run(should_stop=stop_event.is_set)
+        camera_streamer.stop_all()
 
         # client.run() 이 돌아왔다 — stop_event 가 섰거나 감독 연결이 끊어졌다.
         # 이 `with` 블록이 끝나면 ExitStack 이 speaker/player/driver 를 정리한다.

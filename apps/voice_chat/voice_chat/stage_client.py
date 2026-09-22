@@ -54,7 +54,7 @@ class StageClient:
         self,
         url: str,
         role: str,
-        handlers: Handlers,
+        handlers: Handlers | None = None,
         unit_id: str | None = None,
         version: str = "",
         caps: list[str] | None = None,
@@ -81,6 +81,15 @@ class StageClient:
 
     def error(self, where: str, detail: str) -> None:
         self._send("error", where=where, detail=detail)
+
+    def set_handlers(self, handlers: Handlers) -> None:
+        """`Handlers` 가 이 클라이언트 자신(`self.rtc` 등)을 참조해야 할 때, 생성 뒤에
+        채운다 — `main.py::stage_run` 이 `RtcStreamer(send_rtc=client.rtc, ...)` 를 먼저
+        만들고 그 뒤에 `Handlers` 를 조립하는 이유가 이것이다(순환을 끊는다).
+        `run()` 을 부르기 **전에** 반드시 이 메서드로 채워야 한다 — 여기서는 `None` 검사를
+        하지 않는다(배선 순서로 보장한다, 잘못되면 `_on_raw` 에서 `AttributeError` 로
+        바로 드러난다)."""
+        self._h = handlers
 
     def rtc(self, viewer: str, payload: dict) -> None:
         self._send("rtc", viewer=viewer, **payload)

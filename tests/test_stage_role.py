@@ -347,6 +347,9 @@ def test_말하는_도중에_abort_와_mic_이_처리된다():
             on_mic=lambda o: 받은것.append(f"mic:{o}"),
             on_gaze=lambda t: None,
             on_abort=on_abort,
+            on_camera=lambda viewer, on: None,
+            on_rtc=lambda viewer, payload: None,
+            on_standby=lambda on: None,
         ),
         warn=lambda m: None,
     )
@@ -526,6 +529,81 @@ def test_죽은_청취_스레드는_리스너로_치지_않는다():
     t.start()
     t.join()
     assert main_mod.listener_alive(t) is False        # 끝났다
+
+
+# ── 카메라·대기모드 핸들러 배선 (Task 11) ────────────────────────────
+
+
+def test_stage_run은_카메라와_대기모드_핸들러를_배선한다(monkeypatch):
+    """실제 로봇·소켓 없이 `stage_run` 안에서 만들어지는 Handlers 를 가로챈다.
+
+    `RtcStreamer(send_rtc=client.rtc, ...)` 는 이미 만들어진 `client` 를 필요로
+    하는데, `Handlers` 안의 `on_camera`/`on_rtc` 는 그 `RtcStreamer` 를 참조해야
+    한다 — 그래서 `stage_run` 은 `StageClient(..., None, ...)` 로 핸들러 없이 먼저
+    만들고, 카메라·대기모드 팩토리를 그 뒤에, `client.set_handlers(Handlers(...))`
+    를 가장 마지막에 부른다(순환 의존을 끊는 순서). 이 테스트는 그 순서가 실제로
+    지켜지는지 — 즉 `set_handlers` 로 넘어온 `Handlers` 에 7개 필드가 전부
+    채워지는지 본다.
+
+    `session.build` 는 실기 SDK(`RobotDriver`/`Idler`)를 필요로 해서 가짜 미니로는
+    못 돈다 — `stage_run` 이 `from session import ... build` 를 함수 안에서
+    **다시** import 하므로, `main_mod.build` 가 아니라 `session` 모듈 자체의
+    속성을 갈아 끼워야 한다.
+    """
+    import threading
+
+    import session as session_mod
+
+    captured = {}
+
+    class 가짜StageClient:
+        def __init__(self, url, role, handlers, **kw):
+            captured["handlers"] = handlers
+            captured["caps"] = kw.get("caps")
+
+        def set_handlers(self, handlers) -> None:
+            captured["handlers"] = handlers
+
+        def rtc(self, viewer: str, payload: dict) -> None:
+            """`make_camera_handlers` 가 `client.rtc` 를 참조한다 — 실제로 부르진
+            않지만 속성 접근 자체가 있어야 `RtcStreamer(send_rtc=client.rtc, ...)`
+            생성이 AttributeError 없이 지나간다."""
+
+        def run(self, should_stop) -> None:
+            pass  # 소켓 없이 즉시 돌아온다 — 배선만 본다.
+
+    class _가짜스피커:
+        def stop(self) -> None:
+            pass
+
+    def 가짜_build(stack, no_robot: bool = False, mini=None):
+        # 진짜 build() 는 RobotDriver/Idler 로 reachy_mini SDK 를 직접 두드린다 —
+        # 여기서는 stage_run 이 조립하는 Handlers 배선만 보면 되므로 최소로 흉내낸다.
+        return object(), _가짜스피커(), None
+
+    class 가짜미니:
+        """`_unit_id()` 의 기존 `터지는미니` 패턴과 같다 — hardware_id 를 못 읽는
+        경우를 그대로 흉내낸다(시뮬에서 정상)."""
+
+        class client:
+            @staticmethod
+            def get_status():
+                raise RuntimeError("시뮬에는 데몬이 없다")
+
+    monkeypatch.setattr(main_mod, "StageClient", 가짜StageClient)
+    monkeypatch.setattr(session_mod, "build", 가짜_build)
+
+    stop_event = threading.Event()
+    stop_event.set()
+
+    # role="docent" — 사회자(mc)를 쓰면 voice_loop 스레드가 추가로 뜬다. 여기서
+    # 보려는 것은 Handlers 배선이지 청취 루프가 아니다.
+    main_mod.stage_run(가짜미니, stop_event, "docent")
+
+    assert callable(captured["handlers"].on_camera)
+    assert callable(captured["handlers"].on_rtc)
+    assert callable(captured["handlers"].on_standby)
+    assert captured["caps"] == ["camera"] or captured["caps"] == []
 
 
 def test_청취_루프가_죽으면_감독과_로그에_알린다():
