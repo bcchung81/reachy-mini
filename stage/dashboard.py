@@ -247,9 +247,9 @@ class DashboardServer:
 
 
 def start_dashboard(hub, director, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                    warn: Callable[[str], None] = print):
+                    camera=None, warn: Callable[[str], None] = print):
     """대시보드를 띄운다. **실패해도 감독·콘솔은 그대로 돈다** — 경고하고 None."""
-    ds = DashboardServer(hub, director, warn=warn)
+    ds = DashboardServer(hub, director, camera=camera, warn=warn)
     try:
         srv = _ws_serve(ds.handler, host, port, process_request=ds.process_request)
     # `bind()` 는 0~65535 밖의 포트(`REACHY_DASHBOARD_PORT=99999`)에 OSError 가 아니라
