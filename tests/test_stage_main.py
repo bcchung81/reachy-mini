@@ -687,6 +687,10 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
 
     def 가짜콘솔(director, camera=None):
         seen["console"] = director
+        # 리뷰(Important 1) — `start_dashboard` 쪽 camera 배선은 새 테스트가 정체성까지
+        # 확인하는데 `run_console` 쪽은 시그니처만 맞추고 값을 한 번도 안 봤다. 여기서
+        # 받은 camera 를 적어 아래에서 `서버들[0].camera` 와 정체성으로 비교한다.
+        seen["console_camera"] = camera
         raise 멈춤()
 
     import stage.console
@@ -700,6 +704,10 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
 
     assert "⚠ REACHY_DASHBOARD_PORT 가 포트 번호가 아니다('88x8')" in capsys.readouterr().out
     assert seen["console"] is 서버들[0].director
+    # `director` 와 같은 방식(같은 서버 인스턴스의 속성과 정체성 비교)으로 camera 도 본다 —
+    # `run_console(server.director, camera=server.camera)` 배선이 실제로 그 객체를 옮기는지,
+    # 시그니처만 맞고 값은 안 보는 반쪽짜리 확인에 머무르지 않게 한다.
+    assert seen["console_camera"] is 서버들[0].camera
     assert seen["shutdown"] == 1
     assert seen["dash"] == []
 
