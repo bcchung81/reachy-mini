@@ -35,11 +35,12 @@ PAGE = pathlib.Path(__file__).with_name("dashboard_page.html")
 
 
 class DashboardServer:
-    def __init__(self, hub, director, dispatch: Callable = console_dispatch,
+    def __init__(self, hub, director, camera=None, dispatch: Callable = console_dispatch,
                  page: pathlib.Path = PAGE, interval: float = SNAPSHOT_INTERVAL_S,
                  warn: Callable[[str], None] = print) -> None:
         self._hub = hub
         self._director = director
+        self._camera = camera
         self._dispatch = dispatch
         self._page = page
         self._interval = interval
@@ -107,6 +108,7 @@ class DashboardServer:
         # 이벤트가 어디에도 안 실린다(조용히 빠진다). 이 순서면 그 틈의 이벤트가
         # 이력과 큐 양쪽에 실려 한 번 겹칠 수는 있어도 빠지지는 않는다.
         sub = self._hub.subscribe()
+        viewer = self._camera.add_viewer(self._deliver_maker(sub)) if self._camera is not None else None
         stop = threading.Event()
         try:
             # hello 는 펌프를 띄우기 **전에** 이 스레드가 보낸다 — 펌프가 뜬 뒤에는
@@ -125,6 +127,17 @@ class DashboardServer:
             }))
             threading.Thread(target=self._pump, args=(ws, sub, stop), daemon=True).start()
             for raw in ws:
+                # `rtc` 모양만 여기서 가로챈다 — 그 외(깨진 JSON 포함)는 전부 `_on_command`
+                # 로 넘겨 그쪽의 "규약에 안 맞는다" 경고 하나로만 걸러지게 한다. 여기서 JSON
+                # 파싱 실패를 따로 warn 하면 같은 상황(깨진 메시지)에 경고 문구가 둘로
+                # 갈라져 기존 계약(`_on_command` 의 "규약" 경고)이 깨진다.
+                try:
+                    obj = json.loads(raw)
+                except (ValueError, TypeError):
+                    obj = None
+                if isinstance(obj, dict) and "rtc" in obj and self._camera is not None and viewer is not None:
+                    self._camera.on_viewer_rtc(viewer, obj["rtc"])
+                    continue
                 self._on_command(raw)
         except ConnectionClosed:
             # 페이지가 close 프레임 없이 사라졌다(노트북 절전·Wi-Fi 끊김·브라우저 강제
@@ -137,6 +150,17 @@ class DashboardServer:
         finally:
             stop.set()
             self._hub.unsubscribe(sub)
+            if self._camera is not None and viewer is not None:
+                self._camera.remove_viewer(viewer)
+
+    @staticmethod
+    def _deliver_maker(sub):
+        def deliver(ev: dict) -> None:
+            try:
+                sub.queue.put_nowait(ev)
+            except queue.Full:
+                sub.dropped += 1
+        return deliver
 
     def _pump(self, ws, sub, stop: threading.Event) -> None:
         """이 연결의 유일한 송신자. 이벤트는 오는 대로, 스냅샷은 `interval` 마다."""
@@ -183,10 +207,13 @@ class DashboardServer:
 
     def _safe_snapshot(self) -> dict | None:
         try:
-            return self._director.snapshot()
+            snap = self._director.snapshot()
         except Exception as exc:  # noqa: BLE001
             self._warn(f"대시보드 스냅샷 실패({type(exc).__name__}: {exc}) — 다음 주기에 다시 읽는다")
             return None
+        if self._camera is not None:
+            snap = {**snap, "cameras": self._camera.snapshot()}
+        return snap
 
     def _on_command(self, raw) -> None:
         try:

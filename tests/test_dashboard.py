@@ -347,3 +347,61 @@ def test_기본_페이지_파일이_있다():
     from stage.dashboard import PAGE
     assert PAGE.resolve() == ROOT / "stage" / "dashboard_page.html"
     assert PAGE.exists()
+
+
+class _가짜카메라:
+    def __init__(self):
+        self._deliver = {}
+        self._n = 0
+
+    def add_viewer(self, deliver):
+        self._n += 1
+        vid = f"v{self._n}"
+        self._deliver[vid] = deliver
+        return vid
+
+    def remove_viewer(self, viewer):
+        self._deliver.pop(viewer, None)
+
+    def on_viewer_rtc(self, viewer, msg):
+        self.last_viewer_rtc = (viewer, msg)
+
+    def snapshot(self):
+        return {"mc": {"available": True, "enabled": True, "reason": ""},
+                "docent": {"available": False, "enabled": True, "reason": "OFFLINE"}}
+
+
+@pytest.fixture
+def dash_cam(tmp_path):
+    page = tmp_path / "page.html"
+    page.write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    hub, d, cam, warned = DashboardHub(), 가짜감독(), _가짜카메라(), []
+    ds = DashboardServer(hub, d, camera=cam, page=page, interval=0.05, warn=warned.append)
+    with _served(ds) as (port, errors, finished):
+        yield {"hub": hub, "d": d, "cam": cam, "port": port,
+               "handler_errors": errors, "handler_finished": finished}
+
+
+def test_스냅샷에_cameras가_실린다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        m = _recv_until(ws, "snapshot")
+        assert m["cameras"] == dash_cam["cam"].snapshot()
+
+
+def test_연결되면_시청자를_등록하고_닫히면_해제한다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        _recv_until(ws, "hello")
+    dash_cam["handler_finished"].acquire(timeout=3)
+    assert dash_cam["cam"]._deliver == {}
+
+
+def test_rtc_메시지는_camera로_간다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        _recv_until(ws, "hello")
+        ws.send(json.dumps({"rtc": {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}}))
+        for _ in range(50):
+            if getattr(dash_cam["cam"], "last_viewer_rtc", None):
+                break
+            time.sleep(0.02)
+        viewer, msg = dash_cam["cam"].last_viewer_rtc
+        assert msg == {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}
