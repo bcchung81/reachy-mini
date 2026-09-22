@@ -140,6 +140,13 @@ class Cue:
             return "", self.docent_brief
         return b.get("mc_brief", ""), b.get("docent_brief", self.docent_brief)
 
+    def points_for(self, level_name: str) -> list[str]:
+        """이 수준의 포인트 목록. 없으면(폴백 큐) 빈 목록."""
+        b = self.briefs.get(level_name)
+        if not b:
+            return []
+        return list(b.get("points", []))
+
 
 def cues_path() -> pathlib.Path:
     """큐시트 경로. `REACHY_CUES_PATH` 가 있으면 그것을 쓴다."""
@@ -235,7 +242,27 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
                             f"{p} {item['id']} {name}.{field_name} 는 비어 있지 "
                             f"않은 문자열이어야 한다 — 지금은 {type(v).__name__}({v!r})"
                         )
+                points = b.get("points")
+                if points is not None:
+                    if not isinstance(points, list) or not points:
+                        raise CueError(
+                            f"{p} {item['id']} {name}: points 는 비어 있지 않은 "
+                            f"목록이어야 한다 — 지금은 {type(points).__name__}({points!r})"
+                        )
+                    for pi, pt in enumerate(points):
+                        if not isinstance(pt, str) or not pt.strip():
+                            raise CueError(
+                                f"{p} {item['id']} {name}: points[{pi}] 는 비어 있지 "
+                                f"않은 문자열이어야 한다 — 지금은 {type(pt).__name__}({pt!r})"
+                            )
         extra["briefs"] = briefs
+        if extra["briefs"] and any(
+            b.get("points") for b in extra["briefs"].values()
+        ) and not extra["mc_after"]:
+            raise CueError(
+                f"{p} {item['id']}: points 가 있는데 mc_after 가 없다 — "
+                "마지막 라운드 뒤 받아치기로 합류할 자리가 없다"
+            )
         out.append(Cue(**{k: item[k] for k in _REQUIRED}, **extra))
     return out
 

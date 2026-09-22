@@ -9,6 +9,7 @@ import pathlib
 import sys
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage import cues as cues_mod
@@ -642,3 +643,63 @@ def test_seek_음수도_범위_밖이다():
 
 def test_cues_는_전체를_순서대로_준다():
     assert [c.id for c in _시트3().cues()] == ["a", "b", "c"]
+
+
+# ── 포인트 필드 (Task 2) ──────────────────────────────────────────────
+
+
+def _briefs(points=None):
+    b = {}
+    for name in ("초등", "중고등", "일반", "전문가"):
+        entry = {"mc_brief": "mb", "docent_brief": "db"}
+        if points is not None:
+            entry["points"] = list(points)
+        b[name] = entry
+    return b
+
+
+def test_points가_있으면_읽힌다(tmp_path):
+    raw = [{
+        "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
+        "gaze": "partner", "mc_after": "받아치기 다음",
+        "briefs": _briefs(["포인트1", "포인트2"]),
+    }]
+    p = tmp_path / "cues.yaml"
+    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cues = load_cues(p)
+    assert cues[0].points_for("일반") == ["포인트1", "포인트2"]
+
+
+def test_points가_없으면_빈_목록이다(tmp_path):
+    raw = [{
+        "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
+        "gaze": "partner", "mc_after": "받아치기 다음",
+    }]
+    p = tmp_path / "cues.yaml"
+    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cues = load_cues(p)
+    assert cues[0].points_for("일반") == []
+
+
+def test_points가_빈_목록이면_거절한다(tmp_path):
+    raw = [{
+        "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
+        "gaze": "partner", "mc_after": "받아치기 다음",
+        "briefs": _briefs([]),
+    }]
+    p = tmp_path / "cues.yaml"
+    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(CueError, match="points"):
+        load_cues(p)
+
+
+def test_points가_있는데_mc_after가_없으면_거절한다(tmp_path):
+    raw = [{
+        "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
+        "gaze": "partner",  # mc_after 없음
+        "briefs": _briefs(["p1"]),
+    }]
+    p = tmp_path / "cues.yaml"
+    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(CueError, match="mc_after"):
+        load_cues(p)
