@@ -686,7 +686,7 @@ def test_server는_camera_속성을_스스로_만든다(server):
 def test_hello의_caps가_camera로_전달된다(server):
     with connect(url_of(server)) as ws:
         _hello_caps(ws, "mc", ["camera"])
-    assert server.camera.snapshot()["mc"]["available"] is True
+        assert server.camera.snapshot()["mc"]["available"] is True
 
 
 def test_연결이_끊기면_camera에도_알린다(server):
