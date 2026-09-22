@@ -244,30 +244,40 @@ def _px(rule: str, prop: str) -> int:
     return int(m.group(1))
 
 
-def test_하단_패널_셋은_1024px_폭에서_한_줄에_들어간다():
-    """태블릿 가로(1024px)에서 이벤트 로그가 둘째 줄로 밀려 높이 몇 px 로 찌그러졌다 —
-    세 패널의 `flex` 기본 폭 합(320+340+320=980)에 간격·여백(96)을 더하면 1076px 이라
-    그보다 좁으면 줄바꿈이 났다. 기본 폭 합 + 간격 2개 + 좌우 여백이 1024 이하여야 한다."""
+def test_왼쪽_열과_카메라_두_대는_1024px_폭에서_한_줄에_들어간다():
+    """태블릿 가로(1024px)에서 왼쪽 열(런다운+제어)과 카메라 두 대가 옆으로 나란히
+    남아야 한다 — 안 그러면 줄바꿈이 나 카메라가 창 높이 맞춤에 눌려 찌그러진다.
+    왼쪽 열 고정 폭 + 두 열 사이 간격 + 카메라 두 대의 최소 폭 + 카메라 사이 간격 +
+    페이지 좌우 여백(×2)이 1024 이하여야 한다."""
     src = _src()
-    lower = _css_rule(src, ".lower")
-    gap = _px(lower, "gap")
-    pad = re.search(r"padding\s*:\s*\d+px\s+(\d+)px", lower)
-    assert pad, lower
+    grid = _css_rule(src, ".stage-grid")
+    grid_gap = _px(grid, "gap")
+    pad = re.search(r"padding\s*:\s*\d+px\s+(\d+)px", grid)
+    assert pad, grid
     side = int(pad.group(1))
-    basis = 0
-    for sel in (".rundown-panel", ".control-panel", ".log-panel"):
-        rule = _css_rule(src, sel)
-        m = re.search(r"flex\s*:\s*\d+\s+\d+\s+(\d+)px", rule)
-        assert m, (sel, rule)
-        basis += int(m.group(1))
-    assert basis + 2 * gap + 2 * side <= 1024, (basis, gap, side)
+
+    left_col = _css_rule(src, ".left-col")
+    m = re.search(r"flex\s*:\s*\d+\s+\d+\s+(\d+)px", left_col)
+    assert m, left_col
+    left_width = int(m.group(1))
+
+    monitors = _css_rule(src, ".monitors")
+    cam_gap = _px(monitors, "gap")
+
+    monitor_col = _css_rule(src, ".monitor-col")
+    cam_min = _px(monitor_col, "min-width")
+
+    total = left_width + grid_gap + 2 * cam_min + cam_gap + 2 * side
+    assert total <= 1024, (left_width, grid_gap, cam_min, cam_gap, side, total)
 
 
 def test_더_좁아서_줄바꿈되면_패널이_납작해지지_않는다():
-    """956px 보다 좁으면 줄바꿈은 피할 수 없다 — 그때 둘째 줄 패널이 창 높이 맞춤에 눌려
-    몇 px 로 찌그러지지 않게 최소 높이를 주고 페이지 스크롤로 넘긴다."""
+    """900px 보다 좁으면 왼쪽 열과 오른쪽 열이 한 줄에 안 들어간다 — 그때 옆으로
+    우겨넣지 않고 세로로 쌓는다(`.stage-grid` 를 column 으로). 쌓인 패널이 창 높이
+    맞춤에 눌려 찌그러지지 않게 최소 높이를 주고 페이지 스크롤로 넘긴다."""
     src = _src()
     blocks = re.findall(r"@media\s*\(max-width:\s*(\d+)px\)\s*\{(.*?)\n  \}", src, re.S)
     narrow = [body for w, body in blocks if int(w) < 1000 and ".panel" in body]
     assert narrow, blocks
+    assert re.search(r"\.stage-grid\s*\{[^}]*flex-direction:\s*column", narrow[0]), narrow[0]
     assert re.search(r"\.panel\s*\{[^}]*min-height:\s*2\d\dpx", narrow[0]), narrow[0]

@@ -116,8 +116,14 @@
   }
   .solo-banner[hidden] { display: none; }
 
-  .monitors { flex: 0 0 auto; padding: 16px 24px 0; display: flex; gap: 24px; flex-wrap: wrap; }
-  .monitor-col { flex: 1 1 420px; min-width: 320px; display: flex; flex-direction: column; }
+  /* 예전에는 `.monitors` 가 최상단 폭 전체를 쓰는 독립 줄이었다(자체 좌우 padding).
+     지금은 `.right-col` 안에 있어 그 부모(`.stage-grid`)의 padding 을 그대로 쓴다 —
+     여기서 또 주면 이중으로 좁아진다. */
+  .monitors { flex: 0 0 auto; display: flex; gap: 24px; flex-wrap: wrap; }
+  /* min-width 를 420→300 으로 낮췄다 — 왼쪽 열(300px 고정)이 새로 생겨, 태블릿
+     가로(1024px, 페이지 여백 48 + 두 열 사이 간격 24 뺀 나머지)에서도 두 카메라가
+     한 줄에 남으려면 이만큼 줄여야 한다(§1024px 테스트가 계산을 고정한다). */
+  .monitor-col { flex: 1 1 360px; min-width: 300px; display: flex; flex-direction: column; }
   .cam {
     /* 창 높이에 비례(최대 320px). 고정 320px 이면 720px 창에서 모니터만 460px 을 먹어
        하단(런다운·제어·로그)이 창 밖으로 밀리고 페이지 스크롤이 생겼다 — 운영자 화면은
@@ -154,21 +160,26 @@
   }
   .caption.onair { background: #1B1416; border-color: #4A2A2E; color: #FFFFFF; }
 
-  /* 모니터 아래 남은 높이를 다 쓴다. 런다운·로그는 안쪽에서 스크롤하므로 패널에 하한을 두지
-     않는다(예전 260px·320px 하한이 720px 창에서 페이지 스크롤을 만들었다). 하한 200px 은
-     제어 버튼 두 줄이 들어갈 최소 — 그보다 낮은 창에서만 페이지가 스크롤된다. */
-  .lower { flex: 1 1 auto; min-height: 200px; padding: 16px 24px 20px; display: flex; gap: 24px; flex-wrap: wrap; }
+  /* 2단 그리드 — 남은 높이(헤더·단독 배너 아래)를 다 쓴다. 런다운·로그는 안쪽에서
+     스크롤하므로 여기에 하한을 두지 않는다(예전 260px·320px 하한이 720px 창에서 페이지
+     스크롤을 만들었다). 좁은 창(아래 미디어쿼리)에서만 세로로 쌓이고 페이지가 스크롤된다. */
+  .stage-grid { flex: 1 1 auto; min-height: 200px; padding: 16px 24px 20px; display: flex; gap: 24px; }
+  /* 왼쪽 열 — 런다운(위) + 진행 제어(아래), 세로 전체. 폭을 **고정**한다(flex-grow 0) —
+     오른쪽 카메라·로그가 창이 넓어질 때 그 여유를 갖게 하려는 것이다(사용자 요청: 로그를
+     가로로 넓게). 300px 은 옛 rundown-panel/control-panel 기본 폭(280~300)과 같다. */
+  .left-col { flex: 0 0 300px; min-width: 260px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  /* 오른쪽 열 — 카메라 두 대(위, 내용 높이만큼) + 로그(아래, 남는 높이 전부). */
+  .right-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .panel {
     background: #151A21; border: 1px solid #242B35; border-radius: 6px; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 8px; min-height: 0;
   }
-  /* 기본 폭(flex-basis)을 최소 폭과 같게 둔다. 예전 320+340+320=980 에 간격 2개(48)와 좌우
-     여백(48)을 더하면 1076px 이라, 태블릿 가로(1024px)에서 이벤트 로그가 둘째 줄로 밀려
-     창 높이 맞춤에 눌린 채 몇 px 로 찌그러졌다. 최소 폭 합 860 + 96 = 956px 까지 한 줄이고,
-     남는 폭은 `flex-grow` 가 그대로 나눠 가지므로 넓은 창의 모양은 달라지지 않는다. */
-  .rundown-panel { flex: 1 1 280px; min-width: 280px; }
-  .control-panel { flex: 1 1 300px; min-width: 300px; }
-  .log-panel { flex: 1 1 280px; min-width: 280px; overflow: hidden; }
+  /* 런다운은 왼쪽 열의 남는 세로 공간을 다 먹는다(안쪽 스크롤) — 제어판은 내용 높이만큼만. */
+  .rundown-panel { flex: 1 1 auto; min-height: 0; }
+  .control-panel { flex: 0 0 auto; }
+  /* 로그는 오른쪽 열 폭 **전부**(카메라 두 대 + 사이 간격) — 예전 280px 고정 폭보다
+     훨씬 넓다(사용자 요청). 남는 세로 공간도 다 먹는다. */
+  .log-panel { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
   .panel-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
   .panel-title { font-weight: 700; color: #E8EAED; }
@@ -242,12 +253,13 @@
     .level-pending-text { display: none; }
   }
 
-  /* 956px 보다 좁으면(세로 태블릿 등) 세 패널이 한 줄에 안 들어가 줄바꿈이 난다. 그때
-     창 높이 맞춤을 그대로 두면 둘째 줄 패널이 남은 몇 px 에 눌려 로그가 안 보인다 — 이
-     폭에서는 패널마다 쓸 만한 높이를 주고, 넘치는 만큼은 페이지 스크롤로 넘긴다(body 는
-     이미 overflow-y: auto). */
-  @media (max-width: 955px) {
-    .lower { flex: 0 0 auto; }
+  /* 900px 보다 좁으면(세로 태블릿·휴대폰 가로 등) 왼쪽 열(300 고정) + 오른쪽 열(카메라
+     최소 폭 2×300+24)이 한 줄에 안 들어간다. 그때 옆으로 우겨넣으면 카메라·로그가 몇 px
+     로 찌그러지므로, 두 열을 세로로 쌓고 각 패널에 쓸 만한 높이를 준 뒤 넘치는 만큼은
+     페이지 스크롤로 넘긴다(body 는 이미 overflow-y: auto — 옛 955px 분기와 같은 이유). */
+  @media (max-width: 900px) {
+    .stage-grid { flex-direction: column; flex: 0 0 auto; }
+    .left-col, .right-col { flex: 0 0 auto; width: 100%; }
     .panel { min-height: 260px; }
   }
 </style>
@@ -286,81 +298,89 @@
      그래서 여기 정적으로 심어 두고 JS 는 hidden 만 켜고 끈다. -->
 <div id="solo-banner" class="solo-banner" hidden>단독 모드 — 사회자 로봇이 관람객 질문에 답합니다</div>
 
-<div class="monitors">
-  <section class="monitor-col" aria-label="사회자 모니터">
-    <div class="cam offline" id="mon-mc">
-      <span class="cam-label">CAM 1 · 사회자</span>
-      <span class="tally offline" id="tag-mc">OFFLINE</span>
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="6" width="18" height="13" rx="2"></rect>
-        <circle cx="12" cy="12.5" r="3.5"></circle>
-        <path d="M8 6l1.5-2h5L16 6"></path>
-      </svg>
-      <span class="cam-placeholder">[사회자 카메라 영상 — 실기 연결 후]</span>
-      <span class="mic" id="mic-mc">MIC —</span>
-    </div>
-    <div class="caption" id="cap-mc"></div>
-  </section>
-
-  <section class="monitor-col" aria-label="도슨트 모니터">
-    <div class="cam offline" id="mon-docent">
-      <span class="cam-label">CAM 2 · 도슨트</span>
-      <span class="tally offline" id="tag-docent">OFFLINE</span>
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="6" width="18" height="13" rx="2"></rect>
-        <circle cx="12" cy="12.5" r="3.5"></circle>
-        <path d="M8 6l1.5-2h5L16 6"></path>
-      </svg>
-      <span class="cam-placeholder">[도슨트 카메라 영상 — 실기 연결 후]</span>
-      <span class="mic" id="mic-docent">MIC —</span>
-    </div>
-    <div class="caption" id="cap-docent"></div>
-  </section>
-</div>
-
-<div class="lower">
-  <section class="panel rundown-panel" aria-label="런다운">
-    <div class="panel-head">
-      <span class="panel-title">런다운</span>
-      <span id="rundown-summary">0개 중 0개 끝남</span>
-    </div>
-    <div id="rundown" class="rundown-list"></div>
-    <div id="goto-bar" class="goto-bar" hidden>
-      <span id="goto-text"></span>
-      <div class="goto-actions">
-        <button type="button" id="goto-confirm">이 큐로 이동</button>
-        <button type="button" id="goto-cancel">취소</button>
+<!-- 2단 그리드 — 왼쪽은 런다운(위)·진행 제어(아래)로 세로 전체를 쓰고, 오른쪽은 카메라
+     두 대(위) 아래로 이벤트 로그가 가로 폭 전부를 쓴다. 예전에는 넷이 한 줄(.lower)에
+     늘어서 있었는데, 이벤트 로그가 320px 안팎으로 좁아 긴 줄이 자주 접혔다(사용자 요청:
+     런다운 좌측 상단·제어 좌측 하단·로그는 가로로 넓게). -->
+<div class="stage-grid">
+  <div class="left-col">
+    <section class="panel rundown-panel" aria-label="런다운">
+      <div class="panel-head">
+        <span class="panel-title">런다운</span>
+        <span id="rundown-summary">0개 중 0개 끝남</span>
       </div>
-    </div>
-  </section>
+      <div id="rundown" class="rundown-list"></div>
+      <div id="goto-bar" class="goto-bar" hidden>
+        <span id="goto-text"></span>
+        <div class="goto-actions">
+          <button type="button" id="goto-confirm">이 큐로 이동</button>
+          <button type="button" id="goto-cancel">취소</button>
+        </div>
+      </div>
+    </section>
 
-  <section class="panel control-panel" aria-label="진행 제어">
-    <div class="panel-head">
-      <span class="panel-title">진행 제어</span>
-      <span>키보드 단축키 그대로</span>
-    </div>
-    <div class="control-grid">
-      <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
-      <button type="button" id="btn-restart" class="ctrl-btn">이 큐 다시<kbd>R</kbd></button>
-      <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
-      <button type="button" id="btn-start" class="ctrl-btn">처음부터 시작<kbd>S</kbd></button>
-      <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
-    </div>
-    <div class="auto">
-      <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
-      <div class="auto-track"><div id="auto-bar"></div></div>
-    </div>
-  </section>
+    <section class="panel control-panel" aria-label="진행 제어">
+      <div class="panel-head">
+        <span class="panel-title">진행 제어</span>
+        <span>키보드 단축키 그대로</span>
+      </div>
+      <div class="control-grid">
+        <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
+        <button type="button" id="btn-restart" class="ctrl-btn">이 큐 다시<kbd>R</kbd></button>
+        <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
+        <button type="button" id="btn-start" class="ctrl-btn">처음부터 시작<kbd>S</kbd></button>
+        <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
+      </div>
+      <div class="auto">
+        <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
+        <div class="auto-track"><div id="auto-bar"></div></div>
+      </div>
+    </section>
+  </div>
 
-  <section class="panel log-panel" aria-label="이벤트 로그">
-    <div class="panel-head">
-      <span class="panel-title">이벤트 로그</span>
-      <span id="log-warn-count">경고 0</span>
+  <div class="right-col">
+    <div class="monitors">
+      <section class="monitor-col" aria-label="사회자 모니터">
+        <div class="cam offline" id="mon-mc">
+          <span class="cam-label">CAM 1 · 사회자</span>
+          <span class="tally offline" id="tag-mc">OFFLINE</span>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+            <circle cx="12" cy="12.5" r="3.5"></circle>
+            <path d="M8 6l1.5-2h5L16 6"></path>
+          </svg>
+          <span class="cam-placeholder">[사회자 카메라 영상 — 실기 연결 후]</span>
+          <span class="mic" id="mic-mc">MIC —</span>
+        </div>
+        <div class="caption" id="cap-mc"></div>
+      </section>
+
+      <section class="monitor-col" aria-label="도슨트 모니터">
+        <div class="cam offline" id="mon-docent">
+          <span class="cam-label">CAM 2 · 도슨트</span>
+          <span class="tally offline" id="tag-docent">OFFLINE</span>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+            <circle cx="12" cy="12.5" r="3.5"></circle>
+            <path d="M8 6l1.5-2h5L16 6"></path>
+          </svg>
+          <span class="cam-placeholder">[도슨트 카메라 영상 — 실기 연결 후]</span>
+          <span class="mic" id="mic-docent">MIC —</span>
+        </div>
+        <div class="caption" id="cap-docent"></div>
+      </section>
     </div>
-    <div id="log" class="log"></div>
-  </section>
+
+    <section class="panel log-panel" aria-label="이벤트 로그">
+      <div class="panel-head">
+        <span class="panel-title">이벤트 로그</span>
+        <span id="log-warn-count">경고 0</span>
+      </div>
+      <div id="log" class="log"></div>
+    </section>
+  </div>
 </div>
 
 <script>
