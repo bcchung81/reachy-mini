@@ -24,6 +24,12 @@ from stage.cues import (
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.mc_cache import cache_key
 from stage.protocol import ROLES
+# 분량 상한은 **생성기에도** 걸려 있다(`stage/__main__.py::build_generate` 가
+# 수준의 `max_sentences`/`max_chars` 로). 포인트 라운드 답은 그 상한보다 훨씬
+# 짧아야 하는데 생성기는 큐 단위 상한밖에 모르므로(시스템 프롬프트가 수준의
+# 목표 분량을 박아 준다) 여기서 한 번 더 건다 — 같은 순수 함수를 쓴다.
+# `stage/speech_text.py` 는 `re` 말고 아무것도 임포트하지 않아 순환이 없다.
+from stage.speech_text import cap_length
 
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
@@ -106,6 +112,13 @@ QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음�
 # 40은 이제 "사회자 몫" 과 "배선이 안 닿았을 때의 안전한 기본값" 둘 다다.
 MIN_CHARS = 40
 
+# 포인트 분량 상한이 **배선되기 전**의 값(`Director._point_budget` 의 폴백).
+# "사실상 무제한" 이라 `cap_length` 가 아무것도 안 자르고 프롬프트에도 분량
+# 지시가 안 붙는다 — 포인트를 쓰지 않는 기존 호출부·테스트를 그대로 둔다.
+# 0 이나 None 이 아니라 큰 수인 이유: `_point_budget` 의 반환 타입을 하나로
+# 두면 두 호출부가 "없으면" 분기를 각자 만들지 않아도 된다.
+POINT_NO_LIMIT = 10**9
+
 # 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
 # `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
 # 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
@@ -159,6 +172,21 @@ class _Pending(NamedTuple):
     # 마지막 필드라 기본값을 둘 수 있다 — 기존 6개 위치 인자 호출부는
     # 그대로 두고 None 이 채워진다.
     min_chars: int | None = None
+    # 있으면 `on_speaking_ended` 의 공용 꼬리가 **내보내기 직전에** 이 분량으로
+    # 한 번 더 자른다(`cap_length`). 포인트 라운드 전용이다.
+    #
+    # **왜 생성기의 상한으로는 안 되는가.** `stage/__main__.py::build_generate`
+    # 의 상한은 **큐 단위**다(수준의 `max_sentences`/`max_chars`). 포인트 답은
+    # 그 분량을 N등분한 것이라야 하는데, 시스템 프롬프트도 상한도 큐 단위 목표를
+    # 박아 주므로 그대로 두면 3포인트 큐가 기존 한 라운드의 3배로 길어진다 —
+    # 이 기능이 만들려던 것(짧은 왕복)의 정반대다. 게다가 **조용하다**: 생성기의
+    # 상한은 큐 단위 값에 걸리므로 경고 한 줄 안 나온다(Task 5 리뷰 Critical).
+    # 프롬프트의 분량 지시만으로는 안 지켜진다는 것이 이 저장소의 실측이다
+    # (`stage/speech_text.py::cap_length` 주석) — 지시도 하고, 자르기도 한다.
+    #
+    # None 이면 자르지 않는다 — 포인트가 아닌 기존 `_Pending` 은 전부 그대로다.
+    max_sentences: int | None = None
+    max_chars: int | None = None
 
 
 class UnitMismatch(RuntimeError):
@@ -603,16 +631,9 @@ class Director:
                     after_of = cue
             elif cue_id == cue.id and self._points:
                 # 오프닝이 끝났다 — point0 답(이미 `_begin_cue` 가 스폰해 둔 슬롯)을
-                # 기다린다. 폴백은 포인트 원문이다: 지시문 전문을 읽는 것보다
-                # 포인트 한 줄을 읽는 쪽이 이 자리에서 덜 이상하다.
-                min_chars, _, _ = self._point_budget()
-                label0 = self._point_label(cue, 0)
-                pending = _Pending(
-                    "docent", "docent", label0, self._points[0], FB_BRIEF, label0,
-                    min_chars=min_chars,
-                )
-                if label0 == f"{cue.id}:docent" and cue.mc_after:
-                    after_of = cue  # 포인트가 1개뿐이면 이게 곧 마지막이다
+                # 기다린다. `_begin_cue` 가 `_point_i` 를 0 으로 세워 뒀으므로
+                # 아래 다리 대사 갈래와 **같은 몸**을 쓴다.
+                pending, after_of = self._pending_for_point(cue)
             elif (
                 cue_id.startswith(f"{cue.id}:pt")
                 and cue_id.endswith(":docent")
@@ -644,7 +665,11 @@ class Director:
                 # 의 `_remember` → `_spawn_generate` 순서와 같은 이유).
                 self._remember(f"사회자: {bridge_text}")
                 next_label = self._point_label(cue, next_i)
-                self._spawn_generate("docent", "docent", next_point, next_point, next_label)
+                # 지시문에는 분량 한 줄이 붙고 **폴백에는 안 붙는다**
+                # (`_point_brief`) — 생성이 실패하면 포인트 원문만 읽어야 한다.
+                self._spawn_generate(
+                    "docent", "docent", self._point_brief(next_point), next_point, next_label
+                )
                 self._emit(
                     cmds
                     + self._machine.speak(
@@ -657,15 +682,7 @@ class Director:
                 # 띄워 둔 포인트 i 도슨트 답을 기다린다. 이 갈래는 `return`
                 # 하지 않는다: 아래 공용 대기·세대 검사 구간으로 떨어져야
                 # 한다(해설 갈래와 같은 길).
-                i = self._point_i
-                min_chars, _, _ = self._point_budget()
-                label_i = self._point_label(cue, i)
-                pending = _Pending(
-                    "docent", "docent", label_i, self._points[i], FB_BRIEF, label_i,
-                    min_chars=min_chars,
-                )
-                if label_i == f"{cue.id}:docent" and cue.mc_after:
-                    after_of = cue  # 이 포인트가 마지막이다 — 받아치기를 띄울 자리
+                pending, after_of = self._pending_for_point(cue)
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다.
                 # 그 답이 끝나면 아래 `:qa` 갈래가 사회자에게 한 번 더 묻게 한다.
@@ -777,6 +794,26 @@ class Director:
                 # 사람이 다듬어 둔 대사를 감독이 망친다. 예비를 읽은 경우는
                 # **생성물이라** 검사를 받는다 — 예비도 LLM 출력이다.
                 text = self._ensure_visitor_cue(text, pending.label, is_last)
+            if pending.max_chars is not None and text != pending.fallback:
+                # **포인트 답의 분량 상한.** 생성기의 상한은 큐 단위라(수준의
+                # `max_chars`) 포인트 답에는 몇 배로 느슨하다 — 여기서 안 자르면
+                # N포인트 큐가 기존 한 라운드의 N배로 길어진다(리뷰 Critical).
+                # `_ensure_visitor_cue` **뒤**다: 그것이 문장을 덧붙일 수 있으므로
+                # 마지막에 재야 실제로 나가는 길이를 잰다. `_remember` **앞**이다:
+                # 이력·발화·받아치기 지시문이 모두 잘린 텍스트를 봐야 한다.
+                #
+                # 폴백(포인트 원문)은 건드리지 않는다 — 사람이 쓴 한 줄이고
+                # `load_cues` 가 이미 검증한다. `_ensure_visitor_cue` 가 큐시트
+                # 원문을 비켜 가는 것과 같은 이유다(바로 위 주석).
+                text, capped = cap_length(text, pending.max_sentences, pending.max_chars)
+                if capped:
+                    # **조용히 자르지 않는다.** 매 포인트마다 이 줄이 찍히면
+                    # 포인트 문구가 너무 크거나 분량 지시가 안 먹는 것이다 —
+                    # 그 신호가 없으면 시연장에서 원인을 못 찾는다.
+                    self._warn(
+                        f"[{pending.label}] 포인트 답이 상한을 넘어 잘랐다"
+                        f"({pending.max_sentences}문장·{pending.max_chars}자 → {len(text)}자)"
+                    )
             self._remember(f"{SPEAKER_LABEL[pending.role]}: {text}")
             if after_of is not None:
                 self._spawn_after(after_of, text)
@@ -1254,9 +1291,60 @@ class Director:
         """
         min_chars = self._level_point_min_chars.get(self._level_name, self._docent_min_chars)
         max_sentences, max_chars = self._level_point_max.get(
-            self._level_name, (10**9, 10**9)  # 사실상 무제한 — 배선 전 테스트를 안 깬다
+            self._level_name, (POINT_NO_LIMIT, POINT_NO_LIMIT)
         )
         return min_chars, max_sentences, max_chars
+
+    def _point_brief(self, point: str) -> str:
+        """포인트 답 생성 지시문 — 포인트 본문에 **분량 한 줄**을 붙인다.
+
+        생성기의 시스템 프롬프트는 큐 단위 목표 분량(수준의 `min~max`)을 박아
+        주므로, 포인트 하나에 그것을 그대로 쓰면 N포인트 큐가 N배로 길어진다.
+        모델에게 먼저 말해 두는 쪽이 `cap_length` 로 뒤에서 자르는 것보다 낫다 —
+        자르면 마지막 문장이 통째로 날아가 논지가 끊긴다. 그래도 지시만으로는
+        안 지켜지므로(`stage/speech_text.py::cap_length` 의 실측) 뒤에서 한 번
+        더 자른다. 둘은 **같은 수**를 써야 한다 — 따로 적으면 썩는다.
+
+        **폴백에는 붙이지 않는다.** 생성이 실패했을 때 읽는 것은 포인트 원문이고,
+        거기 이 지시가 섞이면 도슨트가 "2문장 이내로 짧게 답한다" 를 소리 내어
+        읽는다(지시문을 낭독하는 사고는 이 저장소에 이미 있었다).
+
+        배선 전(`POINT_NO_LIMIT`)이면 아무것도 안 붙인다 — "10억 자 이내로
+        말한다" 는 모델에게 잡음일 뿐이다.
+        """
+        _, max_sentences, max_chars = self._point_budget()
+        if max_chars >= POINT_NO_LIMIT:
+            return point
+        return (
+            f"{point}\n\n{max_sentences}문장 이내, {max_chars}자 이내로 짧게 답한다."
+        )
+
+    def _pending_for_point(self, cue: Cue) -> tuple["_Pending", Cue | None]:
+        """지금 포인트(`self._point_i`)의 도슨트 답을 기다릴 `_Pending` 과
+        받아치기를 띄울 큐(마지막 포인트면 `cue`, 아니면 None)를 준다.
+
+        **두 호출부가 이 한 몸을 쓴다** — 오프닝이 끝난 자리(포인트 0)와 사회자
+        다리 대사가 끝난 자리(포인트 i>=1). 둘은 `_point_i` 만 다른데 `_begin_cue`
+        가 그것을 0으로 세워 두므로 실은 **완전히 같다.** 따로 적어 두면
+        "마지막 포인트면 받아치기" 판정이 두 벌이 되고, 그것은 `_point_label`
+        docstring 이 경고하는 바로 그 모양이다(한쪽만 고쳐진다).
+
+        폴백은 **포인트 원문**이다(분량 지시가 안 붙은 쪽 — `_point_brief` 참고).
+        """
+        i = self._point_i
+        point = self._points[i]
+        min_chars, max_sentences, max_chars = self._point_budget()
+        label = self._point_label(cue, i)
+        pending = _Pending(
+            "docent", "docent", label, point, FB_BRIEF, label,
+            min_chars=min_chars,
+            max_sentences=max_sentences,
+            max_chars=max_chars,
+        )
+        # 마지막 포인트의 답이 곧 이 큐의 해설 끝이다 — 그 자리에서만 받아치기를
+        # 띄운다(기존 단일 라운드의 `if cue.mc_after: after_of = cue` 와 같은 뜻).
+        after_of = cue if (label == f"{cue.id}:docent" and cue.mc_after) else None
+        return pending, after_of
 
     def _begin_cue(self, cue: Cue) -> None:
         # **먼저 거절한다.** 발화 중이면 아래 `speak()` 가 TurnError 를 던지는데,
@@ -1335,7 +1423,10 @@ class Director:
         self._point_i = 0
         if points:
             label0 = self._point_label(cue, 0)
-            self._spawn_generate("docent", "docent", points[0], points[0], label0)
+            # 지시문에는 분량 한 줄이 붙고 **폴백에는 안 붙는다**(`_point_brief`).
+            self._spawn_generate(
+                "docent", "docent", self._point_brief(points[0]), points[0], label0
+            )
         else:
             self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
 

@@ -12,7 +12,13 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.cues import Cue, CueSheet
-from stage.director import CHARS_PER_SEC, TIMEOUT_MARGIN_S, Director, UnitMismatch
+from stage.director import (
+    CHARS_PER_SEC,
+    POINT_NO_LIMIT,
+    TIMEOUT_MARGIN_S,
+    Director,
+    UnitMismatch,
+)
 from stage.machine import State, TurnError
 from stage.mc_cache import cache_key
 
@@ -3367,11 +3373,91 @@ def test_포인트_답은_포인트_하한으로_짧음을_잰다():
     assert not any("너무 짧다" in w for w in h.warnings), h.warnings
 
 
-def test_포인트_분량_배선이_없으면_도슨트_하한으로_물러난다():
-    """`_level_point_min_chars` 는 수준 대조를 안 하는 맨 dict 라 빠진 수준이
-    있을 수 있다 — `[...]` 로 찾으면 섹션 한가운데서 KeyError 다."""
-    h = Harness(level_point_min_chars={"전문가": 90}, docent_min_chars=180)
-    assert h.d._point_budget() == (180, 10**9, 10**9)
+def test_포인트_분량_상한이_실제로_적용되고_경고한다():
+    """**리뷰 Critical.** 생성기의 상한은 큐 단위(수준의 `max_chars`)라 포인트
+    답에는 몇 배로 느슨하다 — 감독이 여기서 한 번 더 안 자르면 N포인트 큐가
+    기존 한 라운드의 N배로 길어지고, 그것이 **조용히** 일어난다."""
+    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(
+        sheet=sheet,
+        generate=lambda role, brief, hist: 긴답,
+        level_point_min_chars={"일반": 5},
+        level_point_max={"일반": (2, 95)},
+    )
+    h.d.start()
+    h.ended("mc", "c1")
+    말한것 = h.says()[-1][1]
+    assert 말한것 == "첫째 문장입니다. 둘째 문장입니다.", 말한것   # 2문장에서 잘렸다
+    assert any("상한을 넘어 잘랐다" in w for w in h.warnings), h.warnings
+    # 이력·받아치기 지시문도 **잘린 것**을 봐야 한다(자르기가 `_remember` 앞이다).
+    assert h.d.history[-1]["content"] == f"도슨트: {말한것}"
+
+
+def test_포인트_분량_지시가_생성_지시문에_붙는다():
+    """뒤에서 자르기만 하면 마지막 문장이 통째로 날아가 논지가 끊긴다 —
+    모델에게 먼저 말해 둔다. **폴백에는 안 붙는다**(지시문 낭독 사고)."""
+    briefs = []
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(
+        sheet=sheet,
+        generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1],
+        level_point_max={"일반": (2, 95)},
+    )
+    h.d.start()
+    assert briefs, "포인트 생성이 안 떴다"
+    assert briefs[0].startswith("p1")
+    assert "2문장 이내" in briefs[0] and "95자 이내" in briefs[0], briefs[0]
+
+
+def test_포인트_분량_배선이_없으면_아무것도_자르지_않는다():
+    """`_level_point_min_chars`/`_level_point_max` 는 수준 대조를 안 하는 맨
+    dict 라 빠진 수준이 있을 수 있다 — `[...]` 로 찾으면 섹션 한가운데서
+    KeyError 다. 그때는 도슨트 하한으로 물러나고 **자르지도, 분량을 지시하지도**
+    않는다(10억 자 이내로 말하라는 지시는 모델에게 잡음이다)."""
+    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
+    briefs = []
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(
+        sheet=sheet,
+        generate=lambda role, brief, hist: (briefs.append(brief), 긴답)[1],
+        docent_min_chars=180,
+        level_point_min_chars={"전문가": 90},   # "일반" 이 빠져 있다
+        level_point_max={"전문가": (2, 95)},
+    )
+    assert h.d._point_budget() == (180, POINT_NO_LIMIT, POINT_NO_LIMIT)
+    h.d.start()        # KeyError 없이 돈다
+    h.ended("mc", "c1")
+    assert h.says()[-1][1] == 긴답               # 안 잘렸다
+    assert briefs[0] == "p1"                     # 분량 지시도 안 붙었다
+    assert not any("잘랐다" in w for w in h.warnings), h.warnings
+
+
+def test_포인트_폴백은_자르지_않는다():
+    """생성이 터져 포인트 원문을 읽는 자리다. 사람이 쓴 한 줄이고 `load_cues`
+    가 이미 검증했다 — 거기에 감독이 가위를 대면 안 된다(`_ensure_visitor_cue`
+    가 큐시트 원문을 비켜 가는 것과 같은 이유)."""
+    긴포인트 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
+
+    def gen(role, brief, hist):
+        raise RuntimeError("LLM 죽음")
+
+    sheet = CueSheet([_포인트_큐([긴포인트])])
+    h = Harness(sheet=sheet, generate=gen, level_point_max={"일반": (2, 95)})
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", 긴포인트)
+    assert not any("잘랐다" in w for w in h.warnings), h.warnings
+
+
+def test_포인트가_아닌_대사는_상한_검사를_아예_안_받는다():
+    """회귀 방지 — 기존 `_Pending` 은 `max_chars` 가 None 이라 새 코드가 안 돈다."""
+    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
+    h = Harness(generate=lambda role, brief, hist: 긴답, after=("받아치기", ""))
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.says()[-1][1] == 긴답, "포인트가 아닌 해설이 잘렸다"
+    assert not any("잘랐다" in w for w in h.warnings), h.warnings
 
 
 def test_다음_큐로_가면_포인트_상태가_초기화된다():
