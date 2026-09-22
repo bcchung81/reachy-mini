@@ -136,7 +136,19 @@ class DashboardServer:
                 except (ValueError, TypeError):
                     obj = None
                 if isinstance(obj, dict) and "rtc" in obj and self._camera is not None and viewer is not None:
-                    self._camera.on_viewer_rtc(viewer, obj["rtc"])
+                    rtc = obj["rtc"]
+                    # `{"rtc": null}`/`{"rtc": 1}` 같은 비-dict 값을 그대로 넘기면
+                    # `CameraRelay.on_viewer_rtc` 안의 `.get(...)` 가 AttributeError 를
+                    # 내 이 핸들러 밖으로 새고, websockets 가 트레이스백만 남긴다(리뷰
+                    # M7) — 위 `ConnectionClosed` 주석이 막으려던 것과 같은 부류의
+                    # 노이즈다. `_on_command` 의 규약 위반 처리(경고하고 그 메시지만
+                    # 버린다, 연결은 유지)와 같은 원칙으로 여기서도 그 자리에서 거른다.
+                    if not isinstance(rtc, dict):
+                        self._warn(
+                            f"대시보드의 rtc 가 객체가 아니다({type(rtc).__name__}) — 버린다"
+                        )
+                        continue
+                    self._camera.on_viewer_rtc(viewer, rtc)
                     continue
                 self._on_command(raw)
         except ConnectionClosed:

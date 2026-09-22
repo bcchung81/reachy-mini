@@ -16,6 +16,7 @@ from websockets.sync.server import serve as ws_serve
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from stage.camera import CameraRelay
 from stage.dashboard import DashboardServer, start_dashboard
 from stage.dashboard_hub import DashboardHub
 from stage.machine import TurnError
@@ -405,3 +406,29 @@ def test_rtc_메시지는_camera로_간다(dash_cam):
             time.sleep(0.02)
         viewer, msg = dash_cam["cam"].last_viewer_rtc
         assert msg == {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}
+
+
+def test_rtc가_dict가_아니면_경고하고_연결을_유지한다(tmp_path):
+    """리뷰 M7 — `{"rtc": null}`/`{"rtc": 1}` 처럼 `rtc` 가 dict 가 아니면 그대로
+    `CameraRelay.on_viewer_rtc` 에 넘겨서는 안 된다. `_가짜카메라`(위)는 `.get()` 을
+    안 써서 이 회귀를 못 잡으므로(고침 전에도 안 죽는다) **진짜** `CameraRelay` 로
+    재현한다 — 고침 전에는 `.get(...)` 에서 AttributeError 가 나 핸들러가 죽었다."""
+    page = tmp_path / "page.html"
+    page.write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    hub, d, warned = DashboardHub(), 가짜감독(), []
+    cam = CameraRelay(send_robot=lambda *a: None, warn=lambda m: None)
+    ds = DashboardServer(hub, d, camera=cam, page=page, interval=0.05, warn=warned.append)
+    with _served(ds) as (port, errors, finished):
+        with connect(f"ws://127.0.0.1:{port}/ws") as ws:
+            _recv_until(ws, "hello")
+            ws.send(json.dumps({"rtc": None}))
+            for _ in range(50):
+                if warned:
+                    break
+                time.sleep(0.02)
+            assert any("rtc" in w for w in warned), warned
+            # 연결은 살아 있다 — 이어서 보낸 명령도 정상 처리된다.
+            ws.send(json.dumps({"cmd": "n"}))
+            _recv_until(ws, "command")
+        finished.acquire(timeout=3)
+    assert not errors, errors
