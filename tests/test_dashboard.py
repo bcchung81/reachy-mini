@@ -16,6 +16,7 @@ from websockets.sync.server import serve as ws_serve
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+from stage.camera import CameraRelay
 from stage.dashboard import DashboardServer, start_dashboard
 from stage.dashboard_hub import DashboardHub
 from stage.machine import TurnError
@@ -347,3 +348,106 @@ def test_기본_페이지_파일이_있다():
     from stage.dashboard import PAGE
     assert PAGE.resolve() == ROOT / "stage" / "dashboard_page.html"
     assert PAGE.exists()
+
+
+class _가짜카메라:
+    def __init__(self):
+        self._deliver = {}
+        self._n = 0
+        self.toggled = []
+
+    def add_viewer(self, deliver):
+        self._n += 1
+        vid = f"v{self._n}"
+        self._deliver[vid] = deliver
+        return vid
+
+    def remove_viewer(self, viewer):
+        self._deliver.pop(viewer, None)
+
+    def on_viewer_rtc(self, viewer, msg):
+        self.last_viewer_rtc = (viewer, msg)
+
+    def toggle(self, role):
+        self.toggled.append(role)
+
+    def snapshot(self):
+        return {"mc": {"available": True, "enabled": True, "reason": ""},
+                "docent": {"available": False, "enabled": True, "reason": "OFFLINE"}}
+
+
+@pytest.fixture
+def dash_cam(tmp_path):
+    page = tmp_path / "page.html"
+    page.write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    hub, d, cam, warned = DashboardHub(), 가짜감독(), _가짜카메라(), []
+    ds = DashboardServer(hub, d, camera=cam, page=page, interval=0.05, warn=warned.append)
+    with _served(ds) as (port, errors, finished):
+        yield {"hub": hub, "d": d, "cam": cam, "port": port,
+               "handler_errors": errors, "handler_finished": finished}
+
+
+def test_스냅샷에_cameras가_실린다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        m = _recv_until(ws, "snapshot")
+        assert m["cameras"] == dash_cam["cam"].snapshot()
+
+
+def test_연결되면_시청자를_등록하고_닫히면_해제한다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        _recv_until(ws, "hello")
+    dash_cam["handler_finished"].acquire(timeout=3)
+    assert dash_cam["cam"]._deliver == {}
+
+
+def test_rtc_메시지는_camera로_간다(dash_cam):
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        _recv_until(ws, "hello")
+        ws.send(json.dumps({"rtc": {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}}))
+        for _ in range(50):
+            if getattr(dash_cam["cam"], "last_viewer_rtc", None):
+                break
+            time.sleep(0.02)
+        viewer, msg = dash_cam["cam"].last_viewer_rtc
+        assert msg == {"role": "mc", "sdp": {"type": "answer", "sdp": "v=0"}}
+
+
+def test_c_명령은_카메라_토글로_간다(dash_cam):
+    """실기 검증(Task 13) 중 발견 — `_on_command` 가 `self._dispatch(...)` 를 부를 때
+    `camera=self._camera` 를 안 넘겨서, 대시보드에서 카메라 켜기/끄기 버튼을 눌러도
+    console.dispatch 의 `c` 분기가 `camera is None` 으로 보고 "카메라 기능을 쓸 수
+    없다" 로 거절했다 — 실기에서 직접 눌러 보고서야 드러났다(13개 태스크 리뷰와
+    최종 전체 브랜치 리뷰 모두 이 경로를 안 봤다). `z`(대기모드)는 `camera` 를 안
+    쓰므로 같은 결함이 없다."""
+    with connect(f"ws://127.0.0.1:{dash_cam['port']}/ws") as ws:
+        json.loads(ws.recv(timeout=3))
+        ws.send(json.dumps({"cmd": "c mc"}))
+        r = _recv_until(ws, "command")
+        assert (r["cmd"], r["ok"]) == ("c mc", True), r
+    assert dash_cam["cam"].toggled == ["mc"]
+
+
+def test_rtc가_dict가_아니면_경고하고_연결을_유지한다(tmp_path):
+    """리뷰 M7 — `{"rtc": null}`/`{"rtc": 1}` 처럼 `rtc` 가 dict 가 아니면 그대로
+    `CameraRelay.on_viewer_rtc` 에 넘겨서는 안 된다. `_가짜카메라`(위)는 `.get()` 을
+    안 써서 이 회귀를 못 잡으므로(고침 전에도 안 죽는다) **진짜** `CameraRelay` 로
+    재현한다 — 고침 전에는 `.get(...)` 에서 AttributeError 가 나 핸들러가 죽었다."""
+    page = tmp_path / "page.html"
+    page.write_text("<!doctype html><title>t</title>", encoding="utf-8")
+    hub, d, warned = DashboardHub(), 가짜감독(), []
+    cam = CameraRelay(send_robot=lambda *a: None, warn=lambda m: None)
+    ds = DashboardServer(hub, d, camera=cam, page=page, interval=0.05, warn=warned.append)
+    with _served(ds) as (port, errors, finished):
+        with connect(f"ws://127.0.0.1:{port}/ws") as ws:
+            _recv_until(ws, "hello")
+            ws.send(json.dumps({"rtc": None}))
+            for _ in range(50):
+                if warned:
+                    break
+                time.sleep(0.02)
+            assert any("rtc" in w for w in warned), warned
+            # 연결은 살아 있다 — 이어서 보낸 명령도 정상 처리된다.
+            ws.send(json.dumps({"cmd": "n"}))
+            _recv_until(ws, "command")
+        finished.acquire(timeout=3)
+    assert not errors, errors

@@ -199,3 +199,70 @@ def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진�
         assert (snap["mode"], snap["state"]) == ("solo", "idle")
         # 전환은 말하던 것을 멈춘다 — 사회자 로봇이 중단 지시를 실제로 받는다.
         assert _recv_until(robot, lambda m: m["type"] == "abort") == {"type": "abort"}
+
+
+def test_시청자가_붙으면_camera_on이_로봇에_닿고_떠나면_camera_off가_닿는다():
+    """설계서 테스트 표의 E2E 줄(`시청자 붙음 → camera on → … → 시청자 닫힘 → camera off`)
+    — Task 13 계획에서 빠졌던 자리(I5)를 메운다. `tests/test_stage_server.py`(허브를
+    기록용 가짜로 본다)·`tests/test_stage_camera.py`(소켓 없는 순수 로직)는 각자의
+    흉내에만 맞춰져 있어, `StageServer`↔`DashboardServer` 조합 순서 버그(C1이 바로 그
+    부류다)를 못 잡는다 — 진짜 `StageServer` + 진짜 `DashboardServer` 를 실소켓으로
+    엮어 로봇 소켓이 실제로 무엇을 받는지까지 본다.
+
+    **시청자를 로봇보다 먼저 붙인다** — C1 이 실기에서 재현된 바로 그 순서다."""
+    hub = DashboardHub()
+    warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 여는 대사", "도슨트 지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 해설",
+        warn=warn, hub=hub,
+    )
+    대시보드_경고: list[str] = []
+
+    with contextlib.ExitStack() as 정리:
+        robot_srv = server.serve("127.0.0.1", 0)
+        t = threading.Thread(target=robot_srv.serve_forever, daemon=True)
+        t.start()
+        정리.callback(t.join, 2)
+        정리.callback(robot_srv.shutdown)
+        # `camera=server.camera` 를 명시적으로 잇는다 — `stage/__main__.py::main()` 이
+        # 실제로 배선하는 것과 같은 인자다(빠뜨리면 대시보드가 시청자를 등록하지 않는다).
+        dash = start_dashboard(hub, server.director, "127.0.0.1", 0,
+                                camera=server.camera, warn=대시보드_경고.append)
+        assert dash is not None, 대시보드_경고
+        정리.callback(dash.shutdown)
+        rport = robot_srv.socket.getsockname()[1]
+        dport = dash.socket.getsockname()[1]
+
+        # 대시보드 시청자(브라우저처럼 Origin 을 붙인다)가 **먼저** 붙는다.
+        page = 정리.enter_context(connect(
+            f"ws://127.0.0.1:{dport}/ws", origin=f"http://127.0.0.1:{dport}", open_timeout=3,
+        ))
+        hello = json.loads(page.recv(timeout=3))
+        assert hello["kind"] == "hello"
+        assert hello["snapshot"]["cameras"]["mc"] == {
+            "available": False, "enabled": True, "reason": "OFFLINE",
+        }
+
+        # 로봇은 시청자보다 **나중에** hello 한다 — camera 능력을 싣는다.
+        robot = 정리.enter_context(connect(f"ws://127.0.0.1:{rport}", open_timeout=3))
+        robot.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None,
+                               "version": "2.0.0", "caps": ["camera"]}))
+        # 등록 직후 마이크 재동기화와 camera{on:true} 두 통이 온다 — 순서는 보장하지
+        # 않는다(camera 는 hello 처리 중, mic 는 `on_connect` 에서 나가 서로 다른
+        # 자리다). 둘 다 왔는지만 본다.
+        msgs = [json.loads(robot.recv(timeout=3)), json.loads(robot.recv(timeout=3))]
+        assert {m["type"] for m in msgs} == {"mic", "camera"}
+        cam_on = next(m for m in msgs if m["type"] == "camera")
+        assert cam_on["on"] is True
+        viewer = cam_on["viewer"]
+
+        # 스냅샷도 반영됐다 — 대시보드 펌프가 다음 주기에 다시 읽는다.
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot"
+                            and m.get("cameras", {}).get("mc", {}).get("available") is True)
+        assert snap["cameras"]["mc"] == {"available": True, "enabled": True, "reason": ""}
+
+        # 시청자가 떠난다 — 로봇은 그 시청자의 camera{on:false} 를 받는다.
+        page.close()
+        cam_off = json.loads(robot.recv(timeout=3))
+        assert cam_off == {"type": "camera", "viewer": viewer, "on": False}

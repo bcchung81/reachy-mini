@@ -22,6 +22,17 @@ class Subscription:
         # 넘쳐서 버린 개수. 페이지는 다음 스냅샷으로 다시 맞춰지지만, 이벤트
         # (대사·경고)가 빠진 사실은 셀 수 있어야 한다 — 조용히 잃지 않는다.
         self.dropped = 0
+        # `dropped` 를 올리는 자리가 둘 이상의 스레드 경로에서 불릴 수 있다(허브의
+        # `publish` — 로봇 연결 스레드·틱 스레드·대시보드 핸들러가 모두 부른다 — 와
+        # `stage/dashboard.py::_deliver_maker` 의 `deliver` — 카메라 릴레이를 거쳐
+        # 로봇 연결 스레드에서도 불린다). read-modify-write 를 락 없이 하면 카운트를
+        # 잃는다 — 이 락은 오직 그 증가 하나만 지킨다(`DashboardHub._lock` 과는 별개,
+        # 허브의 사설 락을 밖에서 쥐지 않는다).
+        self._lock = threading.Lock()
+
+    def mark_dropped(self) -> None:
+        with self._lock:
+            self.dropped += 1
 
 
 class DashboardHub:
@@ -42,9 +53,11 @@ class DashboardHub:
             except queue.Full:
                 # 로봇 연결 스레드·틱 스레드·대시보드 핸들러가 모두 publish 를 부를 수
                 # 있어, 같은 구독자를 향해 두 스레드가 동시에 큐가 가득 찬 걸 볼 수
-                # 있다 — 그 read-modify-write 를 락 없이 하면 카운트를 잃는다.
-                with self._lock:
-                    s.dropped += 1
+                # 있다 — 그 read-modify-write 를 락 없이 하면 카운트를 잃는다. 이제
+                # `dropped` 를 올리는 다른 경로(`stage/dashboard.py::_deliver_maker`)도
+                # 있어 `Subscription` 자신의 락(`mark_dropped`)으로 지킨다 — 허브의
+                # `_lock` 은 `_history`/`_subs` 만 지키면 된다.
+                s.mark_dropped()
 
     def subscribe(self, maxsize: int = SUB_QUEUE) -> Subscription:
         s = Subscription(maxsize)

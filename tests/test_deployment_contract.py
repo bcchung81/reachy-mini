@@ -182,6 +182,9 @@ def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
             on_mic=lambda open_: got.append(("mic", open_)),
             on_gaze=lambda target: got.append(("gaze", target)),
             on_abort=lambda: got.append(("abort",)),
+            on_camera=lambda viewer, on: None,
+            on_rtc=lambda viewer, payload: None,
+            on_standby=lambda on: None,
         ),
         warn=lambda msg: got.append(("경고", msg)),
     )

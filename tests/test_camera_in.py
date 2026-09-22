@@ -20,8 +20,10 @@ JPEG = b"\xff\xd8\xff\xe0frame"
 @pytest.fixture(autouse=True)
 def _reset():
     camera_in._pipe = None
+    camera_in._rtc_active = False
     yield
     camera_in._pipe = None
+    camera_in._rtc_active = False
 
 
 def _linux(monkeypatch):
@@ -147,3 +149,21 @@ def test_열려_있으면_다시_기다리지_않는다(monkeypatch):
     monkeypatch.setattr(camera_in, "_pull", lambda: pulls.append(1) or JPEG)
     camera_in.grab_jpeg()
     assert len(pulls) == 1, "이미 열려 있는데 또 수렴을 기다렸다"
+
+
+def test_rtc_스트림_중에는_비전_캡처가_물러난다(monkeypatch, capsys):
+    _linux(monkeypatch)
+    camera_in.note_rtc_active(True)
+    try:
+        assert camera_in.grab_jpeg() is None
+        assert "카메라" in capsys.readouterr().out
+    finally:
+        camera_in.note_rtc_active(False)
+
+
+def test_rtc_스트림이_꺼지면_평소대로_캡처한다(monkeypatch):
+    _linux(monkeypatch)
+    camera_in.note_rtc_active(False)
+    monkeypatch.setattr(camera_in, "_open", lambda: "PIPE")
+    monkeypatch.setattr(camera_in, "_pull", lambda: JPEG)
+    assert camera_in.grab_jpeg() == JPEG

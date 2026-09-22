@@ -35,11 +35,12 @@ PAGE = pathlib.Path(__file__).with_name("dashboard_page.html")
 
 
 class DashboardServer:
-    def __init__(self, hub, director, dispatch: Callable = console_dispatch,
+    def __init__(self, hub, director, camera=None, dispatch: Callable = console_dispatch,
                  page: pathlib.Path = PAGE, interval: float = SNAPSHOT_INTERVAL_S,
                  warn: Callable[[str], None] = print) -> None:
         self._hub = hub
         self._director = director
+        self._camera = camera
         self._dispatch = dispatch
         self._page = page
         self._interval = interval
@@ -107,6 +108,7 @@ class DashboardServer:
         # 이벤트가 어디에도 안 실린다(조용히 빠진다). 이 순서면 그 틈의 이벤트가
         # 이력과 큐 양쪽에 실려 한 번 겹칠 수는 있어도 빠지지는 않는다.
         sub = self._hub.subscribe()
+        viewer = self._camera.add_viewer(self._deliver_maker(sub)) if self._camera is not None else None
         stop = threading.Event()
         try:
             # hello 는 펌프를 띄우기 **전에** 이 스레드가 보낸다 — 펌프가 뜬 뒤에는
@@ -125,6 +127,29 @@ class DashboardServer:
             }))
             threading.Thread(target=self._pump, args=(ws, sub, stop), daemon=True).start()
             for raw in ws:
+                # `rtc` 모양만 여기서 가로챈다 — 그 외(깨진 JSON 포함)는 전부 `_on_command`
+                # 로 넘겨 그쪽의 "규약에 안 맞는다" 경고 하나로만 걸러지게 한다. 여기서 JSON
+                # 파싱 실패를 따로 warn 하면 같은 상황(깨진 메시지)에 경고 문구가 둘로
+                # 갈라져 기존 계약(`_on_command` 의 "규약" 경고)이 깨진다.
+                try:
+                    obj = json.loads(raw)
+                except (ValueError, TypeError):
+                    obj = None
+                if isinstance(obj, dict) and "rtc" in obj and self._camera is not None and viewer is not None:
+                    rtc = obj["rtc"]
+                    # `{"rtc": null}`/`{"rtc": 1}` 같은 비-dict 값을 그대로 넘기면
+                    # `CameraRelay.on_viewer_rtc` 안의 `.get(...)` 가 AttributeError 를
+                    # 내 이 핸들러 밖으로 새고, websockets 가 트레이스백만 남긴다(리뷰
+                    # M7) — 위 `ConnectionClosed` 주석이 막으려던 것과 같은 부류의
+                    # 노이즈다. `_on_command` 의 규약 위반 처리(경고하고 그 메시지만
+                    # 버린다, 연결은 유지)와 같은 원칙으로 여기서도 그 자리에서 거른다.
+                    if not isinstance(rtc, dict):
+                        self._warn(
+                            f"대시보드의 rtc 가 객체가 아니다({type(rtc).__name__}) — 버린다"
+                        )
+                        continue
+                    self._camera.on_viewer_rtc(viewer, rtc)
+                    continue
                 self._on_command(raw)
         except ConnectionClosed:
             # 페이지가 close 프레임 없이 사라졌다(노트북 절전·Wi-Fi 끊김·브라우저 강제
@@ -137,6 +162,21 @@ class DashboardServer:
         finally:
             stop.set()
             self._hub.unsubscribe(sub)
+            if self._camera is not None and viewer is not None:
+                self._camera.remove_viewer(viewer)
+
+    @staticmethod
+    def _deliver_maker(sub):
+        def deliver(ev: dict) -> None:
+            try:
+                sub.queue.put_nowait(ev)
+            except queue.Full:
+                # `mark_dropped()` — 이 `deliver` 는 카메라 릴레이를 거쳐 로봇 연결
+                # 스레드에서도 불린다. 허브의 `publish` 도 같은 `sub.dropped` 를 다른
+                # 스레드에서 올릴 수 있어, 락 없는 `+= 1` 은 카운트를 잃는다
+                # (`stage/dashboard_hub.py::Subscription.mark_dropped` 가 락을 쥔다).
+                sub.mark_dropped()
+        return deliver
 
     def _pump(self, ws, sub, stop: threading.Event) -> None:
         """이 연결의 유일한 송신자. 이벤트는 오는 대로, 스냅샷은 `interval` 마다."""
@@ -183,10 +223,13 @@ class DashboardServer:
 
     def _safe_snapshot(self) -> dict | None:
         try:
-            return self._director.snapshot()
+            snap = self._director.snapshot()
         except Exception as exc:  # noqa: BLE001
             self._warn(f"대시보드 스냅샷 실패({type(exc).__name__}: {exc}) — 다음 주기에 다시 읽는다")
             return None
+        if self._camera is not None:
+            snap = {**snap, "cameras": self._camera.snapshot()}
+        return snap
 
     def _on_command(self, raw) -> None:
         try:
@@ -199,7 +242,11 @@ class DashboardServer:
         lines: list[str] = []
         ok = True
         try:
-            self._dispatch(self._director, cmd, lines.append)
+            # `camera=self._camera` 를 안 넘기면 `console.dispatch` 의 `c` 분기가
+            # 항상 `camera is None` 으로 보고 거절한다 — 대시보드의 카메라 켜기/끄기
+            # 버튼이 조용히 아무 일도 안 하게 된다(실기에서 직접 눌러 보고서야
+            # 드러났다, 13개 태스크 리뷰·최종 리뷰 모두 이 호출부를 안 봤다).
+            self._dispatch(self._director, cmd, lines.append, camera=self._camera)
         except Exception as exc:  # noqa: BLE001 — 콘솔과 같다: 거절은 보여주고 계속
             ok = False
             lines.append(f"거절됨: {exc}")
@@ -216,9 +263,9 @@ class DashboardServer:
 
 
 def start_dashboard(hub, director, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                    warn: Callable[[str], None] = print):
+                    camera=None, warn: Callable[[str], None] = print):
     """대시보드를 띄운다. **실패해도 감독·콘솔은 그대로 돈다** — 경고하고 None."""
-    ds = DashboardServer(hub, director, warn=warn)
+    ds = DashboardServer(hub, director, camera=camera, warn=warn)
     try:
         srv = _ws_serve(ds.handler, host, port, process_request=ds.process_request)
     # `bind()` 는 0~65535 밖의 포트(`REACHY_DASHBOARD_PORT=99999`)에 OSError 가 아니라

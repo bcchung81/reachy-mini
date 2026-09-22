@@ -23,6 +23,7 @@ from stage.cues import (
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.mc_cache import cache_key
+from stage.protocol import ROLES
 
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
@@ -333,6 +334,18 @@ class Director:
         # (`on_disconnect`) — 안 지우면 단독을 아는 앱이 나가고 모르는 앱이 다시 붙어도
         # 옛 능력이 남아 단독이 켜진다. 지금 로봇 앱은 `caps` 를 안 보내 늘 빈 집합이다.
         self._caps: dict[str, set[str]] = {}
+        # 대기모드에 들어간 역할. 새 상태기계를 만들지 않는다 — `solo_role` 이 이 값을
+        # 보므로, **재배정만**은 그 로봇이 "끊겼다" 와 같은 모양으로 진행에서 빠진다.
+        # ~~재배정·마이크 재동기화까지 `on_disconnect` 와 같은 길을 탄다~~ — **틀렸다**
+        # (M3, 최종 전체 브랜치 리뷰 — 이 주석이 `toggle_standby` 의 정정된 docstring과
+        # 모순됐었다). 마이크 재동기화는 같은 길이 **아니다**: `on_disconnect` 는
+        # LISTENING 이고 리스너가 끊겼을 때만 남은 로봇에게 마이크를 다시 연다. 반면
+        # `toggle_standby` 는 `_abort_locked()` 로 **무조건** IDLE 로 돌아가므로(같은 락을
+        # 쥔 같은 스레드 안이라 그 뒤 상태가 바뀔 여지 자체가 없다) 마이크가 다시 열리는
+        # 일이 없다 — 운영자가 이어서 진행 명령으로 재동기화시킨다(자세한 근거는
+        # `toggle_standby` docstring). 끊기면 지운다(`_caps` 와 같은 수명 — 다시 붙는
+        # 앱은 새로 판단한다).
+        self._standby: set[str] = set()
 
     # ── 상태 ──────────────────────────────────────────────────────
     @property
@@ -341,13 +354,16 @@ class Director:
 
     @property
     def solo_role(self) -> str | None:
-        """한 대만 붙어 있으면 그 역할. 둘 다거나 둘 다 없으면 None.
+        """진행에 쓸 수 있는 로봇이 한 대뿐이면 그 역할. 둘이거나 없으면 None.
 
-        이것은 **1인 모드**(한 대가 끊겼을 때 남은 한 대가 양쪽 대사를 읽는 폴백)다 —
-        운영 모드 `solo`(단독, `mode`/`set_mode`)와 이름만 닮았지 다른 것이다.
+        **연결됐지만 대기모드인 로봇은 빼고 센다** — 대기 진입이 "끊겼다" 와 같은 모양으로
+        진행에서 빠지게 하는 지점이 여기 하나다. 이것은 **1인 모드**(한 대가 없을 때 남은
+        한 대가 양쪽 대사를 읽는 폴백)다 — 운영 모드 `solo`(단독, `mode`/`set_mode`)와
+        이름만 닮았지 다른 것이다.
         """
-        if len(self._connected) == 1:
-            return next(iter(self._connected))
+        active = self._connected - self._standby
+        if len(active) == 1:
+            return next(iter(active))
         return None
 
     @property
@@ -398,6 +414,7 @@ class Director:
             self._connected.discard(role)
             # 능력은 **그 연결의** 것이다 — 다시 붙는 앱은 새 hello 로 다시 알린다.
             self._caps.pop(role, None)
+            self._standby.discard(role)
             # 4단계: 단독 모드(`self._mode == "solo"`)에서 사회자가 끊기면 어떻게 할지 정한다.
             # 지금은 모드가 solo 로 남고(`solo_available` 만 꺼진다) 아래 경고가 "1인 모드로
             # 내려간다 — 도슨트가 양쪽 대사를 읽는다" 라고 찍히는데, 단독에는 읽을 대사가
@@ -930,6 +947,57 @@ class Director:
             # 4단계: 여기서 로봇에게 mode 를 보낸다(앱이 단독 루프로 전환)
             self._warn(f"모드를 {old} → {name} 로 바꿨다")
 
+    def toggle_standby(self, role: str) -> None:
+        """대기모드 on/off — 콘솔·대시보드 `z <역할>`.
+
+        새 상태기계를 만들지 않는다: `solo_role` 판정이 `connected - standby` 를 보므로,
+        대기 진입은 그 역할이 "끊겼다" 와 같은 모양으로 진행에서 빠진다(재배정은
+        `solo_role` 이 즉시 반영한다).
+
+        **전환은 항상 먼저 멈춘다**(`set_mode` 와 같은 패턴, `_abort_locked()`) — 그 역할이
+        지금 말하는 중인지 따로 검사하지 않는다(부분 중단이라는 새 개념을 만들지 않는다).
+        상대 로봇이 말하던 줄도 함께 끊긴다 — `set_mode` 가 이미 받아들인 트레이드오프와 같다.
+
+        `_abort_locked()` 는 상태를 무조건 `IDLE` 로 돌린다(`TurnMachine.abort()` 에 조건이
+        없다) — 그래서 **마이크는 다시 열리지 않는다**. `on_disconnect` 와 달리 여기서는
+        전환 직후 LISTENING 으로 재동기화할 여지 자체가 없다(같은 락을 쥔 같은 스레드
+        안에서 abort 뒤 상태가 바뀔 수 없다). `set_mode` 가 abort 뒤에 재동기화를 안 하는
+        것과 같은 기본값이다 — 운영자가 `s`/`r`/`n` 등으로 이어서 진행시킨다.
+
+        **말하는 중 마이크가 열려 있던 로봇이 대기로 들어가도 그 마이크를 따로 닫지
+        않는다** — `on_disconnect` 도 안 닫는다(같은 이유: `speak()` 가 다음 큐에서 양쪽을
+        닫고, 그 전에는 서버의 리스너 검사(`solo_role` 아니면 `heard` 를 버린다)가 이미
+        막는다). 대칭을 깨지 않는다.
+        """
+        with self._lock:
+            if role not in ROLES:
+                self._warn(f"모르는 역할이다: {role!r} — 대기모드를 바꾸지 않는다")
+                return
+            if role not in self._connected:
+                # 리뷰 I7 — 끊긴 로봇을 대기로 넣으면 `standby` 지시는 붙지 않은
+                # 소켓이라 조용히 버려지는데(`_send`), `_standby` 에는 그 역할이
+                # 남는다. `on_connect` 는 `_standby` 를 지우지 않으므로(그 자리는
+                # `on_disconnect` 몫이다) 이 로봇이 나중에 다시 붙어도 감독은
+                # 계속 "대기 중" 으로 본다 — 로봇 자신은 지시를 받은 적이 없어
+                # 멀쩡히 깨어 있는데 진행에서는 계속 빠진다. 유령 대기 상태다.
+                self._warn(f"[{role}] 이 붙어 있지 않다 — 대기모드를 바꾸지 않는다")
+                return
+            entering = role not in self._standby
+            if entering:
+                active_after = (self._connected - self._standby) - {role}
+                if not active_after:
+                    self._warn(
+                        f"[{role}] 를 대기모드로 두면 진행할 로봇이 없다 — 바꾸지 않는다"
+                    )
+                    return
+            self._abort_locked()
+            if entering:
+                self._standby.add(role)
+            else:
+                self._standby.discard(role)
+            self._warn(f"[{role}] 대기모드 {'진입' if entering else '해제'}")
+            self._emit([Command(to=role, type="standby", fields={"on": entering})])
+
     def _solo_refusal_locked(self) -> str | None:
         """지금 단독을 켤 수 **없는** 이유(경고 문구 그대로). 켤 수 있으면 None.
         **`self._lock` 을 쥔 채** 부른다.
@@ -1007,6 +1075,7 @@ class Director:
                 "question_wait_total_s": QUESTION_WAIT_S,
                 "connected": sorted(self._connected),
                 "solo_role": self.solo_role,
+                "standby": sorted(self._standby),
                 "rejected": sorted(self._rejected),
                 # `level` 은 지금 **적용된** 수준(이 큐가 도는 수준), `level_pending` 은
                 # 다음 큐부터 적용될 수준(없으면 None). 페이지는 둘을 다르게 칠한다.

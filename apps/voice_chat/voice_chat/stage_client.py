@@ -12,8 +12,8 @@ from typing import Callable
 
 from websockets.exceptions import ConnectionClosed
 
-_ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error"})
-_DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort"})
+_ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error", "rtc"})
+_DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort", "camera", "rtc", "standby"})
 
 RETRY_S = 2.0
 # `ws.recv(timeout=...)` 폴링 주기.
@@ -44,6 +44,9 @@ class Handlers:
     on_mic: Callable[[bool], None]
     on_gaze: Callable[[str], None]
     on_abort: Callable[[], None]
+    on_camera: Callable[[str, bool], None]
+    on_rtc: Callable[[str, dict], None]
+    on_standby: Callable[[bool], None]
 
 
 class StageClient:
@@ -51,9 +54,10 @@ class StageClient:
         self,
         url: str,
         role: str,
-        handlers: Handlers,
+        handlers: Handlers | None = None,
         unit_id: str | None = None,
         version: str = "",
+        caps: list[str] | None = None,
         warn: Callable[[str], None] = print,
     ) -> None:
         self._url = url
@@ -61,6 +65,7 @@ class StageClient:
         self._h = handlers
         self._unit_id = unit_id
         self._version = version
+        self._caps = caps
         self._warn = warn
         self._ws = None
 
@@ -76,6 +81,18 @@ class StageClient:
 
     def error(self, where: str, detail: str) -> None:
         self._send("error", where=where, detail=detail)
+
+    def set_handlers(self, handlers: Handlers) -> None:
+        """`Handlers` 가 이 클라이언트 자신(`self.rtc` 등)을 참조해야 할 때, 생성 뒤에
+        채운다 — `main.py::stage_run` 이 `RtcStreamer(send_rtc=client.rtc, ...)` 를 먼저
+        만들고 그 뒤에 `Handlers` 를 조립하는 이유가 이것이다(순환을 끊는다).
+        `run()` 을 부르기 **전에** 반드시 이 메서드로 채워야 한다 — 여기서는 `None` 검사를
+        하지 않는다(배선 순서로 보장한다, 잘못되면 `_on_raw` 에서 `AttributeError` 로
+        바로 드러난다)."""
+        self._h = handlers
+
+    def rtc(self, viewer: str, payload: dict) -> None:
+        self._send("rtc", viewer=viewer, **payload)
 
     def _send(self, type_: str, **fields) -> None:
         assert type_ in _ROBOT_MSGS, type_
@@ -118,6 +135,7 @@ class StageClient:
                 self._send(
                     "hello", role=self._role, unit_id=self._unit_id,
                     version=self._version,
+                    **({"caps": self._caps} if self._caps is not None else {}),
                 )
                 try:
                     while not should_stop():
@@ -167,6 +185,13 @@ class StageClient:
                 self._h.on_gaze(msg.get("target", "audience"))
             elif t == "abort":
                 self._h.on_abort()
+            elif t == "camera":
+                self._h.on_camera(msg.get("viewer", ""), bool(msg.get("on")))
+            elif t == "rtc":
+                payload = {k: v for k, v in msg.items() if k not in ("type", "viewer")}
+                self._h.on_rtc(msg.get("viewer", ""), payload)
+            elif t == "standby":
+                self._h.on_standby(bool(msg.get("on")))
         except Exception as exc:  # noqa: BLE001
             # **핸들러의 예외는 연결 문제가 아니다.** 여기서 새면 run() 의 바깥
             # except 가 "연결이 끊어졌다" 로 오판해 소켓을 닫고 재접속하고, 감독은

@@ -14,6 +14,8 @@ HELP = """
   g <큐id>  그 큐로 이동
   l <수준>  관람객 수준 바꾸기(다음 큐부터)
   m <모드>  운영 모드 바꾸기(podcast/solo)
+  z <mc|docent>  대기모드 켜고 끄기
+  c <mc|docent>  카메라 스트림 켜고 끄기
 """
 
 
@@ -22,7 +24,7 @@ def block_forever() -> None:
     threading.Event().wait()
 
 
-def run_console(director: Director, read=input, out=print, block=block_forever) -> None:
+def run_console(director: Director, read=input, out=print, block=block_forever, camera=None) -> None:
     """콘솔 루프. `read`/`out`/`block` 은 테스트가 주입한다 — 실제 동작을
     시험하려면 `input()` 을 우회할 수 있어야 한다."""
     out(HELP)
@@ -46,7 +48,7 @@ def run_console(director: Director, read=input, out=print, block=block_forever) 
         if cmd in ("q", "quit"):
             return
         try:
-            dispatch(director, cmd, out)
+            dispatch(director, cmd, out, camera=camera)
         except Exception as exc:  # noqa: BLE001
             # **여기서 예외가 새면 무대감독이 통째로 죽는다.**
             # `__main__.main()` 의 finally 가 서버를 내리기 때문이다. 가장
@@ -73,7 +75,7 @@ def _stop_first(director: Director) -> None:
         director.abort()
 
 
-def dispatch(director: Director, cmd: str, out) -> None:
+def dispatch(director: Director, cmd: str, out, camera=None) -> None:
     """콘솔 명령 하나 — **대시보드도 이 함수를 부른다**, 명령 경로를 하나로 둔다."""
     if cmd == "s":
         director.start()
@@ -122,6 +124,18 @@ def dispatch(director: Director, cmd: str, out) -> None:
         # 경고 문구는 `Director.set_mode` 한 곳에만 둔다(`g`·`l` 과 같은 이유 — 페이지
         # 로그에 뜨는 문구가 계약이다).
         director.set_mode(cmd[2:].strip())
+    elif cmd.startswith("z "):
+        # 대기모드(connected-standby) 토글 — 대시보드의 로봇별 스위치와 같은 경로다.
+        director.toggle_standby(cmd[2:].strip())
+    elif cmd.startswith("c "):
+        # 카메라 스트림 토글. `camera` 는 선택 인자다 — 카메라 중계가 없는
+        # 감독(아직 안 붙인 배포, 옛 호출부)에서는 조용히 삼키지 않고 안내한다.
+        # **실패는 소리 내서 실패한다**(CLAUDE.md) — 안 되는 걸 조용히 무시하면
+        # 운영자가 시연장에서 "왜 안 켜지지"를 추적할 방법이 없다.
+        if camera is None:
+            out("  카메라 기능을 쓸 수 없다(이 감독에 카메라 중계가 없다)")
+        else:
+            camera.toggle(cmd[2:].strip())
     elif cmd == "?":
         out(HELP)
     elif cmd:

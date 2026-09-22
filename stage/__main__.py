@@ -402,10 +402,11 @@ def main() -> None:
             hub, server.director,
             dash_host,
             dash_port,
+            camera=server.camera,
             warn=terminal,
         )
     try:
-        run_console(server.director)
+        run_console(server.director, camera=server.camera)
     finally:
         stop.set()
         srv.shutdown()

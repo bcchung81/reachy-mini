@@ -485,6 +485,10 @@ def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보
         def __init__(self, *a, **kw):
             seen["hub"] = kw.get("hub")
             self.director = object()
+            # 진짜 `StageServer.__init__` 은 항상 `CameraRelay` 를 만들어 `.camera` 에
+            # 둔다(Task 6) — `main()` 이 그 값을 `start_dashboard(..., camera=...)` 에
+            # 그대로 넘기므로, 흉내에도 속성이 있어야 AttributeError 없이 그 자리에 닿는다.
+            self.camera = object()
 
         def serve(self, host, port):
             class S:
@@ -494,7 +498,7 @@ def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보
 
         def tick_forever(self, *a): pass
 
-    def 가짜대시보드(hub, director, host, port, warn):
+    def 가짜대시보드(hub, director, host, port, camera=None, warn=print):
         seen.update(dash_hub=hub, host=host, port=port)
         raise 멈춤()
 
@@ -505,6 +509,46 @@ def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보
         stage_main.main()
     assert seen["hub"] is not None and seen["dash_hub"] is seen["hub"]
     assert (seen["host"], seen["port"]) == ("0.0.0.0", 9911)
+
+
+def test_main은_dashboard에_server_camera를_넘긴다(monkeypatch):
+    """Task 8 — `StageServer.__init__` 이 스스로 만드는 `server.camera`(Task 6, 항상
+    실제 `CameraRelay` — `None` 이 아니다)가 `main()` 을 거쳐 `start_dashboard` 에
+    그대로 닿는지. 위 `test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보드를_띄운다`
+    의 셋업을 그대로 쓰고 camera 단언만 더한다."""
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    seen = {}
+
+    class 멈춤(Exception):
+        pass
+
+    카메라_표식 = object()
+
+    class 가짜서버:
+        def __init__(self, *a, **kw):
+            self.director = object()
+            self.camera = 카메라_표식
+
+        def serve(self, host, port):
+            class S:
+                def serve_forever(self): pass
+                def shutdown(self): pass
+            return S()
+
+        def tick_forever(self, *a): pass
+
+    def 가짜대시보드(hub, director, host, port, camera=None, warn=print):
+        seen["camera"] = camera
+        raise 멈춤()
+
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
+    monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
+    monkeypatch.setattr(stage_main, "start_dashboard", 가짜대시보드)
+    with pytest.raises(멈춤):
+        stage_main.main()
+
+    assert seen["camera"] is not None
+    assert seen["camera"] is 카메라_표식
 
 
 class _가짜서버:
@@ -519,6 +563,10 @@ class _가짜서버:
         seen["server_warn"] = kw.get("warn", print)
         seen["hub"] = kw["hub"]
         self.director = object()
+        # 진짜 `StageServer` 는 항상 `.camera` 에 `CameraRelay` 를 둔다(Task 6) — `main()` 이
+        # `start_dashboard`/`run_console` 양쪽에 `server.camera` 를 그대로 넘기므로(Task 8),
+        # 이 흉내도 속성이 있어야 그 두 호출부까지 닿는 테스트가 AttributeError 없이 돈다.
+        self.camera = object()
         self._seen = seen
 
     def serve(self, host, port):
@@ -567,7 +615,7 @@ def test_감독_경고는_허브에_싣고_대시보드_자신의_경고는_터�
         seen["gen_warn"] = warn
         return lambda r, b, h: "x"
 
-    def 가짜대시보드(hub, director, host, port, warn=print):
+    def 가짜대시보드(hub, director, host, port, camera=None, warn=print):
         seen["dash_warn"] = warn
         raise 멈춤()
 
@@ -637,8 +685,12 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
         서버들.append(_가짜서버(seen, *a, **kw))
         return 서버들[-1]
 
-    def 가짜콘솔(director):
+    def 가짜콘솔(director, camera=None):
         seen["console"] = director
+        # 리뷰(Important 1) — `start_dashboard` 쪽 camera 배선은 새 테스트가 정체성까지
+        # 확인하는데 `run_console` 쪽은 시그니처만 맞추고 값을 한 번도 안 봤다. 여기서
+        # 받은 camera 를 적어 아래에서 `서버들[0].camera` 와 정체성으로 비교한다.
+        seen["console_camera"] = camera
         raise 멈춤()
 
     import stage.console
@@ -652,6 +704,10 @@ def test_대시보드_포트가_숫자가_아니면_경고하고_대시보드만
 
     assert "⚠ REACHY_DASHBOARD_PORT 가 포트 번호가 아니다('88x8')" in capsys.readouterr().out
     assert seen["console"] is 서버들[0].director
+    # `director` 와 같은 방식(같은 서버 인스턴스의 속성과 정체성 비교)으로 camera 도 본다 —
+    # `run_console(server.director, camera=server.camera)` 배선이 실제로 그 객체를 옮기는지,
+    # 시그니처만 맞고 값은 안 보는 반쪽짜리 확인에 머무르지 않게 한다.
+    assert seen["console_camera"] is 서버들[0].camera
     assert seen["shutdown"] == 1
     assert seen["dash"] == []
 
@@ -881,7 +937,7 @@ def test_대시보드_주소가_비어_있으면_모든_망이_아니라_노트�
     class 멈춤(Exception):
         pass
 
-    def 가짜대시보드(hub, director, host, port, warn=print):
+    def 가짜대시보드(hub, director, host, port, camera=None, warn=print):
         seen["host"] = host
         raise 멈춤()
 

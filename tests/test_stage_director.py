@@ -3135,3 +3135,109 @@ def test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객�
     s = h.d.snapshot()
     assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
     assert h.says() == []
+
+
+# ── 대기모드 (Task 4) ──────────────────────────────────────────────
+
+
+def test_대기_진입은_solo_role을_남은_로봇으로_만든다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    assert h.d.solo_role is None
+    h.d.toggle_standby("mc")
+    assert h.d.solo_role == "docent"
+    assert h.d.snapshot()["standby"] == ["mc"]
+
+
+def test_대기_해제는_solo_role을_되돌린다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.toggle_standby("mc")
+    assert h.d.solo_role is None
+    assert h.d.snapshot()["standby"] == []
+
+
+def test_둘_다_대기로_두는_것은_거절한다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.toggle_standby("docent")
+    assert h.d.snapshot()["standby"] == ["mc"]
+    assert any("진행할 로봇이 없다" in w for w in h.warnings)
+
+
+def test_대기_전환은_말하던_것을_먼저_멈춘다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    assert h.d.state is State.MC_SPEAKING
+    h.d.toggle_standby("docent")
+    assert h.d.state is State.IDLE
+
+
+def test_로봇이_끊기면_대기_목록에서도_지운다():
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    h.d.on_disconnect("mc")
+    assert h.d.snapshot()["standby"] == []
+
+
+def test_모르는_역할은_경고하고_바꾸지_않는다():
+    h = Harness()
+    h.d.toggle_standby("아무거나")
+    assert h.d.snapshot()["standby"] == []
+    assert any("모르는 역할" in w for w in h.warnings)
+
+
+def test_끊긴_역할은_경고하고_대기모드를_바꾸지_않는다():
+    """리뷰 I7 — 예전에는 `role not in ROLES` 만 봐서, 끊긴(`_connected` 에 없는) 역할도
+    대기로 넣을 수 있었다. `standby` 지시는 붙지 않은 소켓이라 조용히 버려지는데
+    `_standby` 에는 남고, `on_connect` 는 `_standby` 를 안 지우므로(그 자리는
+    `on_disconnect` 몫) 그 로봇이 나중에 다시 붙어도 감독은 계속 "대기 중" 으로
+    본다 — 로봇은 지시를 받은 적이 없어 멀쩡히 깨어 있는데 진행에서는 계속 빠지는
+    유령 대기 상태다."""
+    h = Harness()
+    h.d.on_connect("docent")          # mc 는 붙지 않는다
+    h.d.toggle_standby("mc")
+    assert h.d.snapshot()["standby"] == []
+    assert any("[mc]" in w and "붙어 있지 않다" in w for w in h.warnings)
+    # 이어서 mc 가 붙어도 유령 대기가 아니다 — 정상적으로 1인 모드 판정이 된다.
+    h.d.on_connect("mc")
+    assert h.d.solo_role is None
+
+
+def test_대기_중이어도_기존_1인_모드_테스트는_그대로_돈다():
+    """`_standby` 가 비어 있으면 `connected - standby == connected` 라 기존 동작이
+    안 바뀐다는 것을 한 번 더 확인한다 — 회귀 방지용 스모크."""
+    h = Harness()
+    h.d.on_connect("mc")
+    assert h.d.solo_role == "mc"
+
+
+def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
+    """리뷰 Important — `_abort_locked()` 는 상태를 무조건 IDLE 로 돌린다
+    (`TurnMachine.abort()` 에 조건이 없다). 그래서 `toggle_standby` 안에서
+    "전환 뒤 LISTENING 이면 마이크를 다시 연다" 는 분기는 **절대 실행되지
+    않는 죽은 코드**였다 — 같은 락을 쥔 같은 스레드 안이라 abort 와 그
+    검사 사이에 상태가 바뀔 수 없다. 그 분기를 지워도 동작은 그대로여야
+    한다는 것을 여기서 직접 확인한다: LISTENING 에서 대기로 전환해도
+    `mic` 커맨드가 전혀 안 나간다(운영자가 이어서 진행 명령을 눌러야 한다).
+    """
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
+    h.clear()
+    h.d.toggle_standby("docent")
+    assert h.d.state is State.IDLE
+    assert h.mics() == [], f"대기 전환 뒤에 마이크 커맨드가 나갔다: {h.sent}"
