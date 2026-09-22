@@ -159,7 +159,11 @@ class DashboardServer:
             try:
                 sub.queue.put_nowait(ev)
             except queue.Full:
-                sub.dropped += 1
+                # `mark_dropped()` — 이 `deliver` 는 카메라 릴레이를 거쳐 로봇 연결
+                # 스레드에서도 불린다. 허브의 `publish` 도 같은 `sub.dropped` 를 다른
+                # 스레드에서 올릴 수 있어, 락 없는 `+= 1` 은 카운트를 잃는다
+                # (`stage/dashboard_hub.py::Subscription.mark_dropped` 가 락을 쥔다).
+                sub.mark_dropped()
         return deliver
 
     def _pump(self, ws, sub, stop: threading.Event) -> None:
