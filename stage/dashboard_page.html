@@ -502,7 +502,8 @@ function sendCmd(cmd) {
 }
 
 // ── 카메라 WebRTC — 관람객 카메라 두 대의 영상을 받는다 ────────────
-// rtc 메시지 형식은 스펙 표(2026-09-21-stage-dashboard-design.md)를 따른다:
+// rtc 메시지 형식은 스펙 표(2026-09-22-dashboard-camera-design.md)를 따른다 — M5:
+// 2026-09-21 스펙은 카메라를 "이번 범위 밖" 으로 명시한 문서라 rtc 표는 거기 없다.
 // {kind:"rtc", role, sdp?, candidate?, sdpMLineIndex?, bye?}. 페이지는 답신 SDP·
 // ICE 후보를 같은 형식으로 ws 에 되돌린다 — 서버가 로봇 쪽 스트리머와 중계한다.
 function ensurePeer(role) {
