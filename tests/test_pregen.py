@@ -300,6 +300,54 @@ def test_points_for가_준_소주제마다_다리_대사를_사전_생성한다(
     assert "p2" in written[key_p2], "p2 용 프롬프트(build_bridge_prompt)로 생성되지 않았다"
 
 
+def test_오프닝_대사가_이미_캐시에_있어도_다리_대사는_독립적으로_생성된다(monkeypatch, tmp_path, capsys):
+    """리뷰 Critical 재현 시나리오: 오프닝 대사를 먼저 한 번 생성해 두고(정상
+    운영에서의 흔한 정상 상태 — 첫 사전생성 이후) 두 번째로 `main()` 을 돌린다.
+
+    고친 코드 이전에는 `if key in out: continue` 가 오프닝 대사 캐시 **히트**일
+    때 다리 대사 루프까지 통째로 건너뛰었다 — `mc_brief` 는 이미 캐시됐는데
+    `points` 만 나중에 추가/수정되는 게 실제 반복 패턴이라, 다리 대사 키가
+    영영 안 생기고 스크립트는 "캐시가 최신 상태다" 라고 거짓 보고했다. 이
+    테스트는 오프닝 대사 캐시 히트와 무관하게 다리 대사가 여전히 생성되는지
+    직접 검증한다."""
+    _고정_수준(monkeypatch, "일반")
+    briefs = {
+        lvl: {"mc_brief": "브리프", "docent_brief": "해설", "points": ["p1", "p2"]}
+        for lvl in LEVEL_NAMES
+    }
+    cue = Cue("c1", "제목", "mc", "옛 지시문", "partner", briefs=briefs)
+    monkeypatch.setattr(pregen, "load_cues", lambda: [cue])
+    monkeypatch.setattr(pregen, "load_levels", lambda: {lvl: lvl for lvl in LEVEL_NAMES})
+    out_path = tmp_path / "mc_lines.yaml"
+    opening_key = cache_key("c1", "일반", "브리프")
+    # 오프닝 대사만 이미 캐시된 상태로 미리 심는다 — 다리 대사 키는 아직 없다.
+    out_path.write_text(
+        yaml.safe_dump({opening_key: "이미 생성된 오프닝 대사"}, allow_unicode=True),
+        encoding="utf-8",
+    )
+    _캐시_경로_고정(monkeypatch, out_path)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        pregen, "build_generate",
+        lambda level: (lambda role, brief, hist: calls.append(brief) or f"[{brief}] 생성"),
+    )
+
+    pregen.main()
+
+    assert "브리프" not in calls, "오프닝 대사가 이미 캐시에 있는데 다시 생성했다"
+
+    key_p1 = cache_key("c1", "일반", "p1")
+    key_p2 = cache_key("c1", "일반", "p2")
+    written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert written[opening_key] == "이미 생성된 오프닝 대사", "캐시 히트인 오프닝 대사가 덮어써졌다"
+    assert key_p1 in written, f"오프닝 대사 캐시 히트 때문에 p1 다리 대사가 안 만들어졌다: {written}"
+    assert key_p2 in written, f"오프닝 대사 캐시 히트 때문에 p2 다리 대사가 안 만들어졌다: {written}"
+    assert "새로 만들 것이 없다" not in capsys.readouterr().out, (
+        "다리 대사를 새로 만들었는데 '캐시가 최신 상태다' 라고 거짓 보고했다"
+    )
+
+
 def test_고아_키_개수를_보고한다(monkeypatch, tmp_path, capsys):
     """지금 큐시트에 없는 낡은 키가 새 항목 옆에 쌓이면 사람이 어느 줄이
     현행인지 못 가린다 — 지우지는 않되 개수는 보고해야 한다."""

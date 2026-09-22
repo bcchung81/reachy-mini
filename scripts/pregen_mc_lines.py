@@ -94,22 +94,31 @@ def main() -> None:
                 mc_brief, _ = cue.brief_for(name)
                 if not mc_brief:
                     print(f"  건너뜀 {cue.id}/{name} — mc_brief 가 없다", flush=True)
-                    continue
-                key = cache_key(cue.id, name, mc_brief)
-                if key in out:
-                    continue
-                text = gen("mc", mc_brief, [])
-                out[key] = text
-                # **여기서 바로 쓴다.** 다음 반복에서 다른 왕복이 실패해도
-                # 이 항목은 이미 파일에 남아 있다.
-                _append_entry(p, key, text)
-                print(f"  {cue.id}/{name}: {text}", flush=True)
+                else:
+                    key = cache_key(cue.id, name, mc_brief)
+                    if key not in out:
+                        text = gen("mc", mc_brief, [])
+                        out[key] = text
+                        # **여기서 바로 쓴다.** 다음 반복에서 다른 왕복이 실패해도
+                        # 이 항목은 이미 파일에 남아 있다.
+                        _append_entry(p, key, text)
+                        print(f"  {cue.id}/{name}: {text}", flush=True)
+                    # key in out 이어도 여기서 아래 포인트 루프로 그냥
+                    # 흘러간다 — `continue` 로 건너뛰지 않는다. (리뷰
+                    # Critical 대응: 예전엔 `if key in out: continue` 가
+                    # 오프닝 대사 캐시 히트일 때 이 아래 포인트 루프까지
+                    # 통째로 건너뛰었다. `mc_brief` 는 이미 캐시됐는데
+                    # `points` 만 나중에 추가/수정되는 게 실제 반복 패턴이라
+                    # — 그 경우 다리 대사 키가 영영 안 생기고, 스크립트는
+                    # "캐시가 최신 상태다" 라고 거짓 보고하며, `Director` 는
+                    # 원문 포인트 텍스트를 그대로 낭독하는 폴백으로 조용히
+                    # 빠진다. 시연 담당자에게 경고 한 줄 없이.)
 
                 # 포인트 왕복(큐가 여러 짧은 교환으로 쪼개진 경우)의 다리
-                # 대사도 같은 캐시·같은 키 형식으로 미리 만든다 — 없으면
-                # `Director` 가 원문 포인트 텍스트를 그대로 낭독하는 폴백으로
-                # 빠진다(드물어야 하는데, 그건 이 스크립트를 시연 전에 돌려
-                # 캐시를 채워 둔다는 전제 위에서다).
+                # 대사도 같은 캐시·같은 키 형식으로 미리 만든다. 오프닝
+                # 대사(`key`)의 캐시 히트/미스와 **무관하게** 독립적으로
+                # 돈다 — 각 포인트는 자기 자신의 `pkey in out` 으로만
+                # 스킵을 판단한다(위 주석 참고).
                 for point_i, point_text in enumerate(cue.points_for(name)):
                     pkey = cache_key(cue.id, name, point_text)
                     if pkey in out:
