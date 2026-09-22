@@ -944,12 +944,18 @@ class Director:
         """대기모드 on/off — 콘솔·대시보드 `z <역할>`.
 
         새 상태기계를 만들지 않는다: `solo_role` 판정이 `connected - standby` 를 보므로,
-        대기 진입은 그 역할이 "끊겼다" 와 같은 모양으로 진행에서 빠진다(재배정·마이크
-        재동기화까지 `on_disconnect` 와 같은 자리에서 일어난다).
+        대기 진입은 그 역할이 "끊겼다" 와 같은 모양으로 진행에서 빠진다(재배정은
+        `solo_role` 이 즉시 반영한다).
 
         **전환은 항상 먼저 멈춘다**(`set_mode` 와 같은 패턴, `_abort_locked()`) — 그 역할이
         지금 말하는 중인지 따로 검사하지 않는다(부분 중단이라는 새 개념을 만들지 않는다).
         상대 로봇이 말하던 줄도 함께 끊긴다 — `set_mode` 가 이미 받아들인 트레이드오프와 같다.
+
+        `_abort_locked()` 는 상태를 무조건 `IDLE` 로 돌린다(`TurnMachine.abort()` 에 조건이
+        없다) — 그래서 **마이크는 다시 열리지 않는다**. `on_disconnect` 와 달리 여기서는
+        전환 직후 LISTENING 으로 재동기화할 여지 자체가 없다(같은 락을 쥔 같은 스레드
+        안에서 abort 뒤 상태가 바뀔 수 없다). `set_mode` 가 abort 뒤에 재동기화를 안 하는
+        것과 같은 기본값이다 — 운영자가 `s`/`r`/`n` 등으로 이어서 진행시킨다.
 
         **말하는 중 마이크가 열려 있던 로봇이 대기로 들어가도 그 마이크를 따로 닫지
         않는다** — `on_disconnect` 도 안 닫는다(같은 이유: `speak()` 가 다음 큐에서 양쪽을
@@ -975,8 +981,6 @@ class Director:
                 self._standby.discard(role)
             self._warn(f"[{role}] 대기모드 {'진입' if entering else '해제'}")
             self._emit([Command(to=role, type="standby", fields={"on": entering})])
-            if self.solo_role is not None and self._machine.state is State.LISTENING:
-                self._emit(self._machine.force_listening(self._who("mc")))
 
     def _solo_refusal_locked(self) -> str | None:
         """지금 단독을 켤 수 **없는** 이유(경고 문구 그대로). 켤 수 있으면 None.

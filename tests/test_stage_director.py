@@ -3202,3 +3202,25 @@ def test_대기_중이어도_기존_1인_모드_테스트는_그대로_돈다():
     h = Harness()
     h.d.on_connect("mc")
     assert h.d.solo_role == "mc"
+
+
+def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
+    """리뷰 Important — `_abort_locked()` 는 상태를 무조건 IDLE 로 돌린다
+    (`TurnMachine.abort()` 에 조건이 없다). 그래서 `toggle_standby` 안에서
+    "전환 뒤 LISTENING 이면 마이크를 다시 연다" 는 분기는 **절대 실행되지
+    않는 죽은 코드**였다 — 같은 락을 쥔 같은 스레드 안이라 abort 와 그
+    검사 사이에 상태가 바뀔 수 없다. 그 분기를 지워도 동작은 그대로여야
+    한다는 것을 여기서 직접 확인한다: LISTENING 에서 대기로 전환해도
+    `mic` 커맨드가 전혀 안 나간다(운영자가 이어서 진행 명령을 눌러야 한다).
+    """
+    h = Harness()
+    h.d.on_connect("mc")
+    h.d.on_connect("docent")
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
+    h.clear()
+    h.d.toggle_standby("docent")
+    assert h.d.state is State.IDLE
+    assert h.mics() == [], f"대기 전환 뒤에 마이크 커맨드가 나갔다: {h.sent}"
