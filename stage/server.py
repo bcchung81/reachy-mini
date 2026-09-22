@@ -138,13 +138,12 @@ class StageServer:
                         self.director.reject(role, str(exc))
                         role = None
                         return
-                    # `director.on_hello` 가 던지지 않은 뒤에만 부른다 —
+                    # `director.on_hello` 가 던지지 않은 뒤에만 이 블록에 온다 —
                     # `director.on_hello` 자신이 거절 검사를 caps 기록보다 먼저
-                    # 두는 것과 같은 이유다. 거꾸로 앞에 두면(리뷰 Important 1)
-                    # `UnitMismatch` 로 거절된 사칭 로봇(이 역할로 붙은 적이
-                    # 없다)의 caps 가 이미 `_recompute` 를 돌려, 자리에 계속
-                    # 붙어 있는 정상 로봇의 카메라를 경고 한 줄 없이 꺼 버린다.
-                    self.camera.on_robot_hello(role, caps)
+                    # 두는 것과 같은 이유다. 거꾸로 이 블록 전체를 더 앞에 두면
+                    # (리뷰 Important 1) `UnitMismatch` 로 거절된 사칭 로봇(이
+                    # 역할로 붙은 적이 없다)의 caps 가 정상 로봇의 카메라를
+                    # 경고 한 줄 없이 꺼 버린다.
                     with self._lock:
                         old = self._conns.get(role)
                         self._conns[role] = ws
@@ -162,6 +161,22 @@ class StageServer:
                             old.close()
                         except Exception as exc:  # noqa: BLE001
                             self._warn(f"[{role}] 옛 연결을 닫지 못했다: {exc}")
+                    # `self._conns[role] = ws` **뒤에만** 부른다(최종 전체 브랜치
+                    # 리뷰 C1). `CameraRelay.on_robot_hello` → `_recompute` →
+                    # `_set_pair(on=True)` 가 곧바로 `_send_raw` 로 이 role 에게
+                    # `camera{on:true}` 를 보내려 하는데, `_send_raw` 는
+                    # `self._conns` 에서 소켓을 찾는다. 등록보다 먼저 부르면
+                    # (예전 순서) 대시보드 시청자가 이미 붙어 있을 때 그 송신이
+                    # "아직 붙지 않았다" 로 조용히 버려지고, `CameraRelay._active`
+                    # 는 이미 True 로 찍혀 있어 재계산해도 다시 안 보낸다 —
+                    # 화면은 빈 채 사유 문구도 없다. 이 세션에서 두 로봇의
+                    # **첫 hello** 에서 실기로 그대로 재현됐다(스테일 브라우저
+                    # 탭이 로봇보다 먼저 시청자로 붙어 있었다). `_conns[role]=ws`
+                    # 를 늦게 두는 이 순서 실수는 이 파일에서 **두 번째**다 —
+                    # 첫 번째는 바로 위 `UnitMismatch` 검사(커밋 195d3f6) — "자원을
+                    # 등록하기 전에 그 자원을 쓸 줄 아는 컴포넌트부터 깨운다" 는
+                    # 같은 실수가 다른 자원(`_conns`)을 상대로 또 났다.
+                    self.camera.on_robot_hello(role, caps)
                     self._warn(f"[{role}] 붙었다 (version={msg.get('version')})")
                     self._publish("connect", role=role, version=msg.get("version"))
                     self.director.on_connect(role)

@@ -753,3 +753,39 @@ def test_거절된_사칭_연결이_기존_로봇의_카메라를_안_끈다(str
         # 거절 경로는 finally 를 안 타므로(등록된 적이 없다) 되돌릴 기회도 없다
         # — 애초에 꺼지지 않았어야 한다. 정상 mc 의 카메라는 그대로 켜져 있다.
         assert strict_server.camera.snapshot()["mc"]["available"] is True
+
+
+# ── 최종 전체 브랜치 리뷰 C1 — 시청자가 로봇의 hello 보다 먼저 붙어도 camera{on:true} 가 실제로 로봇에 닿는다 ──
+
+
+def test_시청자가_먼저_붙어_있어도_로봇_hello에_camera_on이_실제로_닿는다(server):
+    """C1 — 예전에는 `self.camera.on_robot_hello(role, caps)` 가 `self._conns[role]
+    = ws` **보다 먼저** 왔다. 대시보드 시청자가 이미 붙어 있는 상태에서 로봇이
+    (재)연결되면 `on_robot_hello` → `_recompute` → `_set_pair(True)` → `_send_raw`
+    가 `self._conns.get(role)` 를 아직 못 찾아 `camera{on:true}` 를 조용히 버렸다.
+    `CameraRelay._active` 는 이미 True 로 찍혀서 재계산해도 다시 안 보낸다 —
+    `server.camera.snapshot()["mc"]["available"]` 만 보면(기존
+    `test_hello의_caps가_camera로_전달된다`) 이 버그를 못 잡는다(그 플래그는 송신
+    성공 여부와 무관하게 True 가 된다). **로봇 자신의 소켓이 실제로 무엇을 받았는지**
+    까지 봐야 한다 — 이 세션에서 실기로 그대로 재현된 시나리오(시청자가 로봇의
+    hello 보다 먼저 붙어 있었다)를 그대로 옮긴다."""
+    events = []
+    # 시청자를 **로봇이 붙기 전에** 먼저 등록한다 — C1 이 겨냥하는 정확한 순서.
+    vid = server.camera.add_viewer(events.append)
+
+    with connect(url_of(server)) as ws:
+        # `_hello_caps`/`hello` 헬퍼는 "첫 통은 mic" 를 전제한다 — 시청자가 없을 때는
+        # 맞지만, 여기서는 시청자가 있어 `camera.on_robot_hello` 가 `director.on_connect`
+        # (mic 재동기화)보다 **먼저** 불려 camera 가 먼저 올 수도 있다. 순서에 기대지
+        # 않고 두 통을 걷어 **둘 다** 왔는지 본다.
+        ws.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None,
+                            "version": "2.0.0", "caps": ["camera"]}))
+        msgs = [recv(ws), recv(ws)]
+        assert {m["type"] for m in msgs} == {"mic", "camera"}, msgs
+        cam_on = next(m for m in msgs if m["type"] == "camera")
+        assert cam_on == {"type": "camera", "viewer": vid, "on": True}, (
+            "camera{on:true} 가 로봇 소켓에 실제로 안 닿았다 — C1 이 다시 났다"
+        )
+        # 연결이 살아 있는 **동안** 확인한다 — `with` 를 벗어나면 소켓이 닫혀
+        # `camera.on_robot_disconnect` 가 돌아 `available` 이 다시 False 로 내려간다.
+        assert server.camera.snapshot()["mc"]["available"] is True
