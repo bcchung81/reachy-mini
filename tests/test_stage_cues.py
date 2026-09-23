@@ -645,29 +645,49 @@ def test_cues_는_전체를_순서대로_준다():
     assert [c.id for c in _시트3().cues()] == ["a", "b", "c"]
 
 
-# ── 포인트 필드 (Task 2) ──────────────────────────────────────────────
+# ── 턴(사회자 질문 → 도슨트 설명) ──────────────────────────────────────
+#
+# 턴은 **큐 최상위**에 있고 수준은 턴 안의 `answers` 에서만 갈린다 — 턴 수와
+# 질문 흐름이 수준마다 달라질 수 없는 구조다. 예전에는 포인트가 수준별
+# (`briefs.<수준>.points`)이라 초등 2턴·전문가 4턴처럼 대화 모양 자체가 수준마다
+# 달랐다(docs/lessons.md 「포인트를 수준별로 두니 턴 수와 질문이 수준마다 달라졌다」).
+
+_LEVELS = ("초등", "중고등", "일반", "전문가")
 
 
-def _briefs(points=None):
-    b = {}
-    for name in ("초등", "중고등", "일반", "전문가"):
-        entry = {"mc_brief": "mb", "docent_brief": "db"}
-        if points is not None:
-            entry["points"] = list(points)
-        b[name] = entry
-    return b
+def _briefs(**extra):
+    return {n: {"mc_brief": "mb", "docent_brief": "db", **extra} for n in _LEVELS}
 
 
-def test_points가_있으면_읽힌다(tmp_path):
-    raw = [{
+def _turn(ask=None, answers=None):
+    t = {"answers": answers if answers is not None else {n: f"{n} 설명." for n in _LEVELS}}
+    if ask is not None:
+        t["ask"] = ask
+    return t
+
+
+def _턴_큐시트(tmp_path, points, **over):
+    item = {
         "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
         "gaze": "partner", "mc_after": "받아치기 다음",
-        "briefs": _briefs(["포인트1", "포인트2"]),
-    }]
+        "briefs": _briefs(), "points": points,
+    }
+    item.update(over)
     p = tmp_path / "cues.yaml"
-    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
-    cues = load_cues(p)
-    assert cues[0].points_for("일반") == ["포인트1", "포인트2"]
+    p.write_text(yaml.safe_dump([item], allow_unicode=True), encoding="utf-8")
+    return p
+
+
+def test_턴은_큐_최상위에서_읽고_수준은_설명만_가른다(tmp_path):
+    p = _턴_큐시트(tmp_path, [
+        _turn(answers={"초등": "쉬운 0.", "중고등": "중 0.", "일반": "일 0.", "전문가": "깊은 0."}),
+        _turn("그럼 왜요?", {"초등": "쉬운 1.", "중고등": "중 1.", "일반": "일 1.", "전문가": "깊은 1."}),
+    ])
+    c = load_cues(p)[0]
+    초등, 전문가 = c.points_for("초등"), c.points_for("전문가")
+    assert [pt.ask for pt in 초등] == [pt.ask for pt in 전문가] == ["", "그럼 왜요?"]
+    assert [pt.answer for pt in 초등] == ["쉬운 0.", "쉬운 1."]
+    assert [pt.answer for pt in 전문가] == ["깊은 0.", "깊은 1."]
 
 
 def test_points가_없으면_빈_목록이다(tmp_path):
@@ -677,29 +697,235 @@ def test_points가_없으면_빈_목록이다(tmp_path):
     }]
     p = tmp_path / "cues.yaml"
     p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
-    cues = load_cues(p)
-    assert cues[0].points_for("일반") == []
+    assert load_cues(p)[0].points_for("일반") == []
 
 
 def test_points가_빈_목록이면_거절한다(tmp_path):
+    with pytest.raises(CueError, match="points"):
+        load_cues(_턴_큐시트(tmp_path, []))
+
+
+def test_턴이_상한을_넘으면_전문가도_거절한다(tmp_path):
+    """상한은 수준과 무관하다 — 전문가도 3턴이다."""
+    assert cues_mod.MAX_TURNS == 3
+    p = _턴_큐시트(tmp_path, [_turn()] + [_turn(f"질문{i}?") for i in range(3)])
+    with pytest.raises(CueError, match="3"):
+        load_cues(p)
+
+
+def test_첫_턴에_ask가_있으면_거절한다(tmp_path):
+    """첫 턴의 질문은 오프닝(`mc`/`mc_brief`)이 던진다 — 두 군데 적으면 어긋난다."""
+    with pytest.raises(CueError, match="ask"):
+        load_cues(_턴_큐시트(tmp_path, [_turn("첫 질문?"), _turn("둘째 질문?")]))
+
+
+def test_둘째_턴부터_ask가_없으면_거절한다(tmp_path):
+    with pytest.raises(CueError, match="ask"):
+        load_cues(_턴_큐시트(tmp_path, [_turn(), _turn()]))
+
+
+def test_한_수준이라도_설명이_빠지면_거절한다(tmp_path):
+    """빠진 수준만 조용히 옛 지시문으로 돌면 그 수준의 시연만 모양이 다르다."""
+    answers = {n: f"{n} 설명." for n in _LEVELS if n != "전문가"}
+    with pytest.raises(CueError, match="전문가"):
+        load_cues(_턴_큐시트(tmp_path, [_turn(answers=answers)]))
+
+
+def test_설명이_문자열이_아니면_거절한다(tmp_path):
+    answers = {n: f"{n} 설명." for n in _LEVELS}
+    answers["일반"] = True
+    with pytest.raises(CueError, match="일반"):
+        load_cues(_턴_큐시트(tmp_path, [_turn(answers=answers)]))
+
+
+def test_옛_문자열_포인트는_거절한다(tmp_path):
+    """사실 문장 한 줄짜리 포인트가 "진술 → 확인" 대화를 만들었다 — 되돌아오지 않게 막는다."""
+    with pytest.raises(CueError, match="매핑"):
+        load_cues(_턴_큐시트(tmp_path, ["사실 문장"]))
+
+
+def test_briefs_안의_points는_거절한다(tmp_path):
     raw = [{
         "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
         "gaze": "partner", "mc_after": "받아치기 다음",
-        "briefs": _briefs([]),
+        "briefs": _briefs(points=["p1"]),
     }]
     p = tmp_path / "cues.yaml"
     p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
-    with pytest.raises(CueError, match="points"):
+    with pytest.raises(CueError, match="최상위"):
         load_cues(p)
+
+
+def test_guard는_선택이고_수준별로_읽힌다(tmp_path):
+    briefs = _briefs()
+    briefs["일반"]["guard"] = "'캐나다'라고 하지 않는다."
+    c = load_cues(_턴_큐시트(tmp_path, [_turn()], briefs=briefs))[0]
+    assert c.guard_for("일반") == "'캐나다'라고 하지 않는다."
+    assert c.guard_for("초등") == ""
+
+
+def test_guard가_비었거나_문자열이_아니면_거절한다(tmp_path):
+    for bad in ("", "  ", 3, True):
+        briefs = _briefs()
+        briefs["일반"]["guard"] = bad
+        with pytest.raises(CueError, match="guard"):
+            load_cues(_턴_큐시트(tmp_path, [_turn()], briefs=briefs))
 
 
 def test_points가_있는데_mc_after가_없으면_거절한다(tmp_path):
-    raw = [{
-        "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
-        "gaze": "partner",  # mc_after 없음
-        "briefs": _briefs(["p1"]),
-    }]
-    p = tmp_path / "cues.yaml"
-    p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
     with pytest.raises(CueError, match="mc_after"):
-        load_cues(p)
+        load_cues(_턴_큐시트(tmp_path, [_turn()], mc_after=""))
+
+
+def test_데이터_큐시트의_턴_수가_상한_이내다():
+    for c in load_cues():
+        assert len(c.points) <= cues_mod.MAX_TURNS, f"{c.id}: {len(c.points)}턴"
+
+
+def test_데이터_큐시트의_질문은_물음표로_끝난다():
+    """사회자 질문이 진술문이면 도슨트는 설명하지 않고 확인만 한다 — 이 작업이
+    고친 증상 그대로다(docs/lessons.md 「포인트를 사실 문장으로 쓰면…」)."""
+    for c in load_cues():
+        for i, t in enumerate(c.points[1:], start=1):
+            assert t.ask.rstrip().endswith("?"), f"{c.id} {i}턴 ask 가 질문이 아니다: {t.ask!r}"
+
+
+def test_데이터_큐시트의_턴_문구에_위치_지시어가_없다():
+    """`test_briefs에_위치_지시어가_없다`(B4)와 같은 이유 — 질문은 캐시가 없으면
+    그대로 읽히고, 설명은 생성의 씨앗이자 폴백이라 역시 그대로 읽힌다."""
+    for c in load_cues():
+        for i, t in enumerate(c.points):
+            for text in (t.ask, *t.answers.values()):
+                for w in _DEIXIS:
+                    assert w not in text, f"{c.id} {i}턴: {w!r} — {text!r}"
+        for level in c.briefs:
+            for w in _DEIXIS:
+                assert w not in c.guard_for(level), f"{c.id}/{level}/guard: {w!r}"
+
+
+# 옛 최상위 `docent_brief` 는 `briefs` 가 모두 채워져 런타임에 안 읽히지만, 파일을
+# 읽는 사람·앞으로의 큐시트 지식 검색(로드맵 4단계)이 그대로 믿는다. 조사 파일
+# (`data/cues-research/*.yaml` corrections)이 **틀렸다고 판정한** 문구가 되살아나지
+# 않게 박아 둔다. 판정이 "그대로 써도 된다"(16-inspection)·"누락"·"주의"인 항목은
+# 오류가 아니라 여기 없다.
+_옛_지시문_오류 = (
+    ("01-intro", "자료 보존, 연구를 위해"),
+    ("02-history", "1785년에 존재가 처음 발견"),
+    ("02-history", "1600마일"),
+    ("02-history", "영국에서 캐나다까지"),
+    ("03-theory", "단위는 주파수, 표기는 헤르츠"),
+    ("06-bands", "10개 대역"),
+    ("06-bands", "대역 이름은 파장 길이"),
+    ("07-maritime", "695명"),
+    ("07-maritime", "GMDSS)이 만들어졌고"),
+    ("07-maritime", "세 시간 거리에 있던 여객선"),
+    ("08-aviation", "패들"),
+    ("10-ham", "9개 지역본부"),
+    ("10-ham", "전파를 이용하는 전기적 설비"),
+    ("10-ham", "이를 운용하는 사람이 무선종사자, 둘을 합쳐 무선국"),
+    ("11-iot", "완전 자율주행"),
+    ("14-mobile", "아파트 한 채 값"),
+    ("14-mobile", "2019년 세계 최초로 상용화"),
+    ("14-mobile", "LTE보다 최대 20배"),
+    ("15-emf", "인체에 유해하지 않다"),
+    ("15-emf", "세 가지 불빛"),
+    ("15-emf", "빨간색"),
+    ("17-rover", "지구에서 탐사로봇을 조종"),
+    ("17-rover", "초저지연 전파응용 원격조종"),
+    ("18-science", "1924년"),
+    ("18-science", "음향물리학자"),
+    ("18-science", "전기 없이"),
+)
+
+
+@pytest.mark.parametrize("cue_id,wrong", _옛_지시문_오류)
+def test_옛_지시문에_조사가_틀렸다고_한_문구가_없다(cue_id, wrong):
+    c = {c.id: c for c in load_cues()}[cue_id]
+    assert wrong not in c.docent_brief, f"{cue_id}: {wrong!r} — {c.docent_brief!r}"
+
+
+# ── 감정 태그 (계획 §12) ──────────────────────────────────────────────
+#
+# 대사 한 줄마다 감정 하나. 감독이 `say` 에 실어 로봇의 모션·어조로 넘긴다. 필드로
+# 가르는 이유: 문장 안 태그("[놀람] 와!")는 파싱을 한 번 빠뜨리면 TTS 가 태그를 읽는다.
+
+
+def test_감정_어휘는_여덟_개이고_설명이_기본이다():
+    assert cues_mod.EMOTIONS == ("반가움", "기쁨", "놀람", "궁금", "뿌듯", "끄덕", "아쉬움", "설명")
+    assert cues_mod.DEFAULT_EMOTION == "설명"
+
+
+def test_감정_필드를_읽고_없으면_기본값이다(tmp_path):
+    p = _턴_큐시트(
+        tmp_path,
+        [
+            {**_turn(), "answer_emotion": "뿌듯"},
+            {**_turn("왜요?"), "ask_emotion": "궁금", "listener_emotion": "놀람"},
+        ],
+        mc_emotion="반가움",
+    )
+    c = load_cues(p)[0]
+    assert (c.mc_emotion, c.mc_after_emotion) == ("반가움", "설명")
+    p0, p1 = c.points_for("일반")
+    assert (p0.answer_emotion, p0.listener_emotion) == ("뿌듯", "")   # 반응 없음이 기본
+    assert (p1.ask_emotion, p1.answer_emotion, p1.listener_emotion) == ("궁금", "설명", "놀람")
+
+
+@pytest.mark.parametrize("field", ["mc_emotion", "mc_after_emotion"])
+def test_큐의_모르는_감정은_거절한다(tmp_path, field):
+    with pytest.raises(CueError, match=field):
+        load_cues(_턴_큐시트(tmp_path, [_turn()], **{field: "황홀"}))
+
+
+@pytest.mark.parametrize("field", ["ask_emotion", "answer_emotion", "listener_emotion"])
+def test_턴의_모르는_감정은_거절한다(tmp_path, field):
+    with pytest.raises(CueError, match=field):
+        load_cues(_턴_큐시트(tmp_path, [_turn(), {**_turn("왜요?"), field: "황홀"}]))
+
+
+def test_첫_턴에_ask_emotion이_있으면_거절한다(tmp_path):
+    """첫 턴의 질문은 오프닝이 던진다 — 그 감정은 `mc_emotion` 이다."""
+    with pytest.raises(CueError, match="ask_emotion"):
+        load_cues(_턴_큐시트(tmp_path, [{**_turn(), "ask_emotion": "궁금"}]))
+
+
+def _원본_큐시트():
+    return yaml.safe_load(
+        (pathlib.Path(__file__).parent.parent / "data" / "cues.yaml").read_text(encoding="utf-8")
+    )
+
+
+def test_데이터_턴_대본이_있는_큐는_감정을_빠짐없이_적는다():
+    """기본값(`설명`)에 기대면 저작자가 감정을 잊은 줄인지 일부러 비운 줄인지 모른다.
+    턴 대본이 있는 큐는 사회자·도슨트 대사마다 감정을 명시한다(`설명` 도 적는다)."""
+    for c in _원본_큐시트():
+        if not c.get("points"):
+            continue
+        for key in ("mc_emotion", "mc_after_emotion"):
+            assert key in c, f"{c['id']}: {key} 가 없다"
+        for i, t in enumerate(c["points"]):
+            assert "answer_emotion" in t, f"{c['id']} {i}턴: answer_emotion 이 없다"
+            if i > 0:
+                assert "ask_emotion" in t, f"{c['id']} {i}턴: ask_emotion 이 없다"
+
+
+def test_데이터_사회자_감정이_세_번_연달아_같지_않다():
+    """오프닝 → 턴 질문들 → 받아치기가 한 감정으로만 가면 몸짓이 반복돼 녹화처럼 보인다."""
+    for c in load_cues():
+        if not c.points:
+            continue
+        seq = [c.mc_emotion] + [t.ask_emotion for t in c.points[1:]] + [c.mc_after_emotion]
+        for i in range(len(seq) - 2):
+            assert not (seq[i] == seq[i + 1] == seq[i + 2]), f"{c.id}: 사회자 감정 {seq}"
+
+
+def test_데이터_고정_대사에_약칭_KCA가_없다():
+    """체험관 운영 기관은 정식 명칭 '한국방송통신전파진흥원' 으로만 부른다(2026-09-22 결정).
+    약칭은 TTS 가 '케이씨에이' 로 읽고, 관람객에게 무슨 기관인지 전하지 못한다."""
+    for c in load_cues():
+        lines = [("mc", c.mc), ("mc_after", c.mc_after)]
+        for i, t in enumerate(c.points):
+            lines.append((f"{i}턴 ask", t.ask))
+            lines += [(f"{i}턴 {lv}", a) for lv, a in t.answers.items()]
+        for where, text in lines:
+            assert "KCA" not in text, f"{c.id} {where}: {text!r}"

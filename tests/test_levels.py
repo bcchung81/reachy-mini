@@ -83,6 +83,16 @@ def test_포인트_분량_필드가_있다(tmp_path):
     assert lv["초등"].point_max_sentences == 1
 
 
+def test_턴_문장_수는_모든_수준이_같다():
+    """수준은 설명의 난이도만 바꾼다 — 턴 구조(턴 수·턴당 문장 수)는 같다.
+    하한이 2인 이유: 1문장이면 설명이 들어갈 자리가 없어 사회자 질문을 확인만
+    하는 답이 된다(docs/lessons.md). 글자 수는 어휘 밀도 차이라 수준별로 둔다."""
+    lv = load_levels()
+    assert {(l.point_min_sentences, l.point_max_sentences) for l in lv.values()} == {(2, 3)}
+    for l in lv.values():
+        assert l.point_min_chars < l.point_max_chars, l.name
+
+
 def test_포인트_분량_필드가_없으면_거절한다(tmp_path):
     p = _write(tmp_path, _valid_raw_without_points())  # 포인트 필드 없는 옛 데이터
     with pytest.raises(LevelError, match="point_min"):

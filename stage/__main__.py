@@ -354,6 +354,7 @@ def main() -> None:
         level_point_max={
             name: (lv.point_max_sentences, lv.point_max_chars) for name, lv in levels.items()
         },
+        level_point_min_sentences={name: lv.point_min_sentences for name, lv in levels.items()},
         on_level_change=generate.select,
         warn=warn, hub=hub,
     )

@@ -7,7 +7,7 @@ import yaml
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import scripts.pregen_mc_lines as pregen
 import stage.mc_cache as mc_cache_mod
-from stage.cues import Cue
+from stage.cues import Cue, Turn
 from stage.levels import LEVEL_NAMES
 from stage.mc_cache import McCacheError, cache_key, load_mc_lines
 
@@ -268,36 +268,43 @@ def test_이어_붙이기가_끝_개행이_없어도_YAML_을_깨지_않는다(t
     assert not p.read_text(encoding="utf-8").startswith("\n"), 설명
 
 
-def test_points_for가_준_소주제마다_다리_대사를_사전_생성한다(monkeypatch, tmp_path):
-    """`points_for(level)` 가 여러 소주제를 돌려주면, 그 각각에 대해
-    `cache_key(cue.id, level, point_text)` 로 다리 대사가 생성돼 오프닝 대사와
-    **같은 파일·같은 키 형식**으로 쌓여야 한다 — `Director` 가 그 키로 찾는다
-    (`stage/director.py`). 안 그러면 캐시 미스로 원문 포인트 텍스트가 그대로
-    낭독되는 폴백이 매번 발동한다."""
+def _턴_큐():
+    """세 턴 — 질문은 수준 공통, 설명만 수준별(`{수준} 설명{i}`)."""
+    return Cue(
+        "c1", "제목", "mc", "옛 지시문", "partner", briefs=_모든_수준_브리프,
+        points=(
+            Turn("", {lvl: f"{lvl} 설명0" for lvl in LEVEL_NAMES}),
+            Turn("질문1?", {lvl: f"{lvl} 설명1" for lvl in LEVEL_NAMES}),
+            Turn("질문2?", {lvl: f"{lvl} 설명2" for lvl in LEVEL_NAMES}),
+        ),
+    )
+
+
+def test_둘째_턴부터_질문마다_다리_대사를_사전_생성한다(monkeypatch, tmp_path):
+    """다리 대사 키는 `cache_key(cue.id, level, ask)` 다 — `Director` 가 그 키로
+    찾는다(`stage/director.py`). 안 맞으면 매번 캐시 미스로 질문 원문이 나간다.
+    0턴은 오프닝이 묻으므로 다리 대사를 만들지 않는다(예전에는 쓰이지 않을
+    0번 다리 대사까지 LLM 을 불렀다)."""
     _고정_수준(monkeypatch, "일반")
-    briefs = {
-        lvl: {"mc_brief": "브리프", "docent_brief": "해설", "points": ["p1", "p2"]}
-        for lvl in LEVEL_NAMES
-    }
-    cue = Cue("c1", "제목", "mc", "옛 지시문", "partner", briefs=briefs)
-    monkeypatch.setattr(pregen, "load_cues", lambda: [cue])
+    monkeypatch.setattr(pregen, "load_cues", lambda: [_턴_큐()])
     monkeypatch.setattr(pregen, "load_levels", lambda: {lvl: lvl for lvl in LEVEL_NAMES})
     out_path = tmp_path / "mc_lines.yaml"
     _캐시_경로_고정(monkeypatch, out_path)
+    calls: list[str] = []
     monkeypatch.setattr(
         pregen, "build_generate",
-        lambda level: (lambda role, brief, hist: f"[{brief}] 생성"),
+        lambda level: (lambda role, brief, hist: calls.append(brief) or f"[{brief}] 생성"),
     )
 
     pregen.main()
 
-    key_p1 = cache_key("c1", "일반", "p1")
-    key_p2 = cache_key("c1", "일반", "p2")
     written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
-    assert key_p1 in written, f"p1 다리 대사 키가 캐시에 없다: {written}"
-    assert key_p2 in written, f"p2 다리 대사 키가 캐시에 없다: {written}"
-    assert "p1" in written[key_p1], "p1 용 프롬프트(build_bridge_prompt)로 생성되지 않았다"
-    assert "p2" in written[key_p2], "p2 용 프롬프트(build_bridge_prompt)로 생성되지 않았다"
+    key1, key2 = cache_key("c1", "일반", "질문1?"), cache_key("c1", "일반", "질문2?")
+    assert key1 in written and key2 in written, written
+    # 앞 턴의 **그 수준** 설명에 반응하고 그 질문을 던지라는 프롬프트로 만들었다.
+    assert "질문1?" in written[key1] and "일반 설명0" in written[key1]
+    assert "질문2?" in written[key2] and "일반 설명1" in written[key2]
+    assert len(calls) == 3, calls   # 오프닝 1 + 다리 대사 2 — 0턴 다리 대사는 없다
 
 
 def test_오프닝_대사가_이미_캐시에_있어도_다리_대사는_독립적으로_생성된다(monkeypatch, tmp_path, capsys):
@@ -311,12 +318,7 @@ def test_오프닝_대사가_이미_캐시에_있어도_다리_대사는_독립�
     테스트는 오프닝 대사 캐시 히트와 무관하게 다리 대사가 여전히 생성되는지
     직접 검증한다."""
     _고정_수준(monkeypatch, "일반")
-    briefs = {
-        lvl: {"mc_brief": "브리프", "docent_brief": "해설", "points": ["p1", "p2"]}
-        for lvl in LEVEL_NAMES
-    }
-    cue = Cue("c1", "제목", "mc", "옛 지시문", "partner", briefs=briefs)
-    monkeypatch.setattr(pregen, "load_cues", lambda: [cue])
+    monkeypatch.setattr(pregen, "load_cues", lambda: [_턴_큐()])
     monkeypatch.setattr(pregen, "load_levels", lambda: {lvl: lvl for lvl in LEVEL_NAMES})
     out_path = tmp_path / "mc_lines.yaml"
     opening_key = cache_key("c1", "일반", "브리프")
@@ -337,8 +339,8 @@ def test_오프닝_대사가_이미_캐시에_있어도_다리_대사는_독립�
 
     assert "브리프" not in calls, "오프닝 대사가 이미 캐시에 있는데 다시 생성했다"
 
-    key_p1 = cache_key("c1", "일반", "p1")
-    key_p2 = cache_key("c1", "일반", "p2")
+    key_p1 = cache_key("c1", "일반", "질문1?")
+    key_p2 = cache_key("c1", "일반", "질문2?")
     written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
     assert written[opening_key] == "이미 생성된 오프닝 대사", "캐시 히트인 오프닝 대사가 덮어써졌다"
     assert key_p1 in written, f"오프닝 대사 캐시 히트 때문에 p1 다리 대사가 안 만들어졌다: {written}"

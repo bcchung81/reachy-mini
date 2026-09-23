@@ -252,10 +252,29 @@ def test_실제_조사를_접으면_briefs에_위치_지시어나_문장_수_중
                     offenders.append((c["id"], level, field, "문장 수", text))
     assert offenders == []
 
-    # 이번에 실제로 고쳤다고 보고한 위치 지시어 16곳 + 문장 수 중복 20곳(5섹션×4수준)
-    # 이 이 실행에서도 그대로 잡혔는지 — 표가 비거나 함수가 no-op 이 되면 이 수가
-    # 0으로 떨어진다.
+    # 이번에 실제로 고쳤다고 보고한 위치 지시어 ~~16곳~~ 15곳 + 문장 수 중복 20곳
+    # (5섹션×4수준)이 이 실행에서도 그대로 잡혔는지 — 표가 비거나 함수가 no-op 이
+    # 되면 이 수가 0으로 떨어진다. 16 → 15: 2026-09-22 06-bands 초등 mc_brief 의
+    # 질문을 바꿔("왜 여러 종류로 나눠 놓았는지") 위치 지시어 자체가 없어졌다.
     deixis_fixed = [c for c in log["briefs_changes"] if c["kind"] == "위치_지시어"]
     sc_fixed = [c for c in log["briefs_changes"] if c["kind"] == "문장_수_중복"]
-    assert len(deixis_fixed) == 16
+    assert len(deixis_fixed) == 15
     assert len(sc_fixed) == 20
+
+
+def test_저장소_큐시트는_다시_접어도_바뀌지_않는다():
+    """**조사 파일이 원본이고 큐시트가 사본이다.** 큐시트만 고치고 조사 파일을 안
+    고치면 다음 접기(`merge_research.py`)가 그 수정을 조용히 되돌린다 — `briefs`·
+    `mc`·`mc_after` 를 조사 값으로 통째로 덮어쓰기 때문이다. 포인트 첫 판이
+    `briefs` 안에 둔 points 와, 02·06 의 오프닝·`guard` 가 그런 자리였다.
+    지금 큐시트가 곧 "지금 조사 파일을 접은 결과" 여야 한다."""
+    import copy
+
+    import yaml
+
+    from scripts.merge_research import CUES
+
+    cues = yaml.safe_load(CUES.read_text(encoding="utf-8"))
+    merged, _ = merge_all(copy.deepcopy(cues), load_research())
+    for before, after in zip(cues, merged):
+        assert after == before, f"{before['id']}: 다시 접으면 바뀐다"

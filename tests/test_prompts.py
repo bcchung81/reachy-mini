@@ -144,7 +144,38 @@ def test_조립된_프롬프트_전부에_이름표_금지_규칙이_있다():
             assert "이름표" in p, (role, name)
 
 
-def test_다리_대사_프롬프트에_포인트_문구가_들어간다():
+def test_다리_대사_프롬프트에_질문과_직전_설명이_들어간다():
+    """사회자는 도슨트가 방금 한 설명에 짧게 반응한 뒤 **질문**을 던진다 —
+    사전 생성이라 이력이 없으므로 직전 설명을 지시문으로 준다."""
     from stage.prompts import build_bridge_prompt
-    out = build_bridge_prompt("패러데이가 1831년에 무엇을 실험했는지")
-    assert "패러데이가 1831년에 무엇을 실험했는지" in out
+    out = build_bridge_prompt("그럼 어떻게 찾아낸 거예요?", "전파는 원래 있던 거예요.")
+    assert "그럼 어떻게 찾아낸 거예요?" in out
+    assert "전파는 원래 있던 거예요." in out
+
+
+def test_다리_대사_프롬프트는_질문으로_끝내고_답을_말하지_말라고_한다():
+    from stage.prompts import build_bridge_prompt
+    out = build_bridge_prompt("왜요?", "앞 설명.")
+    assert "질문으로 끝" in out
+    assert "답" in out and "말하지 않는다" in out
+
+
+def test_다리_대사_톤_예시에_되묻기가_없다():
+    """"~라면서요?" 는 사회자가 사실을 되묻고 도슨트가 확인만 하게 만든다 —
+    02-history 파일럿에서 실제로 그렇게 됐다(docs/lessons.md)."""
+    from stage.prompts import _BRIDGE_TONE_EXAMPLES
+    for e in _BRIDGE_TONE_EXAMPLES:
+        assert "면서요" not in e and "다죠" not in e, e
+        assert e.rstrip().endswith("?"), e
+
+
+def test_모든_역할과_수준의_프롬프트가_기관_정식_명칭을_지시한다():
+    """관람객 질문 답은 gemma 가 생성한다. 근거 브리프가 'KCA' 로 적혀 있어도 정식 명칭으로
+    부르게 페르소나가 이끈다. 초등·중고등은 '기관 이름을 말하지 않는다' 가 규칙이라
+    체험관 운영 기관만 예외라는 것이 수준 지침에도 있어야 한다 — 없으면 두 지시가 부딪힌다."""
+    for name, lv in load_levels().items():
+        for role in ("mc", "docent"):
+            p = build_system_prompt(role, lv)
+            assert "한국방송통신전파진흥원" in p, (role, name)
+    for name in ("초등", "중고등"):
+        assert "한국방송통신전파진흥원" in load_levels()[name].sources, name

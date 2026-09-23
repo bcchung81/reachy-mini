@@ -11,7 +11,7 @@ import time
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-from stage.cues import Cue, CueSheet
+from stage.cues import Cue, CueSheet, Turn
 from stage.director import (
     CHARS_PER_SEC,
     POINT_NO_LIMIT,
@@ -38,7 +38,7 @@ class Harness:
         self, generate=None, expect_units=None, after=("", ""),
         sheet=None, level_name="일반", mc_lines=None, docent_min_chars=None,
         levels=None, on_level_change=None,
-        level_point_min_chars=None, level_point_max=None,
+        level_point_min_chars=None, level_point_max=None, level_point_min_sentences=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -92,6 +92,8 @@ class Harness:
             kw["level_point_min_chars"] = level_point_min_chars
         if level_point_max is not None:
             kw["level_point_max"] = level_point_max
+        if level_point_min_sentences is not None:
+            kw["level_point_min_sentences"] = level_point_min_sentences
         self.d = Director(
             sheet,
             generate=_gen,
@@ -3266,15 +3268,20 @@ def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
 
 
 def test_포인트_분량_dict가_감독까지_닿는다():
-    h = Harness(level_point_min_chars={"일반": 60}, level_point_max={"일반": (2, 95)})
+    h = Harness(
+        level_point_min_chars={"일반": 60}, level_point_max={"일반": (2, 95)},
+        level_point_min_sentences={"일반": 2},
+    )
     assert h.d._level_point_min_chars["일반"] == 60
     assert h.d._level_point_max["일반"] == (2, 95)
+    assert h.d._level_point_min_sentences["일반"] == 2
 
 
 def test_포인트_분량_dict를_안_주면_빈_dict다():
     h = Harness()
     assert h.d._level_point_min_chars == {}
     assert h.d._level_point_max == {}
+    assert h.d._level_point_min_sentences == {}
 
 
 # ── 포인트 라운드 라우팅 (Task 5) ──────────────────────────────────────
@@ -3285,22 +3292,32 @@ def test_포인트_분량_dict를_안_주면_빈_dict다():
 # 안 바뀐다. 포인트가 없는 큐는 지금까지와 완전히 같은 길을 탄다.
 
 
-def _포인트_큐(points, mc_after="받아치기"):
+def _포인트_큐(answers, mc_after="받아치기", guard=None):
+    """턴마다 설명 하나("일반" 수준). 1턴부터 질문은 `"<설명> 질문?"` 이다."""
+    일반 = {"mc_brief": "mb", "docent_brief": "옛 지시문(폴백용)"}
+    if guard is not None:
+        일반["guard"] = guard
     return Cue(
         "c1", "제목", "사회자 오프닝", "옛 지시문(폴백용)", "partner",
         mc_after=mc_after,
-        briefs={
-            "일반": {"mc_brief": "mb", "docent_brief": "옛 지시문(폴백용)", "points": points},
-        },
+        briefs={"일반": 일반},
+        points=tuple(
+            Turn("" if i == 0 else f"{a} 질문?", {"일반": a}) for i, a in enumerate(answers)
+        ),
     )
+
+
+def _첫줄로_답한다(role, brief, hist):
+    """턴 지시문은 첫 줄이 설명이고 그 아래에 형식·금지·분량 지시가 붙는다."""
+    return f"[{brief.splitlines()[0]} 답]"
 
 
 def test_포인트가_2개면_두_라운드_뒤_받아치기로_합류한다():
     sheet = CueSheet([_포인트_큐(["p1", "p2"])])
     h = Harness(
         sheet=sheet,
-        mc_lines={cache_key("c1", "일반", "p2"): "다리대사(p2로)"},
-        generate=lambda role, brief, hist: f"[{brief} 답]",
+        mc_lines={cache_key("c1", "일반", "p2 질문?"): "다리대사(p2로)"},
+        generate=_첫줄로_답한다,
     )
     h.d.start()
     assert h.says() == [("mc", "사회자 오프닝")]
@@ -3326,7 +3343,7 @@ def test_포인트가_2개면_두_라운드_뒤_받아치기로_합류한다():
 
 def test_포인트가_1개면_기존_단일_라운드와_같은_모양이다():
     sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
     h.d.start()
     h.ended("mc", "c1")
     assert h.d._machine.cue_id == "c1:docent"  # 포인트 1개는 바로 종단 라벨
@@ -3347,15 +3364,83 @@ def test_points가_없는_큐는_기존_경로_그대로다():
     assert h.d.state is State.LISTENING
 
 
-def test_다리_대사_캐시가_없으면_경고하고_포인트_원문으로_잇는다():
-    """조용히 물러나지 않는다 — 여는 대사 캐시와 같은 규칙(`_begin_cue`)."""
+def test_다리_대사_캐시가_없으면_경고하고_질문_원문으로_잇는다():
+    """조용히 물러나지 않는다 — 여는 대사 캐시와 같은 규칙(`_begin_cue`).
+
+    예전 폴백은 포인트(사실 문장)를 사회자 입으로 읽었다 — 사회자가 도슨트의
+    답을 먼저 말해 버리는 꼴이었다. 이제 사람이 쓴 **질문**을 읽는다."""
     sheet = CueSheet([_포인트_큐(["p1", "p2"])])
-    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:pt0:docent")
-    assert h.says()[-1] == ("mc", "p2")   # 포인트 원문으로 이었다
+    assert h.says()[-1] == ("mc", "p2 질문?")
     assert any("다리 대사 캐시가 없다" in w for w in h.warnings), h.warnings
+
+
+def test_턴_지시문에_답변_형식과_그_수준의_금지_규칙이_붙는다():
+    """설명만 주면 모델은 사회자 질문을 "네, 맞아요" 로 확인만 하고, 옛 수준
+    브리프에 있던 금지 규칙("'캐나다'라고 하지 않는다")도 통째로 빠진다."""
+    briefs = []
+    sheet = CueSheet([_포인트_큐(["p1"], guard="'캐나다'라고 하지 않는다.")])
+    h = Harness(sheet=sheet, generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1])
+    h.d.start()
+    b = briefs[0]
+    assert b.startswith("p1")
+    assert "먼저 답하고" in b and "확인형" in b, b
+    assert "'캐나다'라고 하지 않는다." in b, b
+
+
+def test_턴_폴백은_설명_원문뿐이다():
+    """생성이 전부 실패하면 설명을 그대로 읽는다 — 형식 지시·금지 규칙이 섞이면
+    도슨트가 "'캐나다'라고 하지 않는다" 를 소리 내 읽는다."""
+    def gen(role, brief, hist):
+        raise RuntimeError("LLM 죽음")
+
+    sheet = CueSheet([_포인트_큐(["구어체 설명이에요."], guard="금지 규칙.")])
+    h = Harness(sheet=sheet, generate=gen, level_point_max={"일반": (3, 110)})
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "구어체 설명이에요.")
+
+
+def test_턴_문장_하한이_지시문에_들어간다():
+    """"N문장 이내로 짧게" 만 주면 모델은 1문장으로 답한다 — 설명이 들어갈
+    자리가 없어 확인형 답이 된다. 하한을 함께 준다."""
+    briefs = []
+    sheet = CueSheet([_포인트_큐(["p1"])])
+    h = Harness(
+        sheet=sheet,
+        generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1],
+        level_point_min_sentences={"일반": 2},
+        level_point_max={"일반": (3, 110)},
+    )
+    h.d.start()
+    assert "2~3문장" in briefs[0] and "110자 이내" in briefs[0], briefs[0]
+    assert "짧게" not in briefs[0], briefs[0]
+
+
+def test_수준을_바꿔도_질문은_같고_설명만_바뀐다():
+    """턴 수와 질문 흐름은 수준과 무관하다 — 수준은 설명의 난이도만 바꾼다."""
+    cue = Cue(
+        "c1", "제목", "사회자 오프닝", "옛", "partner", mc_after="받아치기",
+        briefs={n: {"mc_brief": "mb", "docent_brief": "db"} for n in ("초등", "일반")},
+        points=(
+            Turn("", {"초등": "쉬운 0", "일반": "보통 0"}),
+            Turn("그럼 왜요?", {"초등": "쉬운 1", "일반": "보통 1"}),
+        ),
+    )
+    본것 = {}
+    for level in ("초등", "일반"):
+        h = Harness(sheet=CueSheet([cue]), level_name=level, generate=_첫줄로_답한다)
+        h.d.start()
+        h.ended("mc", "c1")
+        h.ended("docent", "c1:pt0:docent")
+        h.ended("mc", "c1:pt1")
+        본것[level] = h.says()
+    assert [s for s in 본것["초등"] if s[0] == "mc"] == [s for s in 본것["일반"] if s[0] == "mc"]
+    assert ("docent", "[쉬운 1 답]") in 본것["초등"]
+    assert ("docent", "[보통 1 답]") in 본것["일반"]
 
 
 def test_포인트_답은_포인트_하한으로_짧음을_잰다():
@@ -3429,7 +3514,8 @@ def test_포인트_분량_배선이_없으면_아무것도_자르지_않는다()
     h.d.start()        # KeyError 없이 돈다
     h.ended("mc", "c1")
     assert h.says()[-1][1] == 긴답               # 안 잘렸다
-    assert briefs[0] == "p1"                     # 분량 지시도 안 붙었다
+    assert briefs[0].startswith("p1")
+    assert "자 이내" not in briefs[0], briefs[0]  # 분량 지시도 안 붙었다
     assert not any("잘랐다" in w for w in h.warnings), h.warnings
 
 
@@ -3464,10 +3550,10 @@ def test_다음_큐로_가면_포인트_상태가_초기화된다():
     """포인트 큐 다음에 포인트 없는 큐가 오면 `_points` 가 안 비어 첫 갈래가
     엉뚱하게 포인트 경로로 샌다 — `_begin_cue` 가 매번 다시 세운다."""
     sheet = CueSheet([_포인트_큐(["p1", "p2"]), Cue("c2", "둘째", "둘째 대사", "둘째 지시", "audience")])
-    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
     h.d.start()
     h.ended("mc", "c1")
-    assert h.d._points == ["p1", "p2"]
+    assert [p.answer for p in h.d._points] == ["p1", "p2"]
     h.d.abort()      # 운영자가 섹션 한가운데서 멈추고(`a`)
     h.d.next()       # 다음 섹션으로 넘긴다(`n`)
     assert h.d._points == []

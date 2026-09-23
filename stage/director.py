@@ -17,6 +17,7 @@ from stage.cues import (
     QUESTION_PROMPTS,
     Cue,
     CueSheet,
+    Point,
     invites_question,
     is_advance,
     mentions_advance,
@@ -119,6 +120,15 @@ MIN_CHARS = 40
 # 두면 두 호출부가 "없으면" 분기를 각자 만들지 않아도 된다.
 POINT_NO_LIMIT = 10**9
 
+# 턴 답의 **형식** 지시(`Director._point_brief`). 설명 원문만 주면 모델은 직전
+# 사회자 질문을 "네, 맞아요" 로 받고 원문을 되읽는다 — 사회자가 묻고 도슨트가
+# 설명하는 대화가 아니라 확인하는 대화가 된다(02-history 파일럿, docs/lessons.md).
+_POINT_ANSWER_RULE = (
+    "위는 네가 할 설명의 내용이다. 그대로 읽지 말고 네 말로 바꿔 말한다. "
+    "사회자의 질문에 먼저 답하고, 이어서 이유나 과정, 예를 들어 풀어서 설명한다. "
+    "'네'나 '맞아요'로 시작하는 확인형으로 답하지 않는다."
+)
+
 # 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
 # `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
 # 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
@@ -209,6 +219,7 @@ class Director:
         on_level_change: Callable[[str], None] | None = None,
         level_point_min_chars: dict[str, int] | None = None,
         level_point_max: dict[str, tuple[int, int]] | None = None,
+        level_point_min_sentences: dict[str, int] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -272,7 +283,10 @@ class Director:
         # 없는 큐만 쓰는 감독(대부분의 기존 테스트)은 이 값을 아예 안 본다.
         self._level_point_min_chars = dict(level_point_min_chars or {})
         self._level_point_max = dict(level_point_max or {})
-        self._points: list[str] = []
+        # 턴 답의 문장 **하한**. 상한만 주면("N문장 이내로 짧게") 모델은 1문장으로
+        # 답해 설명이 들어갈 자리가 없다 — 사회자 질문을 확인만 하는 답이 된다.
+        self._level_point_min_sentences = dict(level_point_min_sentences or {})
+        self._points: list[Point] = []
         self._point_i: int = 0
 
         self._machine = TurnMachine()
@@ -647,17 +661,21 @@ class Director:
                 i = self._point_i
                 next_i = i + 1
                 next_point = self._points[next_i]
-                bridge_key = cache_key(cue.id, self._level_name, next_point)
+                bridge_key = cache_key(cue.id, self._level_name, next_point.ask)
                 bridge_text = self._mc_lines.get(bridge_key, "")
                 if not bridge_text:
                     # 여는 대사 캐시와 같은 규칙 — 조용히 물러나지 않는다.
-                    # 키를 찍어 둬야 "사전 생성을 안 돌렸다" 와 "포인트 문구를
+                    # 키를 찍어 둬야 "사전 생성을 안 돌렸다" 와 "질문 문구를
                     # 고쳐 해시가 바뀌었다" 를 로그에서 가를 수 있다.
+                    #
+                    # 폴백은 **사람이 쓴 질문**이다. 예전에는 포인트(사실 문장)를
+                    # 읽어 사회자가 도슨트의 답을 먼저 말해 버렸고, 도슨트에게는
+                    # 확인할 것만 남았다(docs/lessons.md).
                     self._warn(
                         f"[{cue.id}:pt{next_i}] 다리 대사 캐시가 없다"
-                        f"({self._level_name}, key={bridge_key!r}) — 포인트 원문으로 잇는다"
+                        f"({self._level_name}, key={bridge_key!r}) — 질문 원문으로 잇는다"
                     )
-                    bridge_text = next_point
+                    bridge_text = next_point.ask
                 self._point_i = next_i
                 # 이력에 **먼저** 넣고 생성을 띄운다 — 생성 스레드는
                 # `list(self.history)` 를 찍어가므로 순서가 바뀌면 도슨트가
@@ -665,10 +683,11 @@ class Director:
                 # 의 `_remember` → `_spawn_generate` 순서와 같은 이유).
                 self._remember(f"사회자: {bridge_text}")
                 next_label = self._point_label(cue, next_i)
-                # 지시문에는 분량 한 줄이 붙고 **폴백에는 안 붙는다**
-                # (`_point_brief`) — 생성이 실패하면 포인트 원문만 읽어야 한다.
+                # 지시문에는 형식·금지·분량 지시가 붙고 **폴백에는 안 붙는다**
+                # (`_point_brief`) — 생성이 실패하면 설명 원문만 읽어야 한다.
                 self._spawn_generate(
-                    "docent", "docent", self._point_brief(next_point), next_point, next_label
+                    "docent", "docent", self._point_brief(cue, next_point),
+                    next_point.answer, next_label,
                 )
                 self._emit(
                     cmds
@@ -1295,29 +1314,41 @@ class Director:
         )
         return min_chars, max_sentences, max_chars
 
-    def _point_brief(self, point: str) -> str:
-        """포인트 답 생성 지시문 — 포인트 본문에 **분량 한 줄**을 붙인다.
+    def _point_brief(self, cue: Cue, point: Point) -> str:
+        """턴 답 생성 지시문 — 설명 뒤에 **답변 형식·금지 규칙·분량**을 붙인다.
 
-        생성기의 시스템 프롬프트는 큐 단위 목표 분량(수준의 `min~max`)을 박아
-        주므로, 포인트 하나에 그것을 그대로 쓰면 N포인트 큐가 N배로 길어진다.
+        형식 지시가 없으면 모델은 직전 사회자 질문을 "네, 맞아요" 로 확인만 한다.
+        금지 규칙(`guard`)이 없으면 옛 수준 브리프에 있던 "'캐나다'라고 하지
+        않는다" 같은 줄이 생성에서 통째로 빠진다 — 둘 다 포인트 첫 판에서 실제로
+        났다(docs/lessons.md).
+
+        분량: 생성기의 시스템 프롬프트는 큐 단위 목표 분량(수준의 `min~max`)을
+        박아 주므로, 턴 하나에 그것을 그대로 쓰면 N턴 큐가 N배로 길어진다.
         모델에게 먼저 말해 두는 쪽이 `cap_length` 로 뒤에서 자르는 것보다 낫다 —
         자르면 마지막 문장이 통째로 날아가 논지가 끊긴다. 그래도 지시만으로는
         안 지켜지므로(`stage/speech_text.py::cap_length` 의 실측) 뒤에서 한 번
-        더 자른다. 둘은 **같은 수**를 써야 한다 — 따로 적으면 썩는다.
+        더 자른다. 둘은 **같은 수**를 써야 한다 — 따로 적으면 썩는다. 하한이
+        배선돼 있으면 "N~M문장" 으로 준다 — 상한만 주면 1문장 답이 나온다.
 
-        **폴백에는 붙이지 않는다.** 생성이 실패했을 때 읽는 것은 포인트 원문이고,
-        거기 이 지시가 섞이면 도슨트가 "2문장 이내로 짧게 답한다" 를 소리 내어
+        **폴백에는 붙이지 않는다.** 생성이 실패했을 때 읽는 것은 설명 원문이고,
+        거기 이 지시가 섞이면 도슨트가 "'캐나다'라고 하지 않는다" 를 소리 내어
         읽는다(지시문을 낭독하는 사고는 이 저장소에 이미 있었다).
 
-        배선 전(`POINT_NO_LIMIT`)이면 아무것도 안 붙인다 — "10억 자 이내로
+        분량 배선 전(`POINT_NO_LIMIT`)이면 분량만 안 붙인다 — "10억 자 이내로
         말한다" 는 모델에게 잡음일 뿐이다.
         """
+        parts = [point.answer, _POINT_ANSWER_RULE]
+        guard = cue.guard_for(self._level_name)
+        if guard:
+            parts.append(guard)
         _, max_sentences, max_chars = self._point_budget()
-        if max_chars >= POINT_NO_LIMIT:
-            return point
-        return (
-            f"{point}\n\n{max_sentences}문장 이내, {max_chars}자 이내로 짧게 답한다."
-        )
+        if max_chars < POINT_NO_LIMIT:
+            min_sentences = self._level_point_min_sentences.get(self._level_name)
+            if min_sentences:
+                parts.append(f"{min_sentences}~{max_sentences}문장, {max_chars}자 이내로 말한다.")
+            else:
+                parts.append(f"{max_sentences}문장 이내, {max_chars}자 이내로 짧게 답한다.")
+        return "\n\n".join(parts)
 
     def _pending_for_point(self, cue: Cue) -> tuple["_Pending", Cue | None]:
         """지금 포인트(`self._point_i`)의 도슨트 답을 기다릴 `_Pending` 과
@@ -1329,14 +1360,14 @@ class Director:
         "마지막 포인트면 받아치기" 판정이 두 벌이 되고, 그것은 `_point_label`
         docstring 이 경고하는 바로 그 모양이다(한쪽만 고쳐진다).
 
-        폴백은 **포인트 원문**이다(분량 지시가 안 붙은 쪽 — `_point_brief` 참고).
+        폴백은 **설명 원문**이다(형식·금지·분량 지시가 안 붙은 쪽 — `_point_brief` 참고).
         """
         i = self._point_i
         point = self._points[i]
         min_chars, max_sentences, max_chars = self._point_budget()
         label = self._point_label(cue, i)
         pending = _Pending(
-            "docent", "docent", label, point, FB_BRIEF, label,
+            "docent", "docent", label, point.answer, FB_BRIEF, label,
             min_chars=min_chars,
             max_sentences=max_sentences,
             max_chars=max_chars,
@@ -1423,9 +1454,9 @@ class Director:
         self._point_i = 0
         if points:
             label0 = self._point_label(cue, 0)
-            # 지시문에는 분량 한 줄이 붙고 **폴백에는 안 붙는다**(`_point_brief`).
+            # 지시문에는 형식·금지·분량 지시가 붙고 **폴백에는 안 붙는다**(`_point_brief`).
             self._spawn_generate(
-                "docent", "docent", self._point_brief(points[0]), points[0], label0
+                "docent", "docent", self._point_brief(cue, points[0]), points[0].answer, label0
             )
         else:
             self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)

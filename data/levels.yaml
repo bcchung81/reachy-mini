@@ -2,41 +2,49 @@
 # 길고 전문가에게 2문장은 부실하다. 큐시트의 "N문장 이내" 를 여기로 올렸다.
 # 글자 수는 발화 길이로 환산된다(CHARS_PER_SEC = 4.0): 초등 약 18~30초,
 # 전문가 약 65~100초.
+#
+# point_* 는 턴(사회자 질문 → 도슨트 설명) 하나의 도슨트 분량이다. **문장 수는
+# 모든 수준이 2~3으로 같다** — 수준은 설명의 난이도만 바꾸고 턴 구조는 안 바꾼다.
+# 하한이 2인 이유: 1문장이면 답만 말하고 끝나 사회자 질문을 확인하는 대화가
+# 된다(docs/lessons.md). 글자 수만 어휘 밀도 차이로 수준별이다. 한 큐 최대 3턴
+# (`stage/cues.py::MAX_TURNS`)이면 도슨트 몫이 초등 약 38~60초, 전문가 약 60~98초.
 초등:
   min_sentences: 2
   max_sentences: 3
   min_chars: 70
   max_chars: 120
-  point_min_sentences: 1
-  point_max_sentences: 1
-  point_min_chars: 35
-  point_max_chars: 60
+  point_min_sentences: 2
+  point_max_sentences: 3
+  point_min_chars: 50
+  point_max_chars: 80
   vocabulary: "전문 용어를 쓰지 않는다. 아이가 아는 말로만 말한다."
   depth: "비유 중심으로 말한다. 원리는 설명하지 않는다."
   numbers: "연도·수치·거리를 말하지 않는다."
-  sources: "기관 이름이나 출처를 말하지 않는다."
+  # 예외 하나 — 체험관을 만든 기관은 모든 수준에서 정식 명칭으로 부른다(2026-09-22 결정).
+  # 이 예외가 없으면 페르소나의 "정식 명칭으로 부른다" 와 이 줄이 부딪힌다.
+  sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 중고등:
   min_sentences: 3
   max_sentences: 4
   min_chars: 120
   max_chars: 200
-  point_min_sentences: 1
-  point_max_sentences: 1
-  point_min_chars: 40
-  point_max_chars: 65
+  point_min_sentences: 2
+  point_max_sentences: 3
+  point_min_chars: 60
+  point_max_chars: 95
   vocabulary: "전문 용어가 나오면 풀어서 말한다."
   depth: "비유로 열고 원리를 한 겹 덧붙인다."
   numbers: "연도만 말한다. 정밀한 수치는 생략한다."
-  sources: "기관 이름이나 출처를 말하지 않는다."
+  sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 일반:
   min_sentences: 4
   max_sentences: 5
   min_chars: 180
   max_chars: 280
-  point_min_sentences: 1
-  point_max_sentences: 2
-  point_min_chars: 60
-  point_max_chars: 95
+  point_min_sentences: 2
+  point_max_sentences: 3
+  point_min_chars: 70
+  point_max_chars: 110
   vocabulary: "전문 용어를 풀어서 말하되 용어 자체도 함께 말한다."
   depth: "원리를 설명한다."
   numbers: "연도와 개략 수치를 말한다."
@@ -46,10 +54,10 @@
   max_sentences: 7
   min_chars: 260
   max_chars: 400
-  point_min_sentences: 1
-  point_max_sentences: 2
-  point_min_chars: 65
-  point_max_chars: 100
+  point_min_sentences: 2
+  point_max_sentences: 3
+  point_min_chars: 80
+  point_max_chars: 130
   vocabulary: "전문 용어를 그대로 쓴다."
   depth: "수식·수치·표준 번호까지 들어간다."
   numbers: "정확한 날짜와 원수치를 말한다."

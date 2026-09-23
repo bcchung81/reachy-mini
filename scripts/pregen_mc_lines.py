@@ -36,12 +36,12 @@ def _valid_keys(cues) -> set[str]:
     "이번엔 초등만 돌렸다" 는 이유만으로 다른 수준의 멀쩡한 키가 고아로
     잘못 잡힌다.
 
-    다리 대사 키(`cache_key(cue.id, name, point_text)`)도 포함한다 — 안 그러면
+    다리 대사 키(`cache_key(cue.id, name, ask)`)도 포함한다 — 안 그러면
     이 스크립트가 방금 생성해 둔 다리 대사가 **다음 실행에서 고아로 오판**돼
     "지워도 되는지 확인한다" 는 경고가 뜬다. 사람이 그 경고를 믿고 지우면
-    `Director` 가 그 키를 못 찾아 원문 포인트 텍스트를 그대로 낭독하는 폴백이
-    조용히 되살아난다 — 이 스크립트를 시연 전에 돌리는 이유 자체가 그 폴백을
-    막는 것이므로, 여기서 틀리면 존재 이유가 뒤집힌다.
+    `Director` 가 그 키를 못 찾아 질문 원문을 그대로 읽는 폴백이 조용히
+    되살아난다 — 이 스크립트를 시연 전에 돌리는 이유 자체가 그 폴백을 막는
+    것이므로, 여기서 틀리면 존재 이유가 뒤집힌다.
     """
     keys = set()
     for cue in cues:
@@ -49,8 +49,9 @@ def _valid_keys(cues) -> set[str]:
             mc_brief, _ = cue.brief_for(name)
             if mc_brief:
                 keys.add(cache_key(cue.id, name, mc_brief))
-            for point_text in cue.points_for(name):
-                keys.add(cache_key(cue.id, name, point_text))
+            for point in cue.points_for(name):
+                if point.ask:
+                    keys.add(cache_key(cue.id, name, point.ask))
     return keys
 
 
@@ -114,16 +115,22 @@ def main() -> None:
                     # 원문 포인트 텍스트를 그대로 낭독하는 폴백으로 조용히
                     # 빠진다. 시연 담당자에게 경고 한 줄 없이.)
 
-                # 포인트 왕복(큐가 여러 짧은 교환으로 쪼개진 경우)의 다리
-                # 대사도 같은 캐시·같은 키 형식으로 미리 만든다. 오프닝
-                # 대사(`key`)의 캐시 히트/미스와 **무관하게** 독립적으로
-                # 돈다 — 각 포인트는 자기 자신의 `pkey in out` 으로만
+                # 턴 왕복의 다리 대사(사회자 질문)도 같은 캐시·같은 키 형식으로
+                # 미리 만든다. 오프닝 대사(`key`)의 캐시 히트/미스와 **무관하게**
+                # 독립적으로 돈다 — 각 턴은 자기 자신의 `pkey in out` 으로만
                 # 스킵을 판단한다(위 주석 참고).
-                for point_i, point_text in enumerate(cue.points_for(name)):
-                    pkey = cache_key(cue.id, name, point_text)
+                #
+                # 0턴은 건너뛴다 — 오프닝이 묻는다. 사전 생성은 이력이 없으므로
+                # 사회자가 반응할 **앞 턴의 그 수준 설명**을 지시문에 넣는다.
+                points = cue.points_for(name)
+                for point_i, point in enumerate(points):
+                    if not point.ask:
+                        continue
+                    pkey = cache_key(cue.id, name, point.ask)
                     if pkey in out:
                         continue
-                    ptext = gen("mc", build_bridge_prompt(point_text), [])
+                    prev_answer = points[point_i - 1].answer
+                    ptext = gen("mc", build_bridge_prompt(point.ask, prev_answer), [])
                     out[pkey] = ptext
                     _append_entry(p, pkey, ptext)
                     print(f"  {cue.id}/{name}/pt{point_i} 다리대사: {ptext}", flush=True)

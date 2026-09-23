@@ -110,6 +110,49 @@ class CueError(ValueError):
     """큐시트가 규약에 맞지 않는다."""
 
 
+# 한 큐의 최대 턴 수(사회자 질문 → 도슨트 설명 한 왕복이 한 턴). **수준과
+# 무관하다** — 전문가도 3턴이다. 수준이 바꾸는 것은 설명의 난이도뿐이고, 턴이
+# 늘면 한 섹션이 늘어져 관람객이 끼어들 창구(받아치기 뒤)가 그만큼 멀어진다.
+MAX_TURNS = 3
+
+# 대사 감정 태그(계획 §12.2). 감독이 `say` 에 실어 보내고 로봇 앱이 모션 범주·어조로
+# 바꾼다. **로봇 앱(`apps/voice_chat/voice_chat/`)에 같은 목록이 한 벌 더 있다** —
+# 로봇에는 `stage/` 가 안 올라가서 import 할 수 없다. 둘은 테스트가 묶는다.
+# `설명` 은 "특별한 감정 없음" — 모션 없이 말할 때 흔들림만 한다.
+EMOTIONS = ("반가움", "기쁨", "놀람", "궁금", "뿌듯", "끄덕", "아쉬움", "설명")
+DEFAULT_EMOTION = "설명"
+
+
+@dataclass(frozen=True)
+class Turn:
+    """사회자 질문 → 도슨트 설명 한 왕복. 질문은 수준 공통, 설명만 수준별이다.
+
+    `ask` 는 **소리 내 읽어도 되는 질문**이다 — 다리 대사는 수준별로 사전
+    생성되지만 캐시가 없으면 이 원문이 그대로 나간다. 0턴은 비어 있다(오프닝이
+    묻는다). `answers` 는 수준 → **구어체 설명**이다 — 도슨트 생성의 씨앗이자,
+    생성이 전부 실패했을 때 그대로 읽는 폴백이라 지시문 문체로 쓰면 안 된다.
+    """
+
+    ask: str
+    answers: dict
+    # 감정은 **수준 공통**이다 — 수준은 설명의 난이도만 바꾼다. `listener_emotion` 은
+    # 도슨트가 설명하는 동안 사회자가 짓는 반응이고, 빈 문자열이면 반응하지 않는다.
+    ask_emotion: str = DEFAULT_EMOTION
+    answer_emotion: str = DEFAULT_EMOTION
+    listener_emotion: str = ""
+
+
+@dataclass(frozen=True)
+class Point:
+    """턴 하나를 한 수준에서 본 것 — 감독과 사전 생성이 쓰는 모양."""
+
+    ask: str
+    answer: str
+    ask_emotion: str = DEFAULT_EMOTION
+    answer_emotion: str = DEFAULT_EMOTION
+    listener_emotion: str = ""
+
+
 @dataclass(frozen=True)
 class Cue:
     """진행 단위 하나."""
@@ -124,9 +167,15 @@ class Cue:
     mc_after: str = ""
     # 조사 주제와 출처 달린 사실. 발화에는 직접 쓰지 않고 사람이 검토한다.
     topic: str = ""
-    # 수준 → {mc_brief, docent_brief}. 비어 있으면 옛 `docent_brief` 로 폴백한다
-    # — 큐시트 19섹션을 한 번에 옮길 수 없으므로 섞여 있는 기간이 있다.
+    # 수준 → {mc_brief, docent_brief, guard?}. 비어 있으면 옛 `docent_brief` 로
+    # 폴백한다 — 큐시트 19섹션을 한 번에 옮길 수 없으므로 섞여 있는 기간이 있다.
     briefs: dict = field(default_factory=dict)
+    # 턴 목록(`Turn`). 비어 있으면 옛 단일 라운드(`docent_brief` 한 번)로 돈다.
+    # **큐 최상위에 둔다** — 수준별로 두면 턴 수와 질문이 수준마다 달라진다.
+    points: tuple = ()
+    # 사회자 오프닝·받아치기의 감정(계획 §12).
+    mc_emotion: str = DEFAULT_EMOTION
+    mc_after_emotion: str = DEFAULT_EMOTION
 
     def brief_for(self, level_name: str) -> tuple[str, str]:
         """수준에 맞는 (mc_brief, docent_brief) 를 준다.
@@ -140,12 +189,24 @@ class Cue:
             return "", self.docent_brief
         return b.get("mc_brief", ""), b.get("docent_brief", self.docent_brief)
 
-    def points_for(self, level_name: str) -> list[str]:
-        """이 수준의 포인트 목록. 없으면(폴백 큐) 빈 목록."""
-        b = self.briefs.get(level_name)
-        if not b:
-            return []
-        return list(b.get("points", []))
+    def points_for(self, level_name: str) -> list[Point]:
+        """이 수준에서 본 턴 목록. 없으면(단일 라운드 큐) 빈 목록.
+
+        질문은 모든 수준이 같고 설명만 그 수준의 것이다. `load_cues` 가 네 수준
+        설명을 전부 강제하므로 여기서 수준이 빠질 일은 없다.
+        """
+        return [
+            Point(t.ask, t.answers[level_name], t.ask_emotion, t.answer_emotion, t.listener_emotion)
+            for t in self.points
+        ]
+
+    def guard_for(self, level_name: str) -> str:
+        """이 수준에서 말하면 안 되는 것. 도슨트 턴 지시문에만 붙고 읽히지 않는다.
+
+        턴 설명(`answers`)만 주면 옛 수준 브리프의 금지 규칙("'캐나다'라고 하지
+        않는다" 등)이 생성에서 통째로 빠진다 — 포인트로 옮긴 첫 판이 그랬다.
+        """
+        return (self.briefs.get(level_name) or {}).get("guard", "")
 
 
 def cues_path() -> pathlib.Path:
@@ -242,29 +303,106 @@ def load_cues(path: pathlib.Path | None = None) -> list[Cue]:
                             f"{p} {item['id']} {name}.{field_name} 는 비어 있지 "
                             f"않은 문자열이어야 한다 — 지금은 {type(v).__name__}({v!r})"
                         )
-                points = b.get("points")
-                if points is not None:
-                    if not isinstance(points, list) or not points:
+                if "points" in b:
+                    # 수준별 포인트는 턴 수와 질문을 수준마다 다르게 만든다 —
+                    # 조용히 무시하면 저작자가 고친 줄이 시연에 안 나온다.
+                    raise CueError(
+                        f"{p} {item['id']} {name}: points 는 큐 최상위로 옮겼다 — "
+                        "턴마다 ask 하나와 수준별 answers 를 둔다"
+                    )
+                if "guard" in b:
+                    g = b["guard"]
+                    if not isinstance(g, str) or not g.strip():
                         raise CueError(
-                            f"{p} {item['id']} {name}: points 는 비어 있지 않은 "
-                            f"목록이어야 한다 — 지금은 {type(points).__name__}({points!r})"
+                            f"{p} {item['id']} {name}.guard 는 비어 있지 않은 "
+                            f"문자열이어야 한다 — 지금은 {type(g).__name__}({g!r})"
                         )
-                    for pi, pt in enumerate(points):
-                        if not isinstance(pt, str) or not pt.strip():
-                            raise CueError(
-                                f"{p} {item['id']} {name}: points[{pi}] 는 비어 있지 "
-                                f"않은 문자열이어야 한다 — 지금은 {type(pt).__name__}({pt!r})"
-                            )
         extra["briefs"] = briefs
-        if extra["briefs"] and any(
-            b.get("points") for b in extra["briefs"].values()
-        ) and not extra["mc_after"]:
+        extra["points"] = _load_turns(p, item["id"], item.get("points"))
+        for key in ("mc_emotion", "mc_after_emotion"):
+            extra[key] = _emotion(f"{p} {item['id']}", key, item.get(key, DEFAULT_EMOTION))
+        if extra["points"] and not extra["mc_after"]:
             raise CueError(
                 f"{p} {item['id']}: points 가 있는데 mc_after 가 없다 — "
                 "마지막 라운드 뒤 받아치기로 합류할 자리가 없다"
             )
         out.append(Cue(**{k: item[k] for k in _REQUIRED}, **extra))
     return out
+
+
+def _emotion(where: str, key: str, value, allow_empty: bool = False) -> str:
+    """감정 태그 하나를 검사한다. 모르는 태그는 **거절한다** — 오타("놀라움")가
+    조용히 기본값으로 떨어지면 그 줄만 몸짓이 사라지는데 아무도 모른다."""
+    if allow_empty and value == "":
+        return ""
+    if value not in EMOTIONS:
+        raise CueError(
+            f"{where}: {key} 가 모르는 감정이다 — {value!r} (쓸 수 있는 값: {', '.join(EMOTIONS)})"
+        )
+    return value
+
+
+def _load_turns(p: pathlib.Path, cue_id: str, raw) -> tuple[Turn, ...]:
+    """큐 최상위 `points` 를 턴 목록으로 읽는다. 없으면 빈 튜플(단일 라운드)."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise CueError(
+            f"{p} {cue_id}: points 는 비어 있지 않은 목록이어야 한다 — "
+            f"지금은 {type(raw).__name__}({raw!r})"
+        )
+    if len(raw) > MAX_TURNS:
+        raise CueError(
+            f"{p} {cue_id}: 턴이 {len(raw)}개다 — 최대 {MAX_TURNS}턴(모든 수준 공통)"
+        )
+    turns = []
+    for ti, t in enumerate(raw):
+        where = f"{p} {cue_id} points[{ti}]"
+        if not isinstance(t, dict):
+            # 옛 형식(사실 문장 한 줄)이 여기로 온다. 그 형식이 사회자가 사실을
+            # 되묻고 도슨트가 확인만 하는 대화를 만들었다.
+            raise CueError(
+                f"{where} 는 {{ask, answers}} 매핑이어야 한다 — "
+                f"지금은 {type(t).__name__}({t!r})"
+            )
+        ask = t.get("ask")
+        if ti == 0:
+            if ask is not None:
+                raise CueError(
+                    f"{where}: 첫 턴에는 ask 를 두지 않는다 — 오프닝(mc/mc_brief)이 묻는다"
+                )
+            if "ask_emotion" in t:
+                raise CueError(
+                    f"{where}: 첫 턴에는 ask_emotion 을 두지 않는다 — 오프닝의 감정은 mc_emotion 이다"
+                )
+            ask = ""
+        elif not isinstance(ask, str) or not ask.strip():
+            raise CueError(
+                f"{where}: ask(사회자 질문)가 비어 있거나 문자열이 아니다 — "
+                f"지금은 {type(ask).__name__}({ask!r})"
+            )
+        answers = t.get("answers")
+        if not isinstance(answers, dict):
+            raise CueError(
+                f"{where}.answers 는 수준별 매핑이어야 한다 — 지금은 {type(answers).__name__}"
+            )
+        for name in LEVEL_NAMES:
+            a = answers.get(name)
+            if not isinstance(a, str) or not a.strip():
+                raise CueError(
+                    f"{where}.answers.{name} 는 비어 있지 않은 문자열이어야 한다 — "
+                    f"지금은 {type(a).__name__}({a!r})"
+                )
+        turns.append(Turn(
+            ask.strip(),
+            {n: answers[n].strip() for n in LEVEL_NAMES},
+            ask_emotion=_emotion(where, "ask_emotion", t.get("ask_emotion", DEFAULT_EMOTION)),
+            answer_emotion=_emotion(where, "answer_emotion", t.get("answer_emotion", DEFAULT_EMOTION)),
+            listener_emotion=_emotion(
+                where, "listener_emotion", t.get("listener_emotion", ""), allow_empty=True
+            ),
+        ))
+    return tuple(turns)
 
 
 def is_advance(text: str) -> bool:
