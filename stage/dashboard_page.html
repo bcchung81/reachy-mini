@@ -171,6 +171,18 @@
   }
   .caption.onair { background: #1B1416; border-color: #4A2A2E; color: #FFFFFF; }
 
+  /* 대사 감정 배지 — 자막 앞에 붙는 작은 알약(감독이 `say` 에 싣는 `emotion`,
+     어휘 8종은 stage/cues.py::EMOTIONS). 크기·모양·테두리는 헤더의 수준·모드 배지
+     (.level-btn/.mode-btn)와 **같은 값**이다 — 여기서만 다른 크기를 쓰면 한 화면에
+     배지 방언이 둘이 된다. 글자만 강조색이라 ON AIR 로 흰 글자가 된 자막 위에서도
+     배지가 대사와 따로 읽힌다. 감정이 없거나 `설명` 이면 아예 만들지 않는다
+     (shownEmotion) — 거의 모든 줄이 `설명` 이라 그리면 늘 켜진 장식이 된다. */
+  .emotion-badge {
+    display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.3;
+    padding: 2px 8px; margin-right: 8px; border-radius: 999px;
+    border: 1px solid #3A4350; background: #1C222B; color: #8FDCEA;
+  }
+
   /* 2단 그리드 — 남은 높이(헤더·단독 배너 아래)를 다 쓴다. 런다운·로그는 안쪽에서
      스크롤하므로 여기에 하한을 두지 않는다(예전 260px·320px 하한이 720px 창에서 페이지
      스크롤을 만들었다). 좁은 창(아래 미디어쿼리)에서만 세로로 쌓이고 페이지가 스크롤된다. */
@@ -682,8 +694,8 @@ function renderSent(msg) {
   var fields = msg.fields || {};
   if (msg.type === "say" && role && typeof fields.text === "string") {
     var cap = document.getElementById("cap-" + role);
-    // 관람객 STT·로봇 대사가 그대로 온다 — textContent 로만 넣는다.
-    if (cap) cap.textContent = fields.text;
+    // 관람객 STT·로봇 대사가 그대로 온다 — textContent 로만 넣는다(setCaption).
+    if (cap) setCaption(cap, fields.text, fields.emotion);
   } else if (msg.type === "mic" && role) {
     var mic = document.getElementById("mic-" + role);
     if (mic) mic.textContent = fields.open ? "MIC ON" : "MIC OFF";
@@ -691,12 +703,50 @@ function renderSent(msg) {
   appendLogFor(msg);
 }
 
+// ── 대사 감정 ─────────────────────────────────────────────────────
+// 감독이 `say` 에 싣는 `emotion`(계약: 계획 §12.5, 어휘 8종은 stage/cues.py::EMOTIONS).
+function shownEmotion(value) {
+  // `설명` 은 "특별한 감정 없음"(stage/cues.py::DEFAULT_EMOTION)이라 거의 모든 줄에
+  // 붙는다 — 그리면 배지가 늘 켜져 있는 장식이 되어 진짜 감정(놀람·아쉬움)이 눈에 안
+  // 띈다. 필드가 아예 없는 경우(감정을 모르는 옛 감독, 관람객 질문 답)도 같다.
+  // 문자열이 아닌 값이 와도 던지지 않는다 — 자막은 시연 내내 도는 경로라 여기서
+  // 던지면 그 뒤 대사가 화면에서 통째로 멈춘다(계약: never throw).
+  // 아는 태그 목록을 여기 한 벌 더 두지 않는다 — 모르는 태그는 감독이 기동에서
+  // 거절하고(load_cues), 목록을 들고 있으면 어휘가 늘 때마다 두 곳이 어긋난다.
+  if (typeof value !== "string") return "";
+  var name = value.trim();
+  return name === "" || name === "설명" ? "" : name;
+}
+
+function setCaption(cap, text, emotion) {
+  // 칸을 **비우고 다시 짓는다.** 배지 엘리먼트를 남긴 채 텍스트만 갈아 끼우면 감정이
+  // 없는 다음 대사에 앞 대사의 배지가 그대로 붙어 있고, 운영자는 그것을 지금 감정으로
+  // 읽는다.
+  while (cap.firstChild) cap.removeChild(cap.firstChild);
+  var name = shownEmotion(emotion);
+  if (name) {
+    var badge = document.createElement("span");
+    badge.className = "emotion-badge";
+    badge.textContent = name;   // 감독이 준 문자열 — textContent 로만 넣는다
+    cap.appendChild(badge);
+  }
+  cap.appendChild(document.createTextNode(text));
+}
+
 // ── 로그 한 줄 ────────────────────────────────────────────────────
 function describeEvent(msg) {
   var fields = msg.fields || {};
   switch (msg.kind) {
     case "sent":
-      if (msg.type === "say") return "say " + msg.role + " " + fields.cue_id + " seq=" + fields.seq;
+      if (msg.type === "say") {
+        // 감정은 로그에도 남긴다 — 자막은 다음 대사가 곧 덮어쓰므로, 시연이 끝난 뒤
+        // "이 대사에 왜 저 모션이 났나" 를 되짚을 기록은 이 줄뿐이다. 배지와 **같은
+        // 규칙**(없거나 `설명` 이면 안 적는다)이라 같은 함수를 쓴다 — 규칙을 두 벌로
+        // 적으면 한쪽만 고쳐져 화면과 로그가 엇갈린다.
+        var emo = shownEmotion(fields.emotion);
+        return "say " + msg.role + " " + fields.cue_id + " seq=" + fields.seq +
+               (emo ? " " + emo : "");
+      }
       if (msg.type === "mic") return "mic " + msg.role + " " + (fields.open ? "on" : "off");
       if (msg.type === "abort") return "abort " + msg.role;
       return msg.type + " " + msg.role;

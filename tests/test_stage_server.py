@@ -18,14 +18,14 @@ import pytest
 from websockets.sync.client import connect
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-from stage.cues import Cue, CueSheet
-from stage.mc_cache import cache_key
+from stage.cues import Cue, CueSheet, Turn
 from stage.server import StageServer
 
 
 @pytest.fixture
 def server():
-    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))])
     warnings: list[str] = []
     s = StageServer(
         sheet,
@@ -230,7 +230,8 @@ def test_빠른_재연결에서_새_연결을_끊긴_것으로_보고하지_않�
     자리를 차지한 뒤에야 stale 한 옛 핸들러의 finally 가 실행) 실제로는
     계속 붙어 있는 role 을 감독이 "끊겼다"고 오판해 조용히 1인 모드로
     내려간다 — 실기 WiFi 순단에서 재현 가능한 시나리오다."""
-    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))])
     warnings: list[str] = []
     s = StageServer(
         sheet,
@@ -357,7 +358,8 @@ def test_같은_역할로_다시_붙으면_옛_연결을_닫고_경고한다(ser
 
 @pytest.fixture
 def strict_server():
-    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))])
     warnings: list[str] = []
     s = StageServer(sheet, generate=lambda r, b, h: "도슨트 대사",
                     expect_units={"mc": "AAA"}, warn=warnings.append)
@@ -427,80 +429,24 @@ def test_role_이_문자열이_아닌_hello_는_경고하고_끊는다(server):
     assert _wait_warning(server, "모르는 역할")
 
 
-# ── Task 6 — 여는 대사 사전 생성 캐시가 서버 배선까지 닿는지(브리프 (A)) ──
-
-def test_StageServer가_mc_lines와_level_name을_감독까지_실제로_전달한다():
-    """(A) `Director.__init__` 이 `mc_lines`/`level_name` 을 받게 됐어도
-    `StageServer.__init__` 이 그 값을 `Director(...)` 에 넘기지 않으면
-    (기본값으로 삼키면) 캐시는 늘 비고 수준은 늘 "일반" 으로 굳는다 —
-    Task 6 전체가 무효화된다. 감독 내부 속성만 보면 `_send` 까지 이어지는
-    배선이 새는 지점을 못 잡으므로 실제 소켓 끝까지 흘려보내 확인한다.
-
-    **리뷰 Important 1** — `briefs` 가 없는 큐(`mc_brief == ""`)만 보면
-    `cache_key` 가 `mc_brief` 를 아예 무시해도(예: 코드에서 `""` 를
-    하드코딩해도) 이 테스트가 여전히 통과한다. `briefs` 를 채운 시트를
-    쓰고, mc_brief 만 다른 둘째 큐가 미스가 되는지까지 확인한다.
-    """
-    sheet = CueSheet([
-        Cue("c1", "첫째", "큐시트 원문 c1", "지시1", "partner",
-            briefs={"초등": {"mc_brief": "초등 브리프 A", "docent_brief": "해설1"}}),
-        Cue("c2", "둘째", "큐시트 원문 c2", "지시2", "partner",
-            briefs={"초등": {"mc_brief": "초등 브리프 B", "docent_brief": "해설2"}}),
-    ])
-    key1 = cache_key("c1", "초등", "초등 브리프 A")   # c2 의 키는 일부러 안 넣는다
-    warnings: list[str] = []
-    s = StageServer(
-        sheet,
-        generate=lambda role, brief, history: "도슨트 대사",
-        warn=warnings.append,
-        mc_lines={key1: "캐시된 여는 대사"},
-        level_name="초등",
-    )
-
-    from websockets.sync.server import serve as ws_serve
-    srv = ws_serve(s.handler, "127.0.0.1", 0)
-    port = srv.socket.getsockname()[1]
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
-    t.start()
-    try:
-        with connect(f"ws://127.0.0.1:{port}") as mc, connect(f"ws://127.0.0.1:{port}") as docent:
-            hello(mc, "mc")
-            hello(docent, "docent")
-            time.sleep(0.2)
-            s.director.start()
-            said = next(m for m in drain(mc, 3) if m["type"] == "say")
-            drain(docent, 1)   # 초기 마이크 닫힘 — 안 걷으면 뒤이은 통수가 밀린다
-            assert said["text"] == "캐시된 여는 대사"
-            assert not any("캐시가 없다" in w for w in warnings), warnings
-
-            # c2 로 넘어간다 — mc_brief 가 달라 다른 해시가 되므로 미스여야
-            # 한다(콘솔 `n` 과 같은 경로인 `Director.next()` 로 직접 진행).
-            ended(mc, "c1")
-            drain(docent, 3)
-            drain(mc, 1)
-            ended(docent, "c1:docent")
-            drain(mc, 1)
-            warnings.clear()
-            s.director.next()
-            said2 = next(m for m in drain(mc, 3) if m["type"] == "say")
-            assert said2["text"] == "큐시트 원문 c2", said2   # 캐시 미스 → 원문 폴백
-            assert any("캐시가 없다" in w for w in warnings), warnings
-    finally:
-        srv.shutdown()
-        t.join(timeout=2)
+# ~~여는 대사 사전 생성 캐시가 서버 배선까지 닿는지~~ — 고정 대본 전환(2026-09-23)
+# 으로 `mc_lines` 배선 자체가 사라져 테스트도 지웠다. 오프닝은 이제 큐시트 원문
+# (`Cue.mc`)이라 배선이 끊길 자리가 없다. `level_name` 배선은 아래 하한 테스트와
+# `tests/test_stage_main.py` 의 수준 전환 테스트가 계속 지킨다.
 
 
 def test_StageServer가_도슨트_분량_하한을_감독까지_전달한다():
     """전체 리뷰 I1 — `stage/__main__.py` → `StageServer` → `Director` 배선의
     가운데 토막이다. 여기서 기본값(`MIN_CHARS`=40)으로 삼키면 `main()` 이
     `level.min_chars` 를 아무리 제대로 읽어도 수준별 하한이 감독까지 못 간다
-    — `mc_lines`/`level_name` 이 정확히 그렇게 끊길 뻔했던 자리다.
+    — `level_name` 이 정확히 그렇게 끊길 뻔했던 자리다.
 
     **40이 아닌 값으로 본다**(전문가 260). 기본값과 같은 값으로 단언하면 배선이
     끊겨도 통과한다.
     """
     s = StageServer(
-        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))]),
         generate=lambda role, brief, history: "도슨트 대사",
         docent_min_chars=260,
     )
@@ -527,7 +473,8 @@ def test_tick_이_터져도_감시_루프는_계속_돌고_소리를_낸다():
     calls: list[int] = []
     warnings: list[str] = []
     s = StageServer(
-        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))]),
         generate=lambda role, brief, history: "도슨트 대사",
         warn=warnings.append,
     )
@@ -561,7 +508,8 @@ class 기록허브:
 
 @pytest.fixture
 def server_hub():
-    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")])
+    sheet = CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+            points=(Turn("", {"일반": "도슨트 대사"}),))])
     hub = 기록허브()
     s = StageServer(sheet, generate=lambda role, brief, history: "도슨트 대사",
                      warn=lambda m: None, hub=hub)

@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import stage.__main__ as stage_main
 from stage.levels import load_levels
+from stage.machine import State
 
 # 테스트용 수준 하나 — `build_generate(level)` 이 실제 페르소나 파일
 # (`data/personas/*.md`)을 읽어 프롬프트를 조립하므로 진짜 `Level` 이 필요하다.
@@ -355,25 +356,17 @@ def test_main_은_수준을_한_번만_읽어_announce_level과_build_generate�
     )
 
 
-def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴다(monkeypatch):
-    """(A) 배선 확인 — 브리프에 없던 자리다. `Director.__init__` 가
-    `mc_lines`/`level_name` 을 받게 됐어도, 그것을 만드는 `StageServer` 를
-    만드는 `main()` 이 값을 채워 넘기지 않으면 두 인자는 늘 기본값(빈
-    캐시·"일반")으로 굳는다 — 이 태스크 전체가 무효화된다.
+def test_main_이_수준_이름을_StageServer에_넘긴다(monkeypatch):
+    """배선 확인 — `Director` 가 `level_name` 을 받아도, 그것을 만드는
+    `StageServer` 를 만드는 `main()` 이 값을 채워 넘기지 않으면 늘 기본값("일반")
+    으로 굳는다.
 
-    `level` 은 이미 `test_main_은_수준을_한_번만_읽어…` 가 "한 번만 읽는다"
-    를 박제했으므로 여기서는 그 값(`level.name`)이 실제로 `StageServer` 까지
-    닿는지, 그리고 `load_mc_lines()` 의 결과가 함께 닿는지만 본다.
+    **기본값과 다른 수준을 세운다.** 예전에는 `REACHY_AUDIENCE_LEVEL` 을 지우고
+    `== "일반"` 을 단언했는데, "일반" 은 `stage/server.py`·`stage/director.py` 의
+    기본값과 같은 값이라 배선을 아무것도 지키지 못했다(전체 리뷰 B1, 뮤테이션으로
+    실제로 뚫렸다).
 
-    **기본값과 다른 수준을 세운다.** 예전에는 `REACHY_AUDIENCE_LEVEL` 을
-    **지우고** `== "일반"` 을 단언했는데, "일반" 은 `stage/server.py` 와
-    `stage/director.py` 의 `level_name` **기본값과 같은 값**이라 배선을 아무것도
-    안 지켰다 — `stage/__main__.py` 의 `level_name=level.name` 을
-    `level_name="일반"` 으로 바꿔도(= `REACHY_AUDIENCE_LEVEL` → `Director` 로
-    가는 **유일한 통로**를 끊어도) 이 테스트를 포함해 전부 통과했다(전체 리뷰
-    B1, 뮤테이션으로 실제로 뚫렸다). 기본값이 아닌 "초등" 으로 세워야 그 한 줄이
-    지켜진다 — 이 저장소가 반복해 밟은 "기본값이 있는 인자를 기본값과 같은 값으로
-    단언한다" 함정이다.
+    (~~`mc_lines` 도 함께 봤다~~ — 고정 대본 전환으로 사전 생성 캐시가 사라졌다.)
     """
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     seen: dict[str, object] = {}
@@ -382,92 +375,31 @@ def test_main_이_사전_생성_캐시와_수준_이름을_StageServer에_넘긴
         """`StageServer(...)` 호출 직후 여기서 멈춘다 — 소켓·콘솔은 아직 안 뜬다."""
 
     def fake_server(*a, **kw):
-        seen["mc_lines"] = kw.get("mc_lines")
         seen["level_name"] = kw.get("level_name")
         raise _멈춤
 
     monkeypatch.setattr(stage_main, "StageServer", fake_server)
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {"가짜": "캐시"})
 
     with pytest.raises(_멈춤):
         stage_main.main()
 
-    assert seen["mc_lines"] == {"가짜": "캐시"}, (
-        "main() 이 load_mc_lines() 의 결과를 StageServer 에 넘기지 않았다"
-    )
     assert seen["level_name"] == "초등", (
         "main() 이 level.name 을 StageServer 에 넘기지 않았다 — 환경변수로 세운 "
         f"'초등' 이 아니라 {seen['level_name']!r} 이 닿았다"
     )
 
 
-def test_main이_수준의_분량_하한을_StageServer에_넘긴다(monkeypatch):
-    """전체 리뷰 I1 — 분량 미달 경고만 수준이 닿지 않던 자리의 배선이다.
-
-    `Director` 의 `docent_min_chars` 기본값은 `MIN_CHARS`(40)이고, `main()` 이
-    `level.min_chars` 를 채워 넘기지 않으면 일반(180)·전문가(260)에서 50자짜리
-    해설이 나와도 경고가 없다 — 설계 §5·§10 이 요구한 경고가 절반만 도는 상태로
-    조용히 굳는다.
-
-    **기본값(40)이 아닌 값으로 확인한다**: 초등의 `min_chars` 는 70이다. 40으로
-    보면 배선이 끊겨도 통과한다(이 저장소가 반복해 밟은 함정 3).
-    """
-    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
-    seen: dict[str, object] = {}
-
-    class _멈춤(Exception):
-        pass
-
-    def fake_server(*a, **kw):
-        seen["docent_min_chars"] = kw.get("docent_min_chars")
-        raise _멈춤
-
-    monkeypatch.setattr(stage_main, "StageServer", fake_server)
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
-
-    with pytest.raises(_멈춤):
-        stage_main.main()
-
-    from stage.levels import load_levels
-
-    초등_하한 = load_levels()["초등"].min_chars
-    assert 초등_하한 == 70, "data/levels.yaml 의 초등 min_chars 가 바뀌었다 — 이 테스트를 갱신한다"
-    assert seen["docent_min_chars"] == 초등_하한, (
-        f"main() 이 level.min_chars 를 StageServer 에 넘기지 않았다 — {seen['docent_min_chars']!r} 이 닿았다"
-    )
-
-
-def test_기동_로그에_캐시_개수가_찍힌다(monkeypatch, capsys):
-    """리뷰 Important 2 — "시연 전에 사람이 확인한다" 는 이 캐시의 존재
-    이유가, 정작 기동 로그에 몇 개를 읽었는지 한 줄도 안 남으면 지켜지지
-    않는다. 캐시를 통째로 못 읽어 왔거나 사전 생성을 깜빡한 채 기동해도
-    그 사실이 콘솔에 안 남는다."""
-    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {"a": "1", "b": "2", "c": "3"})
-
-    class _멈춤(Exception):
-        pass
-
-    def fake_server(*a, **kw):
-        raise _멈춤
-
-    monkeypatch.setattr(stage_main, "StageServer", fake_server)
-
-    with pytest.raises(_멈춤):
-        stage_main.main()
-
-    assert "여는 대사 캐시 3개" in capsys.readouterr().out
+# ~~기동 로그에 캐시 개수가 찍힌다~~ — 사전 생성 캐시가 사라져 함께 지웠다.
 
 
 def test_모듈_문서에_수준_환경변수가_적혀_있다():
     """`announce_level()` 이 실제로 쓰는 두 환경변수(REACHY_AUDIENCE_LEVEL/
     REACHY_LEVELS_PATH)가 기동 문서에서 빠지면, "주소는 전부 환경변수다" 규약대로
-    이 파일 머리말만 보고 배포하는 사람이 그 존재를 알 길이 없다. `REACHY_MC_LINES_PATH`
-    도 같은 이유로 형제 로더들과 나란히 적혀 있어야 한다(리뷰 Important 4)."""
+    이 파일 머리말만 보고 배포하는 사람이 그 존재를 알 길이 없다.
+    (~~`REACHY_MC_LINES_PATH`~~ 는 고정 대본 전환으로 사라졌다.)"""
     doc = stage_main.__doc__ or ""
     assert "REACHY_AUDIENCE_LEVEL" in doc
     assert "REACHY_LEVELS_PATH" in doc
-    assert "REACHY_MC_LINES_PATH" in doc
 
 
 def test_main_은_허브를_서버에_넘기고_환경변수_주소로_대시보드를_띄운다(monkeypatch):
@@ -656,7 +588,6 @@ def test_역할_검증을_건너뛴다는_기동_경고가_대시보드_이력�
 
     monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda r, b, h: "x"))
     monkeypatch.setattr(stage_main, "StageServer", 가짜서버)
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
     with pytest.raises(멈춤):
         stage_main.main()
 
@@ -837,7 +768,6 @@ def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     만든것: list[str] = []
     monkeypatch.setattr(stage_main, "build_generate", _가짜_생성기_공장(만든것))
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
     seen: dict = {}
 
     class _멈춤(Exception):
@@ -864,6 +794,7 @@ _수준_큐시트 = """\
 - id: c1
   title: 첫째
   mc: 원문 c1
+  mc_after: 받아치기
   docent_brief: 옛 지시
   gaze: partner
   briefs:
@@ -871,6 +802,8 @@ _수준_큐시트 = """\
     중고등: {mc_brief: 중고등 진행, docent_brief: 중고등 해설}
     일반: {mc_brief: 일반 진행, docent_brief: 일반 해설}
     전문가: {mc_brief: 전문가 진행, docent_brief: 전문가 해설}
+  points:
+    - answers: {초등: 초등 설명., 중고등: 중고등 설명., 일반: 일반 설명., 전문가: 전문가 설명.}
 """
 
 
@@ -884,7 +817,6 @@ def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkey
     cues.write_text(_수준_큐시트, encoding="utf-8")
     monkeypatch.setenv("REACHY_CUES_PATH", str(cues))
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
-    monkeypatch.setattr(stage_main, "load_mc_lines", lambda: {})
     만든것: list[str] = []
     불린것: list[tuple[str, str, str]] = []
     해설_받음 = threading.Event()
@@ -915,15 +847,28 @@ def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkey
 
     d = seen["server"].director
     assert d.level_names() == ["초등", "중고등", "일반", "전문가"]
-    levels = load_levels()
-    assert d._level_point_min_chars["일반"] == levels["일반"].point_min_chars
-    # 문장 하한도 끝까지 닿아야 한다 — 한 단계라도 빠지면 도슨트 턴 지시문이
-    # "N문장 이내로 짧게" 로 돌아가 1문장 확인형 답이 나온다.
-    assert d._level_point_min_sentences["일반"] == levels["일반"].point_min_sentences
     d.set_level("전문가")
-    d.start()            # 로봇이 없어 say 는 "아직 붙지 않았다" 로 버려진다 — 생성만 본다
+
+    # ~~`d.start()` 직후의 해설 생성으로 배선을 봤다~~ — 2026-09-23 고정 대본
+    # 전환으로 해설은 생성되지 않는다. **생성이 남은 곳은 관람객 질문 답 하나**라,
+    # 수준 배선도 거기서만 관찰된다. 그래서 흐름을 관람객 차례(LISTENING)까지
+    # 밀고 질문을 넣는다 — 로봇이 없어 say 는 버려지지만 상태는 그대로 돈다.
+    def 끝났다(cue_id):
+        d.on_speaking_ended(d._machine.speaking_role, cue_id, d._machine.seq)
+
+    d.start()
+    끝났다("c1")           # 여는 대사 → 0턴 고정 해설
+    끝났다("c1:docent")    # 해설 → 사회자 받아치기
+    끝났다("c1:after")     # 받아치기 → 관람객 차례
+    assert d.state is State.LISTENING, d.state
+    d.on_heard("그건 왜 그런가요?")
     assert 해설_받음.wait(2.0), 불린것
-    assert 불린것 == [("전문가", "docent", "전문가 해설")]
+    assert len(불린것) == 1, 불린것
+    수준, 역할, 지시 = 불린것[0]
+    assert (수준, 역할) == ("전문가", "docent")
+    # 지시문이 **전문가 수준의** 큐 브리프를 실어야 한다 — 수준이 감독 안쪽
+    # (`brief_for`)까지 닿았다는 증거다.
+    assert "그건 왜 그런가요?" in 지시 and "전문가 해설" in 지시
     assert 만든것 == ["초등", "전문가"]
     assert d.snapshot()["level"] == "전문가"
 

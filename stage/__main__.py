@@ -10,7 +10,6 @@
     REACHY_AUDIENCE_LEVEL  처음 관람객 수준 — 초등/중고등/일반/전문가 (기본 일반).
                            시연 중에는 콘솔·대시보드 `l <수준>` 으로 바꾼다(다음 큐부터)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
-    REACHY_MC_LINES_PATH   여는 대사 사전 생성 캐시 경로 (기본 data/mc_lines.yaml)
     REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만.
                            빈 값은 모든 망이 되므로 127.0.0.1 로 두고 경고한다)
     REACHY_DASHBOARD_PORT  기본 8778 (틀린 값이면 경고하고 대시보드만 빼고 돈다)
@@ -26,7 +25,6 @@ from stage.dashboard import DEFAULT_HOST as DASH_HOST
 from stage.dashboard import DEFAULT_PORT as DASH_PORT
 from stage.dashboard import start_dashboard
 from stage.dashboard_hub import DashboardHub, tee
-from stage.mc_cache import cache_path, load_mc_lines
 from stage.server import StageServer
 
 # 대화 로직은 앱 하나에만 둔다 — LLM 클라이언트를 다시 쓰지 않고 그것을 가져온다.
@@ -317,16 +315,9 @@ def main() -> None:
         warn("⚠ REACHY_MC_UNIT / REACHY_DOCENT_UNIT 이 없다 — 역할 검증을 건너뛴다")
 
     # `level.name` 은 이미 위에서 한 번 읽어 둔 `level` 객체의 속성일 뿐이다
-    # — 환경변수를 다시 조회하지 않는다("수준을 두 번 읽지 않는다"). 캐시도
-    # 여기서 한 번만 읽어 `Director` 로 흘려보낸다 — `StageServer.__init__`
-    # 이 기본값(빈 dict·"일반")으로 넘기게 두면 캐시가 아무리 채워져 있어도
-    # 늘 무시된다.
-    mc_lines = load_mc_lines()
-    # **기동 로그에 몇 개 읽었는지 남긴다.** "시연 전에 사람이 미리 확인한다"
-    # 는 이 캐시의 존재 이유가, 정작 기동 때 몇 개가 실제로 실렸는지 아무
-    # 데도 안 남으면 지켜지지 않는다 — 캐시를 통째로 못 읽어 왔거나(배선
-    # 문제) 사전 생성을 깜빡한 채로 기동해도 콘솔에는 아무 신호가 없었다.
-    print(f"여는 대사 캐시 {len(mc_lines)}개 로드됨 ({cache_path()})", flush=True)
+    # — 환경변수를 다시 조회하지 않는다("수준을 두 번 읽지 않는다").
+    # ~~여는 대사 사전 생성 캐시(`load_mc_lines`)~~ 는 고정 대본 전환으로 없앴다 —
+    # 해설이 전부 검수된 큐시트 문장이라 미리 만들어 둘 것이 없다.
     # `docent_min_chars=level.min_chars` — 도슨트 해설의 분량 미달 경고가 수준을
     # 따르게 하는 유일한 배선이다. 감독의 기본값은 `MIN_CHARS`(40)이라 여기서
     # 안 넘기면 일반(180자)·전문가(260자) 목표에 50자짜리 해설이 나와도 로그에
@@ -347,14 +338,9 @@ def main() -> None:
     generate = LevelSwitch(levels, level, build_generate, warn=warn)
     server = StageServer(
         CueSheet(load_cues()), generate, expect_units=expect,
-        mc_lines=mc_lines, level_name=level.name,
+        level_name=level.name,
         docent_min_chars=level.min_chars,
         level_min_chars={name: lv.min_chars for name, lv in levels.items()},
-        level_point_min_chars={name: lv.point_min_chars for name, lv in levels.items()},
-        level_point_max={
-            name: (lv.point_max_sentences, lv.point_max_chars) for name, lv in levels.items()
-        },
-        level_point_min_sentences={name: lv.point_min_sentences for name, lv in levels.items()},
         on_level_change=generate.select,
         warn=warn, hub=hub,
     )

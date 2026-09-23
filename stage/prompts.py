@@ -98,35 +98,7 @@ def build_system_prompt(role: str, level: Level) -> str:
     return "\n\n".join([persona, _COMMON, amount,
                         level.vocabulary, level.depth, level.numbers, level.sources])
 
-
-# 다리 대사 생성에 심는 톤 예시(설계 §5 "사회자 말투 카드"). 턴마다 질문이 달라
-# 고정 문구는 못 쓰지만, 톤은 few-shot 으로 통제한다.
-#
-# **전부 열린 질문이다.** 처음 판은 "이런 것도 있다면서요?" 같은 되묻기였는데,
-# 그 톤으로 사회자가 사실 문장을 되물으면 도슨트는 설명하지 않고 "네, 맞아요" 로
-# 확인만 한다 — 02-history 파일럿에서 실제로 그렇게 됐다(docs/lessons.md).
-_BRIDGE_TONE_EXAMPLES = (
-    "와, 그렇군요. 그럼 그건 어떻게 알아낸 거예요?",
-    "잠깐만요, 그게 왜 그런 거예요?",
-    "신기하네요. 그럼 실제로는 어디에 쓰였어요?",
-)
-
-
-def build_bridge_prompt(ask: str, prev_answer: str) -> str:
-    """도슨트의 직전 설명에 짧게 반응하고 다음 질문을 던지는 사회자 대사 지시문.
-
-    사전 생성(`scripts/pregen_mc_lines.py`)이 이력 없이 `gen("mc", 이 결과, [])` 로
-    부른다 — 그래서 직전 설명을 지시문에 넣어 준다. 분량은 시스템 프롬프트의
-    사회자 고정 규칙(`_amount_for` role="mc")이 이미 준다.
-
-    **답을 말하지 말라고 못박는다.** 사회자가 질문 안에 답을 담으면("A 가 B 를
-    했다면서요?") 도슨트에게는 확인할 것만 남는다.
-    """
-    examples = "\n".join(f"- {e}" for e in _BRIDGE_TONE_EXAMPLES)
-    return (
-        f"도슨트가 방금 이렇게 설명했다: {prev_answer}\n\n"
-        f"그 설명에 한 마디로 짧게 반응하고, 이어서 이 질문을 네 말로 자연스럽게 "
-        f"묻는다: {ask}\n"
-        "질문의 답이나 새로운 사실은 말하지 않는다. 반드시 질문으로 끝낸다.\n"
-        f"예시 톤(그대로 베끼지 말고 참고만 한다):\n{examples}"
-    )
+# ~~다리 대사 생성(`build_bridge_prompt`)과 사회자 말투 카드
+# (`_BRIDGE_TONE_EXAMPLES`)~~ — 2026-09-23 고정 대본 전환으로 지웠다. 사회자의
+# 턴 질문은 이제 큐시트에 사람이 쓴 문장(`Turn.ask`)이고, 감독이 그것을 그대로
+# 말하게 한다. 지금 이 파일이 조립하는 프롬프트는 **관람객 질문 답** 하나뿐이다.

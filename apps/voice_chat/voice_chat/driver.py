@@ -60,6 +60,18 @@ MOTOR_QUIET = os.environ.get("REACHY_MOTOR_QUIET", "1").lower() not in ("0", "fa
 QUIET_ATTACK_S = 0.15
 QUIET_RELEASE_S = 0.5
 
+# ── 시선 (무대 모드, 설계 §12.6) ───────────────────────────────
+# 감독의 `gaze` 를 **머리 yaw 오프셋**으로 받는다. 상대에게 묻고 관객에게
+# 설명하는 것이 몸으로 보이게 하는 층이다.
+#
+# 자리가 여기인 이유가 둘이다.
+#   · 쓰는 스레드는 여전히 이 루프 하나여야 한다(공식 control-loops 규칙) —
+#     호출부가 `set_target` 을 직접 부르면 그 규칙이 깨진다.
+#   · **secondary(sway) 층에만 더한다.** 녹화 모션이 도는 동안에는 primary 가
+#     포즈를 통째로 결정하므로 시선이 저작된 모션을 덮지 않는다.
+GAZE_MAX_DEG = 22.0   # 안전 한계(머리-몸 yaw 차 65도)에 한참 못 미치게 자른다
+GAZE_TAU_S = 0.35     # 시선이 옮겨가는 시간상수 — 홱 돌면 기계처럼 보인다
+
 
 def _minjerk(a: float) -> float:
     """0..1 을 부드럽게 — 시작·끝에서 속도가 0 이다(SDK 기본 보간과 같은 성격)."""
@@ -123,6 +135,10 @@ class RobotDriver:
         # 원자적이라 잠금이 필요 없다.
         self._quiet = False
         self._quiet_env = 1.0
+        # 시선 — set_gaze() 가 목표(도)를 바꾸고 루프가 부드럽게 따라간다.
+        # float 대입·읽기는 GIL 로 원자적이라 잠금이 필요 없다(`_quiet` 과 같다).
+        self._gaze_target_deg = 0.0
+        self._gaze_deg = 0.0
         self._errors = 0
 
     # ── 다른 스레드가 부르는 것 ────────────────────────────────
@@ -167,6 +183,18 @@ class RobotDriver:
         """
         self._quiet = quiet and MOTOR_QUIET
 
+    def set_gaze(self, yaw_deg: float) -> None:
+        """머리를 이만큼(도) 돌려 본다. 0 이면 정면(관객), 양수는 왼쪽이다.
+
+        **다른 스레드(감독 수신 루프)가 부른다 — 값만 바꾸고 로봇에 쓰지 않는다.**
+        여기서 `set_target` 을 부르면 쓰는 주체가 둘이 돼 공식 규칙이 깨진다.
+
+        각도는 `GAZE_MAX_DEG` 로 자른다. SDK 도 안전 한계에서 클램프하지만 그건
+        **조용히** 잘린다 — 목표값과 실제 자세가 어긋난 채로 돌면 "왜 덜 돌지"
+        를 추적할 수 없다(CLAUDE.md 의 안전 한계 항목).
+        """
+        self._gaze_target_deg = max(-GAZE_MAX_DEG, min(GAZE_MAX_DEG, float(yaw_deg)))
+
     # ── 루프 ───────────────────────────────────────────────────
 
     def start(self) -> None:
@@ -200,6 +228,13 @@ class RobotDriver:
                 time.sleep(self._dt - slept)
 
     def _tick(self, now: float):
+        # 시선은 **모션이 도는 동안에도** 목표를 향해 굴러간다. sway 위상을 모션
+        # 중에도 굴리는 것과 같은 이유다 — 안 그러면 3초짜리 모션이 끝난 뒤에야
+        # 옛 각도에서 출발해 시선이 한 박자 늦게 돈다.
+        self._gaze_deg += (self._gaze_target_deg - self._gaze_deg) * min(
+            1.0, self._dt / GAZE_TAU_S
+        )
+
         with self._lock:
             prim = self._primary
 
@@ -266,6 +301,10 @@ class RobotDriver:
         정숙 포락선(`_quiet_env`)이 진폭을 통째로 배율한다 — 0 이 되면 매 틱
         같은 중립 자세를 보내므로 서보가 그 자리에서 멈춘다(목표 송신 자체는
         계속한다 — 루프가 살아 있음은 유지된다).
+
+        **시선(`_gaze_deg`)은 그 배율을 받지 않는다.** 정숙은 흔들림(서보 소음)을
+        멈추려는 것이지 자세를 되돌리려는 것이 아니다 — 배율을 걸면 사용자가
+        말을 시작할 때마다 로봇이 상대를 보던 고개를 정면으로 홱 돌린다.
         """
         target_env = 0.0 if self._quiet else 1.0
         tau = QUIET_ATTACK_S if self._quiet else QUIET_RELEASE_S
@@ -277,7 +316,8 @@ class RobotDriver:
         target = (
             create_head_pose(
                 x=o.x_mm * qe, y=o.y_mm * qe, z=o.z_mm * qe,
-                roll=o.roll_deg * qe, pitch=o.pitch_deg * qe, yaw=o.yaw_deg * qe,
+                roll=o.roll_deg * qe, pitch=o.pitch_deg * qe,
+                yaw=o.yaw_deg * qe + self._gaze_deg,
                 mm=True, degrees=True,
             ),
             np.array([math.radians(o.antenna_deg * qe), math.radians(-o.antenna_deg * qe)]),

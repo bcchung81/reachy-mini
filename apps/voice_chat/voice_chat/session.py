@@ -25,7 +25,7 @@ from clauses import split_sentences
 from driver import RobotDriver
 from idler import Idler
 from llm import LLMClient
-from motion import MotionPlayer, classify
+from motion import NO_MOTION, MotionPlayer, classify
 from tts import Speaker
 
 HERE = Path(__file__).parent
@@ -148,6 +148,10 @@ def speak(text: str, speaker, player, category: str | None = None) -> None:
     'neutral' 은 모션 표에 없는 이름이라 2대 모드의 모든 발화가 모션 없이 나갔다
     — 로봇이 말하는 내내 몸이 가만히 있었다(리뷰 B1).
 
+    `category=motion.NO_MOTION` 은 **모션을 아예 걸지 말라**는 뜻이다(대본의
+    '설명' 태그, 설계 §12.2). `None`(=모르니 추측해라)과 반드시 구별해야 한다 —
+    둘을 같은 값으로 두면 해설 대사 전부가 추측 경로로 내려가 대사마다 몸이 튄다.
+
     **재생 완료를 기다리지 않는다.** 기다리면 그동안 마이크 루프가 멈춰
     끼어들기 판정이 한 번도 돌지 않는다 — 재생 중 마이크를 어떻게 다룰지는
     호출부가 정한다(`voice_loop` 의 게이팅, `stage_client` 의 mic 지시).
@@ -167,9 +171,12 @@ def speak(text: str, speaker, player, category: str | None = None) -> None:
         # 빈 대사를 말하는 로봇이 되지 않는다. 감독 쪽 사고를 여기서 흡수한다.
         return
     if player is not None:
-        category = category or classify(text)
-        name = player.play_for(category)
-        print(f"  [모션 {category}/{name}]")
+        if category == NO_MOTION:
+            print("  [모션 없음 — 대본 감정이 '설명']")
+        else:
+            category = category or classify(text)
+            name = player.play_for(category)
+            print(f"  [모션 {category}/{name}]")
     print(f"미니> {text}")
     sentences = split_sentences(text)
     if len(sentences) > 1:

@@ -240,6 +240,59 @@ def test_단독으로_들어가면_열려_있던_이동_확인_바를_닫는다(
     assert "closeGotoBar()" in body
 
 
+def test_대사_자막에_감정_배지를_그린다():
+    """대사마다 감정 태그가 생겼다(계획 §12) — 감독이 `say` 에 `emotion` 을 실어 보내고
+    그 송신 기록이 `sent` 이벤트로 그대로 온다. 운영자가 지금 대사가 어떤 감정으로
+    나가는지 한눈에 보려면 자막 칸에 배지가 붙어야 한다.
+
+    리터럴은 **자막을 그리는 함수 본문 안**에서 본다 — 파일 어딘가에 `fields.emotion`
+    이라는 글자만 있으면 통과하는 검사는 배지가 실제로 그려지는지 아무것도 안 지킨다.
+    배지 모양은 헤더의 수준·모드 배지와 같은 값이어야 한다(한 화면에 배지 방언을 둘로
+    만들지 않는다)."""
+    src = _src()
+    sent = _media_block(src, "function renderSent(msg)")
+    assert "fields.emotion" in sent
+
+    cap = _media_block(src, "function setCaption(cap, text, emotion)")
+    assert 'badge.className = "emotion-badge"' in cap
+    # 감독이 준 문자열이다 — 배지도 자막 본문과 같이 textContent 로만 넣는다.
+    assert "badge.textContent = name" in cap
+
+    rule = _css_rule(src, ".emotion-badge")
+    assert "font-size: 11px" in rule        # .level-btn/.mode-btn 과 같은 크기
+    assert "border-radius: 999px" in rule   # 같은 알약 모양
+
+
+def test_감정이_없거나_설명이면_배지를_그리지_않는다():
+    """`설명` 은 "특별한 감정 없음"(`stage/cues.py::DEFAULT_EMOTION`)이라 거의 모든 줄에
+    붙는다 — 그리면 배지가 늘 켜져 있는 장식이 되어 진짜 감정(놀람·아쉬움)이 눈에 안
+    띈다. 필드가 아예 없는 경우(감정을 모르는 옛 감독, 관람객 질문 답)도 같다.
+
+    문자열이 아닌 값(`null`·숫자)이 와도 그냥 안 그린다 — 자막은 시연 내내 도는 경로라
+    여기서 던지면 그 뒤 대사가 화면에서 통째로 멈춘다."""
+    body = _media_block(_src(), "function shownEmotion(value)")
+    assert 'typeof value !== "string"' in body
+    assert '"설명"' in body
+    assert 'return ""' in body
+
+
+def test_다음_대사에_감정이_없으면_앞_배지가_남지_않는다():
+    """자막 칸은 대사마다 덮어쓴다 — 배지 엘리먼트를 남겨 둔 채 텍스트만 갈아 끼우면
+    감정이 없는 다음 대사에 앞 대사의 배지가 그대로 붙어 있고, 운영자는 그것을 지금
+    감정으로 읽는다. 그릴 때마다 칸을 비우고 다시 짓는다."""
+    body = _media_block(_src(), "function setCaption(cap, text, emotion)")
+    assert "removeChild" in body
+
+
+def test_로그의_say_줄에도_감정이_남는다():
+    """자막은 다음 대사가 곧 덮어쓴다 — 시연이 끝난 뒤 "이 대사에 왜 저 모션이 났나" 를
+    되짚을 수 있는 기록은 이벤트 로그뿐이다. 배지와 **같은 규칙**(없거나 `설명` 이면 안
+    적는다)이어야 하므로 같은 함수(`shownEmotion`)를 쓴다 — 규칙을 두 벌로 적으면 한쪽만
+    고쳐져 화면과 로그가 엇갈린다."""
+    body = _media_block(_src(), "function describeEvent(msg)")
+    assert "shownEmotion(fields.emotion)" in body
+
+
 def _px(rule: str, prop: str) -> int:
     m = re.search(prop + r"\s*:\s*(\d+)px", rule)
     assert m, (prop, rule)

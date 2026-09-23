@@ -53,9 +53,16 @@ class TurnMachine:
         self.seq = 0
 
     def speak(
-        self, role: str, cue_id: str, text: str, gaze: str | None = None
+        self, role: str, cue_id: str, text: str, gaze: str | None = None,
+        emotion: str | None = None,
     ) -> list[Command]:
-        """지정한 로봇에게 대사를 준다."""
+        """지정한 로봇에게 대사를 준다.
+
+        `emotion` 은 대본에 적힌 감정 태그다(`stage/cues.py::EMOTIONS`). 로봇이 그
+        태그로 모션과 목소리 어조를 고른다 — 없으면 로봇이 문장 속 키워드로 추측한다.
+        **안 주면 필드를 넣지 않는다**: 빈 값을 실으면 "감정이 없는 대사" 와
+        "감정을 안 보낸 감독" 을 로그에서 못 가른다.
+        """
         if role not in _SPEAKING_STATE:
             raise TurnError(f"알 수 없는 역할: {role!r}")
         if self.state in SPEAKING:
@@ -81,12 +88,10 @@ class TurnMachine:
         ]
         if gaze is not None:
             cmds.append(Command(to=role, type="gaze", fields={"target": gaze}))
-        cmds.append(
-            Command(
-                to=role, type="say",
-                fields={"cue_id": cue_id, "seq": self.seq, "text": text},
-            )
-        )
+        say_fields = {"cue_id": cue_id, "seq": self.seq, "text": text}
+        if emotion:
+            say_fields["emotion"] = emotion
+        cmds.append(Command(to=role, type="say", fields=say_fields))
         return cmds
 
     def is_current(self, role: str, cue_id: str, seq: int | None) -> bool:

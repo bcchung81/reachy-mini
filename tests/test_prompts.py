@@ -144,29 +144,10 @@ def test_조립된_프롬프트_전부에_이름표_금지_규칙이_있다():
             assert "이름표" in p, (role, name)
 
 
-def test_다리_대사_프롬프트에_질문과_직전_설명이_들어간다():
-    """사회자는 도슨트가 방금 한 설명에 짧게 반응한 뒤 **질문**을 던진다 —
-    사전 생성이라 이력이 없으므로 직전 설명을 지시문으로 준다."""
-    from stage.prompts import build_bridge_prompt
-    out = build_bridge_prompt("그럼 어떻게 찾아낸 거예요?", "전파는 원래 있던 거예요.")
-    assert "그럼 어떻게 찾아낸 거예요?" in out
-    assert "전파는 원래 있던 거예요." in out
-
-
-def test_다리_대사_프롬프트는_질문으로_끝내고_답을_말하지_말라고_한다():
-    from stage.prompts import build_bridge_prompt
-    out = build_bridge_prompt("왜요?", "앞 설명.")
-    assert "질문으로 끝" in out
-    assert "답" in out and "말하지 않는다" in out
-
-
-def test_다리_대사_톤_예시에_되묻기가_없다():
-    """"~라면서요?" 는 사회자가 사실을 되묻고 도슨트가 확인만 하게 만든다 —
-    02-history 파일럿에서 실제로 그렇게 됐다(docs/lessons.md)."""
-    from stage.prompts import _BRIDGE_TONE_EXAMPLES
-    for e in _BRIDGE_TONE_EXAMPLES:
-        assert "면서요" not in e and "다죠" not in e, e
-        assert e.rstrip().endswith("?"), e
+# ~~다리 대사 프롬프트 테스트 3종~~ — 고정 대본 전환으로 `build_bridge_prompt` 가
+# 사라지면서 함께 지웠다. 사회자의 턴 질문은 이제 큐시트의 `Turn.ask` 이고, 그것이
+# 질문 꼴인지는 데이터 테스트가 본다
+# (`tests/test_stage_cues.py::test_데이터_큐시트의_질문은_물음표로_끝난다`).
 
 
 def test_모든_역할과_수준의_프롬프트가_기관_정식_명칭을_지시한다():

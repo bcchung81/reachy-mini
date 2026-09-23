@@ -11,27 +11,22 @@ import threading
 import time
 from typing import Callable, NamedTuple
 
+# ~~`ADVANCE_HINT`·`invites_question`·`mentions_advance`~~ 는 생성된 받아치기에
+# 관람객 창구 안내를 덧붙이던 `_ensure_visitor_cue` 가 쓰던 것이다. 받아치기가
+# 큐시트 원문이 되면서 감독은 더 이상 보정하지 않는다 — 대신 **저작 단계**의
+# 데이터 테스트가 모든 `mc_after` 에 질문 권유와 '다음' 안내를 강제한다
+# (`tests/test_stage_cues.py::test_모든_큐에_받아치기가_있고_다음을_안내한다`).
+# 그래서 셋은 `stage/cues.py` 에 그대로 남아 있고 여기서만 안 쓴다.
 from stage.cues import (
-    ADVANCE_HINT,
     QA_ACK_LINES,
     QUESTION_PROMPTS,
     Cue,
     CueSheet,
     Point,
-    invites_question,
     is_advance,
-    mentions_advance,
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
-from stage.mc_cache import cache_key
 from stage.protocol import ROLES
-# 분량 상한은 **생성기에도** 걸려 있다(`stage/__main__.py::build_generate` 가
-# 수준의 `max_sentences`/`max_chars` 로). 포인트 라운드 답은 그 상한보다 훨씬
-# 짧아야 하는데 생성기는 큐 단위 상한밖에 모르므로(시스템 프롬프트가 수준의
-# 목표 분량을 박아 준다) 여기서 한 번 더 건다 — 같은 순수 함수를 쓴다.
-# `stage/speech_text.py` 는 `re` 말고 아무것도 임포트하지 않아 순환이 없다.
-from stage.speech_text import cap_length
-
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
 # 타임아웃은 **일찍 터지면 안 되므로** 가장 느린 쪽보다 더 보수적으로 잡는다.
@@ -113,40 +108,29 @@ QA_FALLBACK = "죄송합니다, 지금은 답을 찾지 못했습니다. 다음�
 # 40은 이제 "사회자 몫" 과 "배선이 안 닿았을 때의 안전한 기본값" 둘 다다.
 MIN_CHARS = 40
 
-# 포인트 분량 상한이 **배선되기 전**의 값(`Director._point_budget` 의 폴백).
-# "사실상 무제한" 이라 `cap_length` 가 아무것도 안 자르고 프롬프트에도 분량
-# 지시가 안 붙는다 — 포인트를 쓰지 않는 기존 호출부·테스트를 그대로 둔다.
-# 0 이나 None 이 아니라 큰 수인 이유: `_point_budget` 의 반환 타입을 하나로
-# 두면 두 호출부가 "없으면" 분기를 각자 만들지 않아도 된다.
-POINT_NO_LIMIT = 10**9
-
-# 턴 답의 **형식** 지시(`Director._point_brief`). 설명 원문만 주면 모델은 직전
-# 사회자 질문을 "네, 맞아요" 로 받고 원문을 되읽는다 — 사회자가 묻고 도슨트가
-# 설명하는 대화가 아니라 확인하는 대화가 된다(02-history 파일럿, docs/lessons.md).
-_POINT_ANSWER_RULE = (
-    "위는 네가 할 설명의 내용이다. 그대로 읽지 말고 네 말로 바꿔 말한다. "
-    "사회자의 질문에 먼저 답하고, 이어서 이유나 과정, 예를 들어 풀어서 설명한다. "
-    "'네'나 '맞아요'로 시작하는 확인형으로 답하지 않는다."
-)
-
+# ~~포인트 답 분량 상한(`POINT_NO_LIMIT`)과 답변 형식 지시(`_POINT_ANSWER_RULE`)~~
+# — 2026-09-23 고정 대본 전환으로 없앴다. 해설을 생성하지 않으니 자를 것도,
+# "이렇게 답하라" 고 지시할 것도 없다. 분량은 저작 단계의 데이터 테스트가 본다
+# (`tests/test_stage_cues.py`). 같은 이유로 여는 대사 사전 생성 캐시
+# (`stage/mc_cache.py`·`scripts/pregen_mc_lines.py`)도 함께 지웠다.
+#
 # 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
 # `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
 # 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
 SPEAKER_LABEL = {"mc": "사회자", "docent": "도슨트"}
 
-# 폴백이 **무엇인지** 로그에 적는 이름. 사다리 2단(예비)과 3단(큐시트)이 같은
-# 문구로 찍히면 `./reachy.sh logs` 로 "예비가 산 섹션" 과 "예비까지 죽은 섹션" 을
-# 못 가른다 — 둘은 전혀 다른 문제다(앞은 LLM 이 한 번 늦은 것, 뒤는 사회자 쪽
-# 생성이 통째로 안 도는 것).
-FB_BRIEF = "도슨트 지시문"
+# 폴백이 **무엇인지** 로그에 적는 이름. ~~사다리 2단(예비)과 3단(큐시트),
+# 도슨트 지시문 폴백(`FB_BRIEF`)~~ 은 2026-09-23 고정 대본 전환으로 사라졌다 —
+# 해설이 생성물이 아니게 되면서 폴백을 탈 자리 자체가 없어졌다. 이름을 남겨 두는
+# 이유는 그대로다: `./reachy.sh logs` 에서 "무엇으로 물러났는가" 가 한 낱말로
+# 보여야 원인을 좁힌다.
 FB_QA = "질문 응답 사과문"
-FB_SPARE = "예비 받아치기"
-FB_SHEET = "큐시트 받아치기"
 
-# 폴백인데도 **진짜 생성 결과**인 것. 예비만 그렇다 — 큐시트 원문·지시문·사과문은
-# 사람이 쓴 문장이라 길이를 재지 않지만(MIN_CHARS 경고가 헛돈다) 예비는 LLM 이
-# 낸 대사라 짧으면 짧다고 말해야 한다.
-_GENERATED_FALLBACKS = frozenset({FB_SPARE})
+# 폴백인데도 **진짜 생성 결과**인 것. ~~예비 받아치기~~ 가 유일했는데 고정 대본
+# 전환으로 사라졌다 — 지금 남은 폴백은 전부 사람이 쓴 문장이라(사과문) 길이를
+# 재지 않는다. 빈 집합이라도 남겨 두는 이유: `_warn_if_short` 의 분기가 "생성물인
+# 폴백" 이라는 개념을 계속 알고 있어야, 다음에 생성 폴백이 생길 때 그 자리가 보인다.
+_GENERATED_FALLBACKS: frozenset[str] = frozenset()
 
 # 운영 모드(설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2).
 # **순서가 곧 페이지 버튼 순서다**(`mode_names` → 대시보드 hello `modes`). 처음 값은
@@ -177,26 +161,9 @@ class _Pending(NamedTuple):
     label: str           # 경고에 찍을 이름
     # 있으면 `_warn_if_short` 가 `role` 별 기본 하한
     # (`self._docent_min_chars`/`MIN_CHARS`) 대신 이 값으로 짧음을 잰다.
-    # 포인트 라운드(해설을 여러 짧은 교환으로 쪼갠 것)가 의도적으로 짧게
-    # 답해도 매번 "너무 짧다" 오탐이 나지 않게 하려는 자리다. NamedTuple의
-    # 마지막 필드라 기본값을 둘 수 있다 — 기존 6개 위치 인자 호출부는
-    # 그대로 두고 None 이 채워진다.
+    # 지금은 쓰는 곳이 없지만(해설이 고정 대본이 되면서 짧은 답을 기다릴 일이
+    # 없어졌다) 관람객 질문 답에 수준별 하한을 따로 걸 자리로 남겨 둔다.
     min_chars: int | None = None
-    # 있으면 `on_speaking_ended` 의 공용 꼬리가 **내보내기 직전에** 이 분량으로
-    # 한 번 더 자른다(`cap_length`). 포인트 라운드 전용이다.
-    #
-    # **왜 생성기의 상한으로는 안 되는가.** `stage/__main__.py::build_generate`
-    # 의 상한은 **큐 단위**다(수준의 `max_sentences`/`max_chars`). 포인트 답은
-    # 그 분량을 N등분한 것이라야 하는데, 시스템 프롬프트도 상한도 큐 단위 목표를
-    # 박아 주므로 그대로 두면 3포인트 큐가 기존 한 라운드의 3배로 길어진다 —
-    # 이 기능이 만들려던 것(짧은 왕복)의 정반대다. 게다가 **조용하다**: 생성기의
-    # 상한은 큐 단위 값에 걸리므로 경고 한 줄 안 나온다(Task 5 리뷰 Critical).
-    # 프롬프트의 분량 지시만으로는 안 지켜진다는 것이 이 저장소의 실측이다
-    # (`stage/speech_text.py::cap_length` 주석) — 지시도 하고, 자르기도 한다.
-    #
-    # None 이면 자르지 않는다 — 포인트가 아닌 기존 `_Pending` 은 전부 그대로다.
-    max_sentences: int | None = None
-    max_chars: int | None = None
 
 
 class UnitMismatch(RuntimeError):
@@ -212,14 +179,10 @@ class Director:
         now: Callable[[], float] = time.monotonic,
         expect_units: dict[str, str] | None = None,
         warn: Callable[[str], None] = print,
-        mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
         docent_min_chars: int = MIN_CHARS,
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
-        level_point_min_chars: dict[str, int] | None = None,
-        level_point_max: dict[str, tuple[int, int]] | None = None,
-        level_point_min_sentences: dict[str, int] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -227,13 +190,10 @@ class Director:
         self._now = now
         self._expect_units = expect_units or {}
         self._warn = warn
-        # 여는 대사 사전 생성 캐시(`scripts/pregen_mc_lines.py` 가 채운다)와
-        # 그것을 찾을 수준. 둘 다 `stage/__main__.py::main()` 에서 한 번만
-        # 읽어 `StageServer` → `Director` 로 흘러온다 — 여기서 기본값(빈
-        # dict·"일반")으로 두는 것은 오직 테스트 편의를 위해서다. 실기
-        # 기동에서 이 값이 안 흘러오면(배선을 빠뜨리면) 캐시는 늘 비고
-        # 수준은 늘 "일반" 으로 굳어 이 태스크 전체가 무효가 된다.
-        self._mc_lines = mc_lines or {}
+        # 관람객 수준. `stage/__main__.py::main()` 에서 `StageServer` → `Director`
+        # 로 흘러온다 — 기본값("일반")은 오직 테스트 편의를 위해서다. 실기 기동에서
+        # 이 값이 안 흘러오면(배선을 빠뜨리면) 수준이 늘 "일반" 으로 굳는다.
+        # ~~여는 대사 사전 생성 캐시(`mc_lines`)~~ 는 고정 대본 전환으로 없앴다.
         self._level_name = level_name
         # 도슨트 발화의 분량 하한(`level.min_chars`). **수준 프로필 전체(`Level`)
         # 를 받지 않는 이유**: 이 생성자가 테스트 수십 곳에 퍼져 있어 객체로
@@ -278,14 +238,10 @@ class Director:
         self._on_level_change = on_level_change or (lambda name: None)
         self._level_pending: str | None = None
 
-        # 포인트 라운드 도슨트 답의 분량(하한·상한) — `_level_min_chars`와 같은 결
-        # (Level 객체 전체가 아니라 쓰는 수만 받는다). 없으면 빈 dict — 포인트가
-        # 없는 큐만 쓰는 감독(대부분의 기존 테스트)은 이 값을 아예 안 본다.
-        self._level_point_min_chars = dict(level_point_min_chars or {})
-        self._level_point_max = dict(level_point_max or {})
-        # 턴 답의 문장 **하한**. 상한만 주면("N문장 이내로 짧게") 모델은 1문장으로
-        # 답해 설명이 들어갈 자리가 없다 — 사회자 질문을 확인만 하는 답이 된다.
-        self._level_point_min_sentences = dict(level_point_min_sentences or {})
+        # ~~포인트 답 분량 배선 3종(`level_point_min_chars`·`level_point_max`·
+        # `level_point_min_sentences`)~~ — 고정 대본 전환으로 없앴다. 턴 설명을
+        # 생성하지 않으니 런타임에 잴 것도 자를 것도 없다. 분량은 저작할 때
+        # 데이터 테스트가 본다(`tests/test_stage_cues.py` 의 분량 검사).
         self._points: list[Point] = []
         self._point_i: int = 0
 
@@ -629,79 +585,42 @@ class Director:
             # 끝난 뒤에도 다시 도슨트 몫을 트리거해 자기 대사를 무한 반복하는
             # 버그가 났었다.
             cue = self._sheet.current()
-            # 도슨트 해설을 내보낼 때 **실제 반응**(받아치기) 생성을 띄울 큐.
-            # 해설 갈래에서만 세운다 — `:qa`(질문 응답) 뒤에는 받아치지 않으므로
-            # 그 자리에서 생성을 띄우면 아무도 안 읽는 LLM 호출만 남는다.
-            after_of: Cue | None = None
-            if cue_id == cue.id and not self._points:
-                # 수준별 브리프를 쓴다(계획 보완 Step 5b) — 옛 `cue.docent_brief`
-                # 를 그대로 두면 여기 폴백만 수준을 안 따라, 사전 생성이 늦어
-                # 유예시간을 넘길 때마다 초등이든 전문가든 같은 문장이 나간다.
-                pending = _Pending(
-                    "docent", "docent", f"{cue.id}:docent",
-                    cue.brief_for(self._level_name)[1], FB_BRIEF, cue.id,
-                )
-                if cue.mc_after:
-                    after_of = cue
-            elif cue_id == cue.id and self._points:
-                # 오프닝이 끝났다 — point0 답(이미 `_begin_cue` 가 스폰해 둔 슬롯)을
-                # 기다린다. `_begin_cue` 가 `_point_i` 를 0 으로 세워 뒀으므로
-                # 아래 다리 대사 갈래와 **같은 몸**을 쓴다.
-                pending, after_of = self._pending_for_point(cue)
+            if cue_id == cue.id and self._points:
+                # **오프닝이 끝났다 — 0턴 설명을 그대로 말한다.**
+                # 기다릴 것이 없다(생성하지 않는다). 해설은 검수한 고정 대본이고,
+                # 공연마다 다시 쓰면 조사 파일로 검증한 사실이 매번 새로 쓰인다
+                # (docs/lessons.md 「정해진 해설을 공연 때마다 생성하면…」).
+                #
+                # `self._points` 를 여기서 **같이 본다**: 대본 없는 큐는 `_begin_cue`
+                # 가 이미 경고하고 넘어가기로 했는데, 여기서 `self._points[0]` 을
+                # 잡으면 IndexError 가 발화 종료 보고를 타고 올라가 시연이 그 자리에서
+                # 선다. 조건을 떨어뜨리면 아래 받아치기/관람객 차례 갈래가 받는다.
+                self._say_answer(cue, 0, cmds)
+                return
             elif (
                 cue_id.startswith(f"{cue.id}:pt")
                 and cue_id.endswith(":docent")
                 and cue_id != f"{cue.id}:docent"
             ):
-                # **포인트 i(마지막 아님)의 도슨트 답이 끝났다 — 다음 포인트로.**
-                # 사회자가 짧은 다리 대사로 넘기고, 그 대사가 재생되는 동안
-                # 다음 포인트 답을 만든다(여는 대사가 첫 답의 시간을 사는 것과
-                # 같은 구조). 여기서는 기다릴 것이 없으므로 락을 놓지 않고
-                # 곧바로 내보낸다.
-                i = self._point_i
-                next_i = i + 1
+                # **턴 i(마지막 아님)의 도슨트 설명이 끝났다 — 다음 질문으로.**
+                # 사회자가 대본의 질문을 그대로 묻는다. 시선은 상대(도슨트)다 —
+                # 묻는 사람은 상대를 본다.
+                next_i = self._point_i + 1
                 next_point = self._points[next_i]
-                bridge_key = cache_key(cue.id, self._level_name, next_point.ask)
-                bridge_text = self._mc_lines.get(bridge_key, "")
-                if not bridge_text:
-                    # 여는 대사 캐시와 같은 규칙 — 조용히 물러나지 않는다.
-                    # 키를 찍어 둬야 "사전 생성을 안 돌렸다" 와 "질문 문구를
-                    # 고쳐 해시가 바뀌었다" 를 로그에서 가를 수 있다.
-                    #
-                    # 폴백은 **사람이 쓴 질문**이다. 예전에는 포인트(사실 문장)를
-                    # 읽어 사회자가 도슨트의 답을 먼저 말해 버렸고, 도슨트에게는
-                    # 확인할 것만 남았다(docs/lessons.md).
-                    self._warn(
-                        f"[{cue.id}:pt{next_i}] 다리 대사 캐시가 없다"
-                        f"({self._level_name}, key={bridge_key!r}) — 질문 원문으로 잇는다"
-                    )
-                    bridge_text = next_point.ask
                 self._point_i = next_i
-                # 이력에 **먼저** 넣고 생성을 띄운다 — 생성 스레드는
-                # `list(self.history)` 를 찍어가므로 순서가 바뀌면 도슨트가
-                # 방금 넘겨받은 말을 못 본 채 다음 답을 만든다(`_begin_cue`
-                # 의 `_remember` → `_spawn_generate` 순서와 같은 이유).
-                self._remember(f"사회자: {bridge_text}")
-                next_label = self._point_label(cue, next_i)
-                # 지시문에는 형식·금지·분량 지시가 붙고 **폴백에는 안 붙는다**
-                # (`_point_brief`) — 생성이 실패하면 설명 원문만 읽어야 한다.
-                self._spawn_generate(
-                    "docent", "docent", self._point_brief(cue, next_point),
-                    next_point.answer, next_label,
-                )
+                self._remember(f"사회자: {next_point.ask}")
                 self._emit(
                     cmds
                     + self._machine.speak(
-                        self._who("mc"), f"{cue.id}:pt{next_i}", bridge_text, gaze="audience",
+                        self._who("mc"), f"{cue.id}:pt{next_i}", next_point.ask,
+                        gaze="partner", emotion=next_point.ask_emotion,
                     )
                 )
                 return
             elif cue_id.startswith(f"{cue.id}:pt") and not cue_id.endswith(":docent"):
-                # 사회자의 다리 대사(포인트 i, i>=1)가 끝났다 — 위 갈래가 이미
-                # 띄워 둔 포인트 i 도슨트 답을 기다린다. 이 갈래는 `return`
-                # 하지 않는다: 아래 공용 대기·세대 검사 구간으로 떨어져야
-                # 한다(해설 갈래와 같은 길).
-                pending, after_of = self._pending_for_point(cue)
+                # 사회자의 질문(턴 i, i>=1)이 끝났다 — 그 턴의 설명을 말한다.
+                self._say_answer(cue, self._point_i, cmds)
+                return
             elif cue_id == f"{cue.id}:ack":
                 # 확인 멘트가 끝났다 — 그동안 만든 답을 도슨트가 말한다.
                 # 그 답이 끝나면 아래 `:qa` 갈래가 사회자에게 한 번 더 묻게 한다.
@@ -735,27 +654,23 @@ class Director:
                     )
                 )
                 return
-            elif cue_id == f"{cue.id}:docent" and cue.mc_after:
-                # **받아치기.** 도슨트 뒤 사회자가 짧게 받고 관람객 창구를 말로
-                # 연다 — 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2, 설계
-                # §4.1 의 "DOCENT_SPEAKING → MC_SPEAKING(받아치기)"). coalesce 가
-                # 방금 열린 마이크를 도로 닫는다(사회자→도슨트 전환과 같은 모양).
-                #
-                # 이 갈래도 **해설과 같은 길**(락을 놓고 기다렸다가 다시 본다)을
-                # 탄다. 고정 대사를 그 자리에서 읽던 예전과 달리, 도슨트가 실제로
-                # 한 말을 보고 만든 반응을 기다려야 하기 때문이다.
-                #
-                # 폴백 사다리는 셋이다: 실제 → 예비 → 큐시트. 예비(`after_spare`)는
-                # 도슨트 대사를 보낼 때 실제와 나란히 띄웠으므로, 도슨트가 말한
-                # 7~8초 동안 둘 다 돌았다 — 준비된 것만 가져온다(`_slot_text` 는
-                # 기다리지 않는다). 없으면 큐시트 원문이다.
-                spare = self._slot_text("after_spare")
-                pending = _Pending(
-                    "after", "mc", f"{cue.id}:after",
-                    spare or cue.mc_after,
-                    FB_SPARE if spare else FB_SHEET,
-                    f"{cue.id}:after",
+            elif cue_id in (f"{cue.id}:docent", cue.id) and cue.mc_after:
+                # **받아치기 — 큐시트 원문 그대로.** 도슨트 뒤 사회자가 짧게 받고
+                # 관람객 창구를 말로 연다(리뷰 B2: 마이크가 열려도 관람객은 모른다).
+                # 데이터 테스트가 모든 `mc_after` 에 질문 권유와 '다음' 안내가 있음을
+                # 이미 강제하므로(`test_모든_큐에_받아치기가_있고_다음을_안내한다`)
+                # 생성물 보정(`_ensure_visitor_cue`)이 필요 없다.
+                # `cue.id` 도 여기서 받는다 — 위 오프닝 갈래가 대본 없는 큐를
+                # 떨어뜨리기 때문이다(해설을 건너뛰고 바로 받아치기로 온다).
+                self._remember(f"사회자: {cue.mc_after}")
+                self._emit(
+                    cmds
+                    + self._machine.speak(
+                        self._who("mc"), f"{cue.id}:after", cue.mc_after,
+                        gaze="audience", emotion=cue.mc_after_emotion,
+                    )
                 )
+                return
             else:
                 # 기다릴 것이 없는 갈래는 여기서 끝난다 — 락을 놓지 않는다.
                 # **여기가 관람객 차례다**(받아치기·다시 묻기가 끝났거나 받아치기
@@ -771,10 +686,6 @@ class Director:
             # 기다린 뒤 아래 검사에서 물러난다. 겹쳐 잡는 순서는 언제나
             # `self._lock` → `_gen_lock` 이다.
             ready, token = self._snapshot_slot(pending.slot)
-            # 마지막 큐인지도 **여기서** 찍는다 — 아래 관람객 창구 안내가 '다음'
-            # 을 붙일지 정할 때 쓴다. 대기 중에 커서가 움직일 수 있으므로 판단
-            # 근거는 이 순간의 것이어야 한다.
-            is_last = self._sheet.done
             # **여기서는 아무것도 내보내지 않는다.** `cmds` 의 마이크 열기 지시는
             # 2구간에서 도슨트의 닫기와 한 번에 나가 coalesce 가 덮는다 — 그래야
             # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
@@ -806,36 +717,7 @@ class Director:
                     f"[{pending.label}] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다"
                 )
                 return
-            if pending.slot == "after" and text != cue.mc_after:
-                # 큐시트 원문으로 물러난 경우는 건드리지 않는다 — 그것은 데이터
-                # 테스트가 이미 안내를 못박은 **안전한** 문장이고(마지막 큐의
-                # 마무리 인사처럼 일부러 '다음' 을 뺀 것도 있다), 거기에 또 붙이면
-                # 사람이 다듬어 둔 대사를 감독이 망친다. 예비를 읽은 경우는
-                # **생성물이라** 검사를 받는다 — 예비도 LLM 출력이다.
-                text = self._ensure_visitor_cue(text, pending.label, is_last)
-            if pending.max_chars is not None and text != pending.fallback:
-                # **포인트 답의 분량 상한.** 생성기의 상한은 큐 단위라(수준의
-                # `max_chars`) 포인트 답에는 몇 배로 느슨하다 — 여기서 안 자르면
-                # N포인트 큐가 기존 한 라운드의 N배로 길어진다(리뷰 Critical).
-                # `_ensure_visitor_cue` **뒤**다: 그것이 문장을 덧붙일 수 있으므로
-                # 마지막에 재야 실제로 나가는 길이를 잰다. `_remember` **앞**이다:
-                # 이력·발화·받아치기 지시문이 모두 잘린 텍스트를 봐야 한다.
-                #
-                # 폴백(포인트 원문)은 건드리지 않는다 — 사람이 쓴 한 줄이고
-                # `load_cues` 가 이미 검증한다. `_ensure_visitor_cue` 가 큐시트
-                # 원문을 비켜 가는 것과 같은 이유다(바로 위 주석).
-                text, capped = cap_length(text, pending.max_sentences, pending.max_chars)
-                if capped:
-                    # **조용히 자르지 않는다.** 매 포인트마다 이 줄이 찍히면
-                    # 포인트 문구가 너무 크거나 분량 지시가 안 먹는 것이다 —
-                    # 그 신호가 없으면 시연장에서 원인을 못 찾는다.
-                    self._warn(
-                        f"[{pending.label}] 포인트 답이 상한을 넘어 잘랐다"
-                        f"({pending.max_sentences}문장·{pending.max_chars}자 → {len(text)}자)"
-                    )
             self._remember(f"{SPEAKER_LABEL[pending.role]}: {text}")
-            if after_of is not None:
-                self._spawn_after(after_of, text)
             # 역할은 **여기서 다시 정한다.** 기다리는 사이에 상대가 끊겼으면 남은
             # 한 대가 읽어야 한다(설계 §7). 1구간의 판단을 들고 가면 이미 끊긴
             # 로봇에게 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고 버린다
@@ -847,50 +729,6 @@ class Director:
                     self._who(pending.role), pending.cue_id, text, gaze="audience"
                 )
             )
-
-    def _spawn_after(self, cue: Cue, docent_text: str) -> None:
-        """받아치기 두 벌을 **여기서 나란히** 띄운다 — 도슨트 대사를 보내는 순간에.
-
-        **왜 섹션 시작(`_begin_cue`)이 아닌가.** `stage/__main__.py::build_generate`
-        는 LLM 호출 **전체를 락 하나로 직렬화**한다(역할별 클라이언트를 둬도 락은
-        하나다 — 두 화자가 하나의 이력을 보는 파이프라인이라 그렇다). 그래서
-        `_begin_cue` 에서 도슨트 해설과 예비를 연달아 띄우면 둘이 같은 락을
-        노리는데, 파이썬 `Lock` 은 FIFO 가 아니라 **예비가 먼저 잡으면 도슨트
-        해설 생성이 사회자 대사 한 벌만큼 통째로 밀린다.** 도슨트의 예산은 여는
-        대사 재생 + `GENERATE_GRACE_S` 8초뿐이고, 넘기면 폴백이 `docent_brief`
-        라 **도슨트가 지시문을 소리 내어 읽는다** — 이 작업이 숨기려던 지연을
-        이 작업이 임계경로에 새로 만드는 꼴이었다(리뷰 Important 1).
-        여기서는 도슨트 해설 생성이 이미 끝나 있으므로 임계경로와 다투지 않고,
-        도슨트가 말하는 7~8초가 두 생성의 시간을 산다.
-
-        **예비를 먼저 띄운다.** 프롬프트가 짧아(지시문 vs 도슨트 발언 전문) 더
-        빨리 끝나므로, 실제가 늦거나 터졌을 때 여유분으로 준비돼 있을 확률이 는다.
-
-        호출부가 `_remember` **뒤에** 부른다 — 생성 스레드는 `list(self.history)`
-        를 찍어가므로, 먼저 띄우면 사회자가 방금 나간 해설을 못 본 채 반응을 만든다.
-        """
-        _, docent_brief = cue.brief_for(self._level_name)
-        # 받아치기 **예비** — 도슨트 지시문만 보고 만든다. 실제가 늦거나 터질 때의
-        # 여유분이다(폴백 사다리 2단).
-        #
-        # slot="after_spare" / role="mc" — **다른 축이다.** 슬롯은 "어느 자리의
-        # 생성인가", role 은 "어느 페르소나로 말할 것인가" 다. role 이 "mc" 라서
-        # `stage/prompts.py` 가 사회자 분량(1~3문장·40~120자, 수준과 무관하게
-        # 고정)을 준다 — 받아치기가 저절로 짧게 나오는 것이 그 덕이다.
-        self._spawn_generate(
-            "after_spare", "mc",
-            f"도슨트가 이런 해설을 할 것이다: {docent_brief}. "
-            "짧게 받고 관람객에게 질문을 권한다.",
-            cue.mc_after, f"{cue.id}:after-예비",
-        )
-        # 받아치기 **실제** — 도슨트가 방금 한 말을 보고 만든다. 이게 제시간에
-        # 오면 이것을 쓴다(사다리 1단).
-        self._spawn_generate(
-            "after", "mc",
-            f"도슨트가 방금 이렇게 말했다: {docent_text}. "
-            "짧게 받고 관람객에게 질문을 권한다.",
-            cue.mc_after, f"{cue.id}:after",
-        )
 
     def on_error(self, role: str, where: str, detail: str) -> None:
         with self._lock:
@@ -1284,6 +1122,24 @@ class Director:
         self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
+    def _say_answer(self, cue: Cue, i: int, cmds: list) -> None:
+        """턴 i 의 도슨트 설명을 **그대로** 말한다. `self._lock` 을 쥔 채 부른다.
+
+        생성하지 않으므로 기다릴 것도, 세대를 검사할 것도 없다 — 락을 놓지 않는다.
+        마지막 턴의 라벨은 종단(`{cue.id}:docent`)이라 받아치기 갈래가 그대로 받는다
+        (`_point_label`).
+        """
+        point = self._points[i]
+        self._point_i = i
+        self._remember(f"도슨트: {point.answer}")
+        self._emit(
+            cmds
+            + self._machine.speak(
+                self._who("docent"), self._point_label(cue, i), point.answer,
+                gaze="audience", emotion=point.answer_emotion,
+            )
+        )
+
     def _point_label(self, cue: Cue, i: int) -> str:
         """포인트 i 도슨트 답의 발화 id. **마지막 포인트는 항상 종단 라벨**
         (`f"{cue.id}:docent"`)을 써서 기존 받아치기 분기가 그대로 받게 한다.
@@ -1298,84 +1154,6 @@ class Director:
         if i == len(self._points) - 1:
             return f"{cue.id}:docent"
         return f"{cue.id}:pt{i}:docent"
-
-    def _point_budget(self) -> tuple[int, int, int]:
-        """(min_chars, max_sentences, max_chars) — 지금 수준의 포인트 분량.
-        배선이 안 됐으면(빈 dict) 도슨트 전체 하한/상한으로 물러난다 — 안전한 기본값.
-
-        **`[...]` 로 직접 찾지 않는다.** `_level_point_min_chars`/`_level_point_max`
-        는 `_level_min_chars` 와 달리 생성자에서 수준 목록과 대조하지 않는 맨
-        dict 다 — 비어 있거나(대부분의 기존 테스트) 한 수준이 빠져 있으면
-        KeyError 가 나고, 그것은 시연 중 섹션 한가운데서 터진다.
-        """
-        min_chars = self._level_point_min_chars.get(self._level_name, self._docent_min_chars)
-        max_sentences, max_chars = self._level_point_max.get(
-            self._level_name, (POINT_NO_LIMIT, POINT_NO_LIMIT)
-        )
-        return min_chars, max_sentences, max_chars
-
-    def _point_brief(self, cue: Cue, point: Point) -> str:
-        """턴 답 생성 지시문 — 설명 뒤에 **답변 형식·금지 규칙·분량**을 붙인다.
-
-        형식 지시가 없으면 모델은 직전 사회자 질문을 "네, 맞아요" 로 확인만 한다.
-        금지 규칙(`guard`)이 없으면 옛 수준 브리프에 있던 "'캐나다'라고 하지
-        않는다" 같은 줄이 생성에서 통째로 빠진다 — 둘 다 포인트 첫 판에서 실제로
-        났다(docs/lessons.md).
-
-        분량: 생성기의 시스템 프롬프트는 큐 단위 목표 분량(수준의 `min~max`)을
-        박아 주므로, 턴 하나에 그것을 그대로 쓰면 N턴 큐가 N배로 길어진다.
-        모델에게 먼저 말해 두는 쪽이 `cap_length` 로 뒤에서 자르는 것보다 낫다 —
-        자르면 마지막 문장이 통째로 날아가 논지가 끊긴다. 그래도 지시만으로는
-        안 지켜지므로(`stage/speech_text.py::cap_length` 의 실측) 뒤에서 한 번
-        더 자른다. 둘은 **같은 수**를 써야 한다 — 따로 적으면 썩는다. 하한이
-        배선돼 있으면 "N~M문장" 으로 준다 — 상한만 주면 1문장 답이 나온다.
-
-        **폴백에는 붙이지 않는다.** 생성이 실패했을 때 읽는 것은 설명 원문이고,
-        거기 이 지시가 섞이면 도슨트가 "'캐나다'라고 하지 않는다" 를 소리 내어
-        읽는다(지시문을 낭독하는 사고는 이 저장소에 이미 있었다).
-
-        분량 배선 전(`POINT_NO_LIMIT`)이면 분량만 안 붙인다 — "10억 자 이내로
-        말한다" 는 모델에게 잡음일 뿐이다.
-        """
-        parts = [point.answer, _POINT_ANSWER_RULE]
-        guard = cue.guard_for(self._level_name)
-        if guard:
-            parts.append(guard)
-        _, max_sentences, max_chars = self._point_budget()
-        if max_chars < POINT_NO_LIMIT:
-            min_sentences = self._level_point_min_sentences.get(self._level_name)
-            if min_sentences:
-                parts.append(f"{min_sentences}~{max_sentences}문장, {max_chars}자 이내로 말한다.")
-            else:
-                parts.append(f"{max_sentences}문장 이내, {max_chars}자 이내로 짧게 답한다.")
-        return "\n\n".join(parts)
-
-    def _pending_for_point(self, cue: Cue) -> tuple["_Pending", Cue | None]:
-        """지금 포인트(`self._point_i`)의 도슨트 답을 기다릴 `_Pending` 과
-        받아치기를 띄울 큐(마지막 포인트면 `cue`, 아니면 None)를 준다.
-
-        **두 호출부가 이 한 몸을 쓴다** — 오프닝이 끝난 자리(포인트 0)와 사회자
-        다리 대사가 끝난 자리(포인트 i>=1). 둘은 `_point_i` 만 다른데 `_begin_cue`
-        가 그것을 0으로 세워 두므로 실은 **완전히 같다.** 따로 적어 두면
-        "마지막 포인트면 받아치기" 판정이 두 벌이 되고, 그것은 `_point_label`
-        docstring 이 경고하는 바로 그 모양이다(한쪽만 고쳐진다).
-
-        폴백은 **설명 원문**이다(형식·금지·분량 지시가 안 붙은 쪽 — `_point_brief` 참고).
-        """
-        i = self._point_i
-        point = self._points[i]
-        min_chars, max_sentences, max_chars = self._point_budget()
-        label = self._point_label(cue, i)
-        pending = _Pending(
-            "docent", "docent", label, point.answer, FB_BRIEF, label,
-            min_chars=min_chars,
-            max_sentences=max_sentences,
-            max_chars=max_chars,
-        )
-        # 마지막 포인트의 답이 곧 이 큐의 해설 끝이다 — 그 자리에서만 받아치기를
-        # 띄운다(기존 단일 라운드의 `if cue.mc_after: after_of = cue` 와 같은 뜻).
-        after_of = cue if (label == f"{cue.id}:docent" and cue.mc_after) else None
-        return pending, after_of
 
     def _begin_cue(self, cue: Cue) -> None:
         # **먼저 거절한다.** 발화 중이면 아래 `speak()` 가 TurnError 를 던지는데,
@@ -1401,30 +1179,11 @@ class Director:
         # (여는 대사 캐시 키·도슨트 사전 생성) 모두 이 한 쌍만 보면 된다.
         mc_brief, docent_brief = cue.brief_for(self._level_name)
 
-        # **여는 대사는 런타임에 만들지 않는다 — 사전 생성 캐시에서 읽는다.**
-        # `scripts/pregen_mc_lines.py` 가 시연 전에 19섹션 × 4수준을 만들어
-        # `data/mc_lines.yaml` 에 적어 두면, 사람이 그것을 읽고 고친 뒤에야
-        # 시연이 돈다 — 그게 이 캐시를 두는 진짜 이유다(지연 0 은 덤).
-        key = cache_key(cue.id, self._level_name, mc_brief)
-        mc_text = self._mc_lines.get(key, "")
-        if not mc_text:
-            # 조용히 물러나지 않는다 — 사전 생성을 빠뜨린 채 시연이 돌면
-            # 애드리브가 통째로 없는데 아무도 모른다.
-            #
-            # **원인을 가릴 수 있게 적는다.** "사전 생성을 아예 안 돌렸다"
-            # 와 "브리프를 고쳐 해시가 바뀌었다"(= 해시를 키에 넣은 바로 그
-            # 목적)는 서로 다른 문제인데 문구가 같으면 구분이 안 된다. `key`
-            # 를 그대로 찍어 두면 `data/mc_lines.yaml` 을 그 문자열로 grep
-            # 해서 "정말 없는지"(사전 생성을 안 돌림) "다른 해시로 있는지"
-            # (브리프가 바뀜)를 즉시 가를 수 있다. 캐시 항목 수도 같이
-            # 찍는다 — 0개면 캐시 자체를 안 읽어 온 배선 문제([Task 6 리뷰]
-            # (A))일 수도 있다는 신호가 된다.
-            self._warn(
-                f"[{cue.id}] 여는 대사 캐시가 없다({self._level_name}, key={key!r}, "
-                f"로드된 캐시 {len(self._mc_lines)}개) — 큐시트 원문을 읽는다. "
-                "scripts/pregen_mc_lines.py 를 다시 돌린다"
-            )
-            mc_text = cue.mc
+        # **여는 대사는 큐시트 원문이다.** ~~사전 생성 캐시(`data/mc_lines.yaml`)에서
+        # 읽는다~~ — 2026-09-23부터 해설 전체가 검수한 고정 대본이라 캐시가 할 일이
+        # 없어졌다(캐시·사전 생성 스크립트는 함께 지웠다). 사람이 시연 전에 읽어 볼 수
+        # 있다는 캐시의 존재 이유는 이제 큐시트 자체가 갖는다.
+        mc_text = cue.mc
 
         # **사회자 대사도 이력에 넣는다 — 생성 스레드를 띄우기 전에.**
         # 설계 §5.2 는 이력이 하나이고 `사회자:`/`도슨트:`/`관람객:` 접두로
@@ -1446,42 +1205,34 @@ class Director:
         # N회로 쪼개는 것이 포인트 라운드다(설계 §2). 여기서 N개를 한꺼번에
         # 띄우면 `stage/__main__.py::build_generate` 의 LLM 락을 두세 벌이
         # 동시에 노려, 정작 임계경로(지금 나갈 첫 답)가 뒤로 밀린다
-        # (`_spawn_after` 주석과 같은 이유). 두 번째 포인트부터는 앞 포인트의
-        # 답이 끝나는 자리(`on_speaking_ended` 의 포인트 갈래)에서 띄운다 —
-        # 사회자의 다리 대사가 그 시간을 산다.
-        points = cue.points_for(self._level_name)
-        self._points = points
+        # 이 큐의 턴 대본을 수준에 맞춰 한 번 고른다. 여기서 생성하는 것은 없다 —
+        # 오프닝이 끝나면 `on_speaking_ended` 가 0턴 설명을 그대로 말한다.
+        self._points = cue.points_for(self._level_name)
         self._point_i = 0
-        if points:
-            label0 = self._point_label(cue, 0)
-            # 지시문에는 형식·금지·분량 지시가 붙고 **폴백에는 안 붙는다**(`_point_brief`).
-            self._spawn_generate(
-                "docent", "docent", self._point_brief(cue, points[0]), points[0].answer, label0
-            )
-        else:
-            self._spawn_generate("docent", "docent", docent_brief, docent_brief, cue.id)
+        if not self._points:
+            # 대본 없는 큐는 오프닝만 말하고 관람객 차례로 간다. 조용히 넘어가면
+            # 저작을 빠뜨린 큐가 시연에서 해설 없이 지나가는데 아무도 모른다.
+            self._warn(f"[{cue.id}] 턴 대본이 없다({self._level_name}) — 해설 없이 넘어간다")
 
-        # **받아치기 슬롯 둘은 큐가 바뀔 때마다 반드시 갈아끼운다.**
+        # **생성 슬롯은 큐가 바뀔 때마다 반드시 갈아끼운다.**
         #
-        # 예전에는 이 메서드가 `"docent"` 슬롯만 건드렸다. 받아치기가 고정
-        # 대사이던 동안에는 그래도 됐지만 생성이 들어오면 얘기가 다르다 —
-        # 이전 큐의 세대가 그대로 남으면 `on_speaking_ended` 2구간의 세대
-        # 검사가 **큐 전환을 못 본다.** 그 검사는 "내가 기다리는 동안 이
-        # 슬롯이 갈렸는가" 로 다음 턴을 판정하는데, 큐 전환이 슬롯을 안
-        # 갈면 판정 근거 자체가 없다. 상태 검사(LISTENING 인가)로도 못
-        # 잡는다 — 다음 큐의 사회자 발화까지 끝나면 상태가 **다시
-        # LISTENING** 이라(`test_대기_중_다음_큐가_돌아…` 와 같은 틈) 이전
-        # 섹션 반응이 그대로 새 섹션에 얹힌다.
+        # 예전에는 `_spawn_generate`(해설 사전 생성)가 이 자리에서 세대를 올려
+        # 줬다. 고정 대본 전환으로 그 호출이 사라지면서, 세대를 올리는 주체가
+        # 통째로 없어졌다 — 그러면 이전 큐의 **관람객 질문 답** 생성이 늦게
+        # 끝났을 때 `on_speaking_ended` 2구간의 세대 검사가 **큐 전환을 못
+        # 본다.** 그 검사는 "내가 기다리는 동안 이 슬롯이 갈렸는가" 로 다음
+        # 턴을 판정하는데, 큐 전환이 슬롯을 안 갈면 판정 근거 자체가 없다.
+        # 상태 검사(LISTENING 인가)로도 못 잡는다 — 다음 큐의 해설까지 끝나면
+        # 상태가 **다시 LISTENING** 이라(`test_대기_중_다음_큐가_돌아…` 의 틈)
+        # 이전 섹션의 답이 그대로 새 섹션에 얹힌다.
         #
-        # 둘 다 **이전 큐의 도슨트 발화·지시문**을 보고 만든 것이라 새 큐에서는
-        # 언제나 남의 대사다. 여기서 새로 띄우지는 않는다 — 받아치기 생성은
-        # 임계경로(도슨트 해설)와 LLM 락을 다투면 안 되므로 도슨트 대사를 보낼
-        # 때 한꺼번에 띄운다(`_spawn_after` 주석).
-        self._invalidate_slot("after")
-        self._invalidate_slot("after_spare")
-
+        # ~~`_invalidate_slot`~~ 은 받아치기 슬롯과 함께 지웠다 — 끊을 슬롯이
+        # 하나뿐이라 `_bump_slot` 을 직접 부른다(세대를 올리고 대기자를 깨운다).
+        self._bump_slot("docent")
         self._emit(
-            self._machine.speak(self._who("mc"), cue.id, mc_text, gaze=cue.gaze)
+            self._machine.speak(
+                self._who("mc"), cue.id, mc_text, gaze=cue.gaze, emotion=cue.mc_emotion,
+            )
         )
 
     def _apply_pending_level(self, cue: Cue) -> None:
@@ -1556,9 +1307,9 @@ class Director:
     def _bump_slot(self, slot: str) -> int:
         """슬롯 한 칸의 세대를 올리고 내용을 비운다. 새 세대 번호를 준다.
 
-        `_spawn_generate`(새 생성을 띄운다)와 `_invalidate_slot`(그냥 끊는다)이
-        **같은 코드**를 쓰게 묶어 뒀다 — 둘이 갈라지면 한쪽만 `is_fallback` 을
-        내리거나 한쪽만 대기자를 깨우는 식으로 어긋난다.
+        `_spawn_generate`(새 생성을 띄운다)가 쓴다. ~~`_invalidate_slot`(그냥
+        끊는다)~~ 도 같은 코드를 쓰게 묶여 있었는데, 받아치기 생성이 사라지면서
+        끊을 슬롯도 없어져 함께 지웠다(고정 대본 전환).
         """
         with self._gen_lock:
             s = self._slots.setdefault(
@@ -1579,83 +1330,6 @@ class Director:
             s["ready"] = threading.Event()
             s["token"] += 1
             return s["token"]
-
-    def _invalidate_slot(self, slot: str) -> None:
-        """이 슬롯의 세대를 끊는다 — 진행 중인 생성 결과를 버리고 남은 텍스트도 지운다.
-
-        새 생성을 띄우지 않는 "갈아끼움" 이다. 큐가 바뀔 때 받아치기 슬롯에 쓴다
-        (`_begin_cue` 의 주석 참고). 슬롯이 아직 없으면 **빈 칸으로 만들어 둔다**
-        — 그래야 `_snapshot_slot` 이 KeyError 없이 돌고, "한 번도 안 띄운 슬롯"
-        과 "끊긴 슬롯" 이 같은 모양이 된다.
-        """
-        self._bump_slot(slot)
-
-    def _slot_text(self, slot: str) -> str:
-        """그 슬롯에 **이미 들어온 진짜 생성 결과**. 없으면 빈 문자열.
-
-        기다리지 않는다 — 이 값은 "지금 준비돼 있으면 쓴다" 는 여유분이다.
-        폴백으로 갈린 텍스트(`is_fallback`)는 주지 않는다: 그것은 생성 결과가
-        아니라 호출부가 이미 아는 큐시트 문장이라, 폴백의 폴백으로 넘기면 같은
-        값이 두 번 도는 셈이고 로그에는 "예비가 살아 있다" 는 착시만 남는다.
-
-        **`self._lock` 을 쥔 채 부른다** — 락 순서는 언제나 `_lock` → `_gen_lock`
-        한 방향뿐이다(`__init__` 의 `self._lock` 주석).
-        """
-        with self._gen_lock:
-            s = self._slots.get(slot)
-            if s is None or s["is_fallback"] or not s["ready"].is_set():
-                return ""
-            return s["text"] or ""
-
-    def _ensure_visitor_cue(self, text: str, label: str, is_last: bool) -> str:
-        """생성된 받아치기에 **관람객 창구 안내**가 있는지 보고, 없으면 붙인다.
-
-        왜 필요한가: 마이크가 열려도 관람객은 그것을 모른다(리뷰 B2). 큐시트의
-        고정 `mc_after` 19곳은 전부 "질문 받습니다 + '다음' 이라고 하면 넘어갑니다"
-        를 달고 있고 데이터 테스트가 그것을 못박는다(`tests/test_stage_cues.py::
-        test_모든_큐에_받아치기가_있고_다음을_안내한다`). 받아치기를 생성으로
-        바꾸면 그 보장이 **폴백에만** 남는다 — 생성이 성공할수록 관람객이 참여
-        방법을 모르게 되는 비대칭이라, 그 자리를 여기서 메운다.
-
-        `is_last` 면 '다음' 안내는 붙이지 않는다 — 더 넘어갈 데가 없다. 데이터
-        쪽 가드가 `cues[:-1]` 로 마지막을 빼는 것과 같은 예외다.
-
-        **판정은 고정 문구 대조가 아니다**(`stage/cues.py::invites_question`).
-        사회자 지시문이 "관람객에게 질문을 권한다" 라 모델은 제 말로 묻는다 —
-        완전 포함 검사만 하면 거의 매번 같은 뜻을 두 번 내보내, 고정 문장을
-        생성으로 바꾼 이 작업의 목적이 도로 무너진다(리뷰 Important 2).
-        """
-        added: list[str] = []
-        if not invites_question(text):
-            prompt = QUESTION_PROMPTS[self._q_i % len(QUESTION_PROMPTS)]
-            self._q_i += 1
-            added.append(prompt)
-            # **여기만 경고한다.** 사회자 지시문이 "관람객에게 질문을 권한다" 라,
-            # 질문 유도가 빠진 것은 대개 모델이 지시를 안 지킨 것이다 — 잦으면 고칠
-            # 곳은 감독이 아니라 `data/personas/mc.md` 다. 그리고 원인을 가른다:
-            # "정말 안 물었다"(페르소나를 고쳐라)와 "물어보긴 했는데 판정이 못
-            # 알아봤다"(`invites_question` 의 어휘를 넓혀라)는 고칠 곳이 다르다.
-            # 셋째 원인(2026-09-21~): 모델은 물었는데 `stage/__main__.py::
-            # build_generate` 의 생성 뒤 분량 상한이 그 질문을 잘랐다. 상한은
-            # 앞에서부터 남기고 사회자의 질문은 대개 마지막 문장이라, 받아치기가
-            # 길게 나오면(실측 147~195자, 상한 120자) 이쪽이 흔하다. 이 경고보다
-            # **앞서** `[mc]` 로 찍힌 `분량 상한` 경고를 찾는다 — 생성은 앞 화자가
-            # 말하는 동안 미리 돌므로 그 사이에 다른 줄이 끼어 있을 수 있다(예비
-            # 받아치기면 더 앞이다). 잘린 뒷부분에 질문이 보이면 원인은 페르소나의
-            # 질문 지시가 아니라 분량 초과다.
-            why = "물어보긴 했는데 질문 유도로 알아볼 수 없다" if "?" in text else "질문 유도가 없다"
-            self._warn(
-                f"[{label}] 생성된 받아치기에 {why} — 고정 문장을 붙인다: {prompt}"
-            )
-        if not is_last and not mentions_advance(text):
-            # **여기는 경고하지 않는다.** 진행 방법("'다음'이라고 하세요")은 애초에
-            # 모델에게 시키지 않는 것이라 빠지는 게 정상이고(19섹션 중 18섹션에서
-            # 빠진다), 섹션마다 경고가 뜨면 바로 위의 **진짜 신호**가 그 안에 묻힌다.
-            # 물러나는 것이 아니라 설계된 조립이다 — [생성된 반응 + 고정 길잡이].
-            added.append(ADVANCE_HINT)
-        if not added:
-            return text
-        return " ".join([text, *added])
 
     def _snapshot_slot(self, slot: str) -> tuple[threading.Event, int]:
         """기다릴 이벤트와 세대를 찍는다. **`self._lock` 을 쥔 채 부른다.**
@@ -1830,7 +1504,26 @@ class Director:
         # 질문 응답만 고정 분량으로 도는 비대칭이 생기고, (ii) 큐시트에서
         # 걷어낸 바로 그 "N문장 이내" 표현(Task 5)이 다른 자리에서 되살아난
         # 것이었다. 브리프 본문은 질문과 섹션 맥락만 준다.
-        brief = f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. 도슨트로서 답한다."
+        # **근거와 금지 규칙을 함께 준다.** 해설이 고정 대본이 된 뒤로 사실 위험은
+        # 전부 이 자리에 몰린다 — 여기만 LLM 이 쓴다. 예전 지시문은 질문과 섹션
+        # 제목뿐이어서 모델이 일반 지식으로 답했다.
+        #
+        # `**` 를 걷는 이유: 브리프에는 사람이 읽으라고 넣은 강조가 있는데, 그대로
+        # 실으면 모델이 서식을 흉내 내 별표가 TTS 로 새어 나간다(`stage/prompts.py`
+        # 머리말의 리뷰 Minor 5 와 같은 경로).
+        _, docent_brief = cue.brief_for(self._level_name)
+        parts = [
+            f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. 도슨트로서 답한다.",
+            f"이 섹션에서 확인된 내용: {docent_brief.replace('**', '')}",
+        ]
+        guard = cue.guard_for(self._level_name)
+        if guard:
+            parts.append(guard)
+        parts.append(
+            "질문에 먼저 답한다. 위 내용과 앞선 해설에 없는 사실·수치는 지어내지 않는다. "
+            "모르면 모른다고 말하고 이 섹션 이야기로 돌린다."
+        )
+        brief = "\n\n".join(parts)
         # **여기서 LLM 을 기다리지 않는다.** 예전에는 락을 쥔 채 왕복 전체를 기다려
         # 콘솔 `a` 와 tick() 이 그동안 멈췄다(리뷰 C1). 사회자의 확인 멘트가 흐르는
         # 동안 스레드에서 만든다 — 관람객에게도 정적 대신 반응이 먼저 간다(B3).

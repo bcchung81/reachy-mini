@@ -334,6 +334,96 @@ def test_정숙은_모션에는_손대지_않는다():
     assert abs(pitch - 20.0) < 1.0, "정숙이 응답 모션까지 접었다"
 
 
+# ── 시선 (설계 §12.6) ──────────────────────────────────────────
+#
+# 감독의 `gaze` 를 로봇이 실제로 따른다. **직접 set_target 을 부르지 않는다** —
+# 쓰는 스레드는 여전히 드라이버 하나여야 하므로, sway 층에 머리 yaw 오프셋을
+# 더하는 방식이다.
+
+
+def _yaw_of(head) -> float:
+    """4x4 에서 yaw(도)를 뽑는다 — 시선 오프셋이 들어가는 축."""
+    return float(np.rad2deg(np.arctan2(head[1, 0], head[0, 0])))
+
+
+def test_시선_오프셋이_머리_yaw_로_나간다():
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: False, rate_hz=200.0)
+    d.start()
+    try:
+        time.sleep(0.1)
+        base = _yaw_of(mini.snapshot()[-1][1])
+        d.set_gaze(20.0)
+        time.sleep(1.0)          # 시간상수(0.35s)의 몇 배 — 충분히 수렴한다
+        moved = _yaw_of(mini.snapshot()[-1][1])
+    finally:
+        d.stop()
+    assert abs(base) < 3.0, "시선을 주기 전에는 정면이어야 한다"
+    assert abs(moved - 20.0) < 3.0, f"시선 20도를 줬는데 yaw 가 {moved:.1f}도다"
+
+
+def test_시선_전환은_부드럽다():
+    """홱 돌면 기계처럼 보이고 서보에도 나쁘다 — 한 틱에 튀지 않아야 한다."""
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: False, rate_hz=200.0)
+    d.start()
+    try:
+        d.set_gaze(20.0)
+        time.sleep(0.5)
+        seq = [_yaw_of(c[1]) for c in mini.snapshot()]
+    finally:
+        d.stop()
+    jump = max(abs(b - a) for a, b in zip(seq, seq[1:]))
+    assert jump < 3.0, f"시선을 옮길 때 한 틱에 {jump:.1f}도가 튀었다"
+
+
+def test_시선은_녹화_모션을_덮지_않는다():
+    """모션 재생 중에는 녹화 모션이 우선이다(설계 §12.6). 시선이 그 위에
+    얹히면 저작된 동작이 틀어진다."""
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: False, rate_hz=200.0)
+    d.start()
+    try:
+        d.set_gaze(20.0)
+        time.sleep(0.5)                       # 시선이 다 옮겨간 뒤
+        d.play(FakeMove(duration=1.0, pitch_deg=20.0), blend_s=0.05)
+        time.sleep(0.3)
+        during = mini.snapshot()[-1]
+    finally:
+        d.stop()
+    assert abs(_yaw_of(during[1])) < 3.0, "모션 중인데 시선 오프셋이 얹혔다"
+    assert abs(during[3] - 0.5) < 0.05, "모션의 body_yaw 가 시선에 밀렸다"
+
+
+def test_모션이_끝나면_시선이_그대로_돌아온다():
+    """모션 중에도 시선 목표는 굴러가야 한다 — 안 그러면 모션이 끝난 뒤
+    옛 각도에서 다시 출발해 한 박자 늦게 돈다."""
+    mini = RecordingMini()
+    d = RobotDriver(mini, lambda: False, rate_hz=200.0)
+    d.start()
+    try:
+        d.play(FakeMove(duration=0.3, pitch_deg=20.0), blend_s=0.05)
+        d.set_gaze(20.0)          # 모션이 도는 동안 시선 지시가 들어온다
+        time.sleep(0.9)           # 모션(0.35s) + 복귀 블렌드가 끝나고도 남는 시간
+        after = _yaw_of(mini.snapshot()[-1][1])
+    finally:
+        d.stop()
+    assert abs(after - 20.0) < 4.0, f"모션이 끝났는데 시선이 {after:.1f}도다"
+
+
+def test_시선은_안전_한계_안으로_잘린다():
+    """머리-몸 yaw 차 65도가 한계다. 여유 있게 훨씬 앞에서 자른다 —
+    SDK 가 조용히 클램프하면 목표값과 실제가 어긋난 채로 돈다."""
+    from driver import GAZE_MAX_DEG
+
+    d = RobotDriver(RecordingMini(), lambda: False)
+    d.set_gaze(180.0)
+    assert d._gaze_target_deg == GAZE_MAX_DEG
+    d.set_gaze(-180.0)
+    assert d._gaze_target_deg == -GAZE_MAX_DEG
+    assert GAZE_MAX_DEG <= 25.0, "안전 한계(머리-몸 yaw 차 65도)에 너무 가깝다"
+
+
 # ── 견고성 ─────────────────────────────────────────────────────
 
 

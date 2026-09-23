@@ -1,7 +1,9 @@
 import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
+ROOT = pathlib.Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))                              # 감독 쪽(stage/) — 저장소에서만 가능
+sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
 from emotions import EMOTION_MOVES, IDLE_MOVES, find_request, pick_idle
 
 # 2026-07-29 RecordedMoves('pollen-robotics/reachy-mini-emotions-library')
@@ -60,3 +62,68 @@ def test_대기_모션은_카탈로그에_있는_것만_고른다():
     assert pick_idle({"attentive1", "waiting"}) in {"attentive1", "waiting"}
     assert pick_idle(set()) is None
     assert pick_idle({"존재하지않는모션"}) is None
+
+
+# ── 대본 감정 태그 (설계 §12.2·§12.5) ────────────────────────────────
+#
+# 감정 어휘는 **두 벌**이다 — 감독은 `stage/cues.py::EMOTIONS`, 로봇 앱은
+# `motion.EMOTION_CATEGORY`. 로봇 앱은 `stage/` 를 import 할 수 없다(실기에는
+# 앱만 올라간다, `tests/test_deployment_contract.py` 가 그걸 고정한다).
+# 그 대가로 **두 곳이 조용히 어긋날 수 있다**: 감독이 새 태그를 보내면 로봇은
+# "모르는 태그" 로 키워드 추측에 떨어지고, 로그를 보지 않으면 그냥 "모션이 좀
+# 이상하다" 로만 보인다. 여기서 묶는다 — 저장소 테스트는 양쪽을 동시에 들여올
+# 수 있는 유일한 자리다.
+
+
+def test_감정_어휘가_감독과_로봇에서_같다():
+    from motion import STAGE_EMOTIONS
+
+    from stage.cues import EMOTIONS
+
+    assert tuple(STAGE_EMOTIONS) == tuple(EMOTIONS), (
+        f"감독 {tuple(EMOTIONS)} ≠ 로봇 {tuple(STAGE_EMOTIONS)}"
+    )
+
+
+def test_감독의_기본_감정도_로봇이_안다():
+    from motion import EMOTION_CATEGORY
+
+    from stage.cues import DEFAULT_EMOTION
+
+    assert DEFAULT_EMOTION in EMOTION_CATEGORY
+
+
+def test_감정_태그가_모두_모션_범주로_이어진다():
+    """태그마다 갈 곳이 있어야 한다 — 없으면 그 대사만 조용히 안 움직인다."""
+    from motion import CATEGORY_MOVES, EMOTION_CATEGORY, NO_MOTION, STAGE_EMOTIONS
+
+    assert set(EMOTION_CATEGORY) == set(STAGE_EMOTIONS)
+    for tag, category in EMOTION_CATEGORY.items():
+        assert category == NO_MOTION or category in CATEGORY_MOVES, (
+            f"{tag}: 모션 범주 {category!r} 가 CATEGORY_MOVES 에 없다"
+        )
+
+
+def test_계약된_감정_매핑_그대로다():
+    """설계 §12.2 의 표. 바뀌면 큐시트 저작과 어긋나므로 여기서 먼저 깨진다."""
+    from motion import EMOTION_CATEGORY, NO_MOTION
+
+    assert EMOTION_CATEGORY == {
+        "반가움": "greet",
+        "기쁨": "joy",
+        "놀람": "surprise",
+        "궁금": "curious",
+        "뿌듯": "proud",
+        "끄덕": "ack",
+        "아쉬움": "sad",
+        "설명": NO_MOTION,
+    }
+
+
+def test_새_범주_proud_와_sad_의_모션이_실재한다():
+    from motion import CATEGORY_MOVES
+
+    assert CATEGORY_MOVES["proud"] == ["proud1", "proud2", "proud3"]
+    assert CATEGORY_MOVES["sad"] == ["sad1", "downcast1"]
+    for name in CATEGORY_MOVES["proud"] + CATEGORY_MOVES["sad"]:
+        assert name in KNOWN, f"{name}: 데이터셋에 없는 모션"

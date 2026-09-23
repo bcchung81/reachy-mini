@@ -76,13 +76,16 @@ class FakeWS:
 def collector():
     got = []
     return got, Handlers(
-        on_say=lambda cue_id, text, seq: got.append(("say", cue_id, text, seq)),
+        on_say=lambda cue_id, text, seq, emotion="": got.append(
+            ("say", cue_id, text, seq, emotion)
+        ),
         on_mic=lambda open_: got.append(("mic", open_)),
         on_gaze=lambda target: got.append(("gaze", target)),
         on_abort=lambda: got.append(("abort",)),
         on_camera=lambda viewer, on: got.append(("camera", viewer, on)),
         on_rtc=lambda viewer, payload: got.append(("rtc", viewer, payload)),
         on_standby=lambda on: got.append(("standby", on)),
+        on_react=lambda emotion: got.append(("react", emotion)),
     )
 
 
@@ -110,13 +113,69 @@ def test_붙으면_hello_를_먼저_보낸다():
 def test_say_를_받으면_seq_와_함께_핸들러로_넘긴다():
     ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕", "seq": 7}])
     _, got, _ = run_once(ws)
-    assert ("say", "c1", "안녕", 7) in got
+    assert ("say", "c1", "안녕", 7, "") in got
 
 
 def test_seq_가_없는_say_도_받는다():
     ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕"}])
     _, got, _ = run_once(ws)
-    assert ("say", "c1", "안녕", None) in got
+    assert ("say", "c1", "안녕", None, "") in got
+
+
+# ── 감정·듣는 반응 (설계 §12.5) ──────────────────────────────────────
+
+
+def test_say_의_감정을_핸들러로_넘긴다():
+    """대본이 정한 감정이다 — 로봇이 키워드로 추측하던 자리를 대신한다."""
+    ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "와!", "seq": 1,
+                  "emotion": "놀람"}])
+    _, got, _ = run_once(ws)
+    assert ("say", "c1", "와!", 1, "놀람") in got
+
+
+def test_감정이_없는_say_는_빈_문자열로_넘긴다():
+    """옛 감독(감정을 안 싣는다)과 붙어도 멈추지 않는다 — 로봇이 추측으로 돈다."""
+    ws = FakeWS([{"type": "say", "cue_id": "c1", "text": "안녕", "seq": 1}])
+    _, got, _ = run_once(ws)
+    assert ("say", "c1", "안녕", 1, "") in got
+
+
+def test_react_지시가_on_react로_간다():
+    ws = FakeWS([{"type": "react", "emotion": "끄덕"}])
+    _, got, _ = run_once(ws)
+    assert ("react", "끄덕") in got
+
+
+def test_react_핸들러가_없으면_소리_내서_경고한다():
+    """배선을 빠뜨린 채 caps 에 'react' 를 실으면 감독은 보내는데 로봇은
+    아무것도 안 한다 — 조용히 무시되면 "왜 안 끄덕이지" 를 못 찾는다."""
+    warns: list[str] = []
+    handlers = collector()[1]
+    handlers.on_react = None
+    c = StageClient("ws://x", "mc", handlers, warn=warns.append)
+    c._on_raw(json.dumps({"type": "react", "emotion": "끄덕"}))
+    assert any("react" in w for w in warns)
+
+
+def test_감독과_로봇의_지시_목록이_같다():
+    """`stage_client._DIRECTOR_MSGS` 와 `stage/protocol.py::DIRECTOR_MSGS` 는
+    **두 벌**이다(로봇 앱은 `stage/` 를 import 할 수 없다). 한쪽에만 메시지를
+    더하면 "감독은 보냈는데 로봇이 경고하고 버린다" 가 된다.
+
+    `tests/test_deployment_contract.py::test_로봇과_감독의_메시지_규약이_같다`
+    가 같은 것을 본다 — 여기서도 보는 이유는 `react` 를 더한 이 파일을 고칠 때
+    짝을 바로 옆에서 보게 하기 위해서다.
+    """
+    import pathlib as _p
+    import sys as _s
+
+    _s.path.insert(0, str(_p.Path(__file__).parent.parent))
+    from stage_client import _DIRECTOR_MSGS
+
+    from stage.protocol import DIRECTOR_MSGS
+
+    assert _DIRECTOR_MSGS == DIRECTOR_MSGS
+    assert "react" in _DIRECTOR_MSGS
 
 
 def test_발성_경계_보고에_seq_를_되돌려준다():
@@ -254,7 +313,7 @@ def test_핸들러_예외는_연결을_끊지_않는다():
         raise RuntimeError("speaker.stop() 가 터졌다")
 
     handlers = Handlers(
-        on_say=lambda c, t, s: None,
+        on_say=lambda c, t, s, e="": None,
         on_mic=lambda o: got.append(("mic", o)),
         on_gaze=lambda t: None,
         on_abort=boom,

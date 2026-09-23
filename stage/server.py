@@ -25,15 +25,11 @@ class StageServer:
         generate: Callable[[str, str, list[dict]], str],
         expect_units: dict[str, str] | None = None,
         warn: Callable[[str], None] = print,
-        mc_lines: dict[str, str] | None = None,
         level_name: str = "일반",
         docent_min_chars: int = MIN_CHARS,
         hub=None,
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
-        level_point_min_chars: dict[str, int] | None = None,
-        level_point_max: dict[str, tuple[int, int]] | None = None,
-        level_point_min_sentences: dict[str, int] | None = None,
         camera: CameraRelay | None = None,
     ) -> None:
         self._warn = warn
@@ -43,10 +39,10 @@ class StageServer:
         # `None`(기본값)이면 아무것도 안 한다 — 허브 도입 전 호출부·테스트가
         # 그대로 통과해야 한다.
         self._hub = hub
-        # `mc_lines`/`level_name`/`docent_min_chars` 를 그대로 `Director` 로
-        # 흘려보낸다 — 여기서 기본값으로 삼키면(예: 인자를 받고 안 넘기면)
-        # `Director` 는 늘 기본값(빈 캐시·"일반"·40자)으로 돌고, `main()` 이
-        # 아무리 제대로 읽어도 이 자리에서 끊긴다. `stage/__main__.py::main()`
+        # `level_name`/`docent_min_chars` 를 그대로 `Director` 로 흘려보낸다 —
+        # 여기서 기본값으로 삼키면(예: 인자를 받고 안 넘기면) `Director` 는 늘
+        # 기본값("일반"·40자)으로 돌고, `main()` 이 아무리 제대로 읽어도 이 자리에서
+        # 끊긴다. (~~`mc_lines`~~ 는 고정 대본 전환으로 없앴다.) `stage/__main__.py::main()`
         # 이 이 값들을 채워 넘긴다.
         #
         # `level_min_chars`/`on_level_change`(관람객 수준 실시간 전환)도 같은 길이다.
@@ -57,13 +53,10 @@ class StageServer:
         self.director = Director(
             sheet, generate=generate, send=self._send,
             expect_units=expect_units, warn=warn,
-            mc_lines=mc_lines, level_name=level_name,
+            level_name=level_name,
             docent_min_chars=docent_min_chars,
             level_min_chars=level_min_chars,
             on_level_change=on_level_change,
-            level_point_min_chars=level_point_min_chars,
-            level_point_max=level_point_max,
-            level_point_min_sentences=level_point_min_sentences,
         )
         self.camera = camera if camera is not None else CameraRelay(
             send_robot=self._send_raw, warn=warn,

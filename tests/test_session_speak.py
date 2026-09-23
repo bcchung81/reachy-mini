@@ -32,7 +32,7 @@ class FakePlayer:
     def __init__(self):
         self.played: list[tuple[str, bool]] = []
 
-    def play_for(self, category, force=False):
+    def play_for(self, category, force=False, idle=False):
         self.played.append((category, force))
         return f"move_{category}"
 
@@ -130,6 +130,17 @@ def test_연도로_시작하는_문장도_나뉜다():
     assert sp.many == [
         ["무선통신을 실용화했습니다.", "1901년에는 대서양을 건넜습니다."]
     ]
+
+
+def test_설명_범주는_모션을_내지_않는다():
+    """대본의 기본 감정 '설명' 이다(설계 §12.2) — 해설 내내 모션이 터지면
+    안 되고, 그렇다고 키워드 추측으로 내려가서도 안 된다."""
+    from motion import NO_MOTION
+
+    sp, pl = FakeSpeaker(), FakePlayer()
+    session.speak("전파는 빛과 같은 전자기파입니다.", sp, pl, category=NO_MOTION)
+    assert pl.played == [], "'설명' 인데 모션을 냈다"
+    assert sp.spoken == ["전파는 빛과 같은 전자기파입니다."]
 
 
 def test_문장_분리가_돼도_모션은_발화_전체에_한_번이다():

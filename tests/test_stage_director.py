@@ -14,13 +14,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.cues import Cue, CueSheet, Turn
 from stage.director import (
     CHARS_PER_SEC,
-    POINT_NO_LIMIT,
     TIMEOUT_MARGIN_S,
     Director,
     UnitMismatch,
 )
 from stage.machine import State, TurnError
-from stage.mc_cache import cache_key
 
 
 class Clock:
@@ -31,14 +29,24 @@ class Clock:
         return self.t
 
 
+def _모든_수준(text):
+    """네 수준 모두 같은 설명 — 수준을 안 보는 테스트가 쓰는 턴 대본.
+
+    `Cue.points_for(level)` 은 없는 수준을 **KeyError 로** 떨어뜨린다
+    (`load_cues` 가 네 수준을 모두 강제하므로 실데이터에는 없는 상황이다).
+    기본 시트를 "일반" 하나로만 채우면 `level_name="초등"` 을 주는 테스트가
+    거기서 죽는다 — 수준이 아니라 다른 것을 보는 테스트들이라 네 칸을 채운다.
+    """
+    return {"초등": text, "중고등": text, "일반": text, "전문가": text}
+
+
 class Harness:
     """감독 하나와 그가 내보낸 지시를 모으는 그릇."""
 
     def __init__(
         self, generate=None, expect_units=None, after=("", ""),
-        sheet=None, level_name="일반", mc_lines=None, docent_min_chars=None,
+        sheet=None, level_name="일반", docent_min_chars=None,
         levels=None, on_level_change=None,
-        level_point_min_chars=None, level_point_max=None, level_point_min_sentences=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -58,9 +66,14 @@ class Harness:
         # 쓴다(기본값은 지금 동작 유지) — 수준별 브리프를 손으로 채운
         # `Cue` 가 필요한 테스트만 자기 시트를 넘긴다.
         if sheet is None:
+            # 기본 시트도 **턴 대본**이다 — 해설은 고정 대사라 생성이 돌지 않는다.
+            # 1턴이면 그 설명이 곧 종단 라벨(`c1:docent`)이라, 옛 단일 라운드
+            # 테스트가 쓰던 발화 id 가 그대로 유효하다.
             sheet = CueSheet([
-                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0]),
-                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1]),
+                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner", mc_after=after[0],
+                    points=(Turn("", _모든_수준("첫 해설")),)),
+                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience", mc_after=after[1],
+                    points=(Turn("", _모든_수준("둘째 해설")),)),
             ])
 
         # `Director` 가 부르는 `generate` 는 이제 `(role, brief, history)` 다 —
@@ -88,12 +101,6 @@ class Harness:
             kw["level_min_chars"] = levels
         if on_level_change is not None:
             kw["on_level_change"] = on_level_change
-        if level_point_min_chars is not None:
-            kw["level_point_min_chars"] = level_point_min_chars
-        if level_point_max is not None:
-            kw["level_point_max"] = level_point_max
-        if level_point_min_sentences is not None:
-            kw["level_point_min_sentences"] = level_point_min_sentences
         self.d = Director(
             sheet,
             generate=_gen,
@@ -104,7 +111,6 @@ class Harness:
             now=self.clock,
             expect_units=expect_units,
             warn=self.warnings.append,
-            mc_lines=mc_lines,
             level_name=level_name,
             **kw,
         )
@@ -145,10 +151,15 @@ def test_시작할_때_양쪽_마이크를_닫는다():
     assert sorted(h.mics()) == [("docent", False), ("mc", False)]
 
 
-def test_사회자가_말하는_동안_도슨트_대사를_미리_만든다():
+def test_확인_멘트가_흐르는_동안_관람객_질문_답을_만든다():
     """지연 은닉 — 이게 하이브리드의 진짜 이득이다.
 
-    생성은 별도 스레드에서 돈다. `start()` 직후에 `gen_calls` 를 보면
+    ~~섹션 해설을 사회자 여는 대사 뒤에서 미리 만들었다~~ — 2026-09-23 고정
+    대본 전환으로 해설은 생성하지 않는다. **지연을 숨겨야 하는 자리는 관람객
+    질문 하나**만 남았다: `on_heard` 가 사회자의 확인 멘트를 내보내는 그 순간
+    생성이 이미 돌고 있어야, 관람객에게 정적 대신 반응이 먼저 간다.
+
+    생성은 별도 스레드에서 돈다. `on_heard` 직후에 `gen_calls` 를 보면
     스레드가 아직 안 돌아 **간헐적으로 실패한다** — 생성 쪽에서 신호를
     받아 결정적으로 기다린다.
     """
@@ -164,8 +175,13 @@ def test_사회자가_말하는_동안_도슨트_대사를_미리_만든다():
 
     h = Harness(generate=gen)
     h.d.start()
-    assert started.wait(2.0), "사회자 발화 시작 시점에 생성이 걸려 있지 않다"
-    assert seen == ["첫 지시"]
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.clear()
+    h.d.on_heard("마르코니가 누구예요")
+    assert h.d.state is State.MC_SPEAKING          # 확인 멘트가 흐르는 중
+    assert started.wait(2.0), "확인 멘트를 내보내는 시점에 생성이 걸려 있지 않다"
+    assert len(seen) == 1 and "마르코니가 누구예요" in seen[0]
 
 
 def test_사회자_발화가_끝나면_도슨트가_바로_받는다():
@@ -173,7 +189,7 @@ def test_사회자_발화가_끝나면_도슨트가_바로_받는다():
     h.d.start()
     h.clear()
     h.ended("mc", "c1")
-    assert h.says() == [("docent", "[첫 지시 로 만든 대사]")]
+    assert h.says() == [("docent", "첫 해설")]
     assert h.d.state is State.DOCENT_SPEAKING
 
 
@@ -266,22 +282,41 @@ def _wait_state(h, state, timeout=2.0):
     return False
 
 
-def test_도슨트_생성_대기가_abort_를_막지_않는다():
-    """사회자 발화가 끝나고 도슨트 대사를 기다리는 구간에서도 콘솔 `a` 는 즉시 먹어야
+def _질문까지(h, question="마르코니가 누구예요", cid="c1"):
+    """**이미 시작된** 큐를 관람객 차례까지 밀고 질문을 넣는다 — 생성이 걸린 상태."""
+    h.ended("mc", cid)
+    h.ended("docent", f"{cid}:docent")
+    h.d.on_heard(question)
+
+
+def _질문한다(h, question="마르코니가 누구예요", cid="c1"):
+    """첫 큐를 시작해 관람객 질문까지 민다.
+
+    ~~섹션 해설 생성이 사회자 여는 대사 뒤에 걸렸다~~ — 2026-09-23 고정 대본
+    전환으로 생성은 관람객 질문 답 하나뿐이다. 생성 기계장치(폴백, 세대 토큰,
+    대기 중 abort/단절)를 보는 테스트는 전부 이 길로 온다. 질문 뒤 사회자의
+    확인 멘트가 끝나는 자리(`{cid}:ack`)가 옛 핸드오프 자리다.
+    """
+    h.d.start()
+    _질문까지(h, question, cid)
+
+
+def test_질문_답_생성_대기가_abort_를_막지_않는다():
+    """확인 멘트가 끝나고 도슨트 답을 기다리는 구간에서도 콘솔 `a` 는 즉시 먹어야
     한다. 예전에는 그 대기(`GENERATE_GRACE_S`, 최대 8초)가 **진입 락을 쥔 채**
     일어나 비상정지가 그만큼 먹통이었다. 대장의 "락을 쥔 채 네트워크를 기다리지
     않는다" 가 LLM *요청* 쪽(`_answer`)에만 적용돼 있던 나머지 구멍이다 —
-    큐 19개마다, 그리고 관람객 질문마다 한 번씩 더 돌아온다.
+    관람객 질문마다 한 번씩 돌아온다.
     """
     gate = threading.Event()
 
     def slow(role, brief, history):
         gate.wait(3.0)
-        return "도슨트 대사"
+        return "도슨트 답"
 
     h = Harness(generate=slow)
-    h.d.start()
-    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    _질문한다(h)
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1:ack"), daemon=True)
     handoff.start()
     assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
 
@@ -292,7 +327,7 @@ def test_도슨트_생성_대기가_abort_를_막지_않는다():
     gate.set()
     handoff.join(timeout=5.0)
     assert not handoff.is_alive(), "핸드오프 스레드가 안 끝났다(교착 의심)"
-    assert elapsed < 1.0, f"abort 가 도슨트 생성 대기에 묶였다({elapsed:.1f}초)"
+    assert elapsed < 1.0, f"abort 가 답 생성 대기에 묶였다({elapsed:.1f}초)"
 
 
 def test_대기_중_abort_가_나면_도슨트가_뒤늦게_말하지_않는다():
@@ -305,11 +340,11 @@ def test_대기_중_abort_가_나면_도슨트가_뒤늦게_말하지_않는다(
 
     def slow(role, brief, history):
         gate.wait(3.0)
-        return "도슨트 대사"
+        return "도슨트 답"
 
     h = Harness(generate=slow)
-    h.d.start()
-    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    _질문한다(h)
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1:ack"), daemon=True)
     handoff.start()
     assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
 
@@ -325,15 +360,15 @@ def test_대기_중_abort_가_나면_도슨트가_뒤늦게_말하지_않는다(
 def test_대기_중_다음_큐가_돌아_LISTENING_이_돼도_옛_대사는_안_나간다():
     """상태만 보는 판정으로는 못 잡는 틈. 대기 중 `n` 으로 다음 큐가 시작되고 그
     사회자 발화까지 끝나면 상태가 **다시 LISTENING** 이 된다 — 그때 깨어난 옛
-    대기가 상태만 보면 "아직 내 차례" 로 오해해 **이전 섹션 해설**을 읽고, 뒤이어
+    대기가 상태만 보면 "아직 내 차례" 로 오해해 **이전 섹션의 답**을 읽고, 뒤이어
     새 큐의 핸드오프가 `TurnError` 를 맞는다. 슬롯의 세대 토큰(`_slots[…]["token"]`)
     이 이것을 가른다 — `_generate_pending` 이 늦게 끝난 생성을 버릴 때 쓰는 것과 같은 장치다.
     """
-    gates = {"첫 지시": threading.Event(), "둘째 지시": threading.Event()}
+    gate = threading.Event()
 
     def slow(role, brief, history):
-        gates[brief].wait(3.0)
-        return f"[{brief} 해설]"
+        gate.wait(3.0)
+        return "[늦게 끝난 답]"
 
     h = Harness(generate=slow)
     errors: list[Exception] = []
@@ -344,26 +379,23 @@ def test_대기_중_다음_큐가_돌아_LISTENING_이_돼도_옛_대사는_안_
         except Exception as exc:  # noqa: BLE001 — 스레드 밖으로 못 나가는 예외를 걷는다
             errors.append(exc)
 
-    h.d.start()                                   # c1 사회자 발화 + 생성 ①
-    first = threading.Thread(target=ended_in_thread, args=("mc", "c1"), daemon=True)
+    _질문한다(h)                                   # c1 확인 멘트 + 답 생성
+    first = threading.Thread(target=ended_in_thread, args=("mc", "c1:ack"), daemon=True)
     first.start()
-    assert _wait_state(h, State.LISTENING), "첫 핸드오프가 대기에 들어가지 않았다"
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기에 들어가지 않았다"
 
-    h.d.next()                                    # c2 로 넘어간다 — 생성 ②, 세대가 오른다
+    h.d.next()                                    # c2 로 넘어간다 — 세대가 오른다
     assert h.d.state is State.MC_SPEAKING
-    second = threading.Thread(target=ended_in_thread, args=("mc", "c2"), daemon=True)
-    second.start()
-    assert _wait_state(h, State.LISTENING), "둘째 핸드오프가 대기에 들어가지 않았다"
+    h.ended("mc", "c2")                           # c2 해설까지 흘려보내 다시 LISTENING 으로
+    h.ended("docent", "c2:docent")
+    assert h.d.state is State.LISTENING
 
-    gates["첫 지시"].set()                         # 옛 생성만 풀어 준다
+    gate.set()                                    # 옛 생성이 이제야 끝난다
     first.join(timeout=5.0)
     assert not first.is_alive(), "옛 핸드오프가 안 끝났다"
 
-    stale = [f for _, t, f in h.all_sent if t == "say" and f["cue_id"] == "c1:docent"]
-    assert not stale, f"이전 섹션 해설이 나갔다: {stale}"
-
-    gates["둘째 지시"].set()
-    second.join(timeout=5.0)
+    stale = [f for _, t, f in h.all_sent if t == "say" and f["cue_id"] == "c1:qa"]
+    assert not stale, f"이전 섹션의 답이 나갔다: {stale}"
     assert not errors, f"핸드오프에서 예외가 났다: {errors}"
 
 
@@ -378,13 +410,13 @@ def test_대기_중_도슨트가_끊기면_남은_사회자가_그_대사를_읽
 
     def slow(role, brief, history):
         gate.wait(3.0)
-        return "도슨트 대사"
+        return "도슨트 답"
 
     h = Harness(generate=slow)
     h.d.on_connect("mc")
     h.d.on_connect("docent")
-    h.d.start()
-    handoff = threading.Thread(target=h.ended, args=("mc", "c1"), daemon=True)
+    _질문한다(h)
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1:ack"), daemon=True)
     handoff.start()
     assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
 
@@ -395,7 +427,7 @@ def test_대기_중_도슨트가_끊기면_남은_사회자가_그_대사를_읽
     assert not handoff.is_alive(), "핸드오프 스레드가 안 끝났다(교착 의심)"
 
     said = [(r, f["cue_id"]) for r, t, f in h.all_sent if t == "say"]
-    assert ("mc", "c1:docent") in said, f"남은 사회자가 도슨트 몫을 읽지 않았다: {said}"
+    assert ("mc", "c1:qa") in said, f"남은 사회자가 도슨트 몫을 읽지 않았다: {said}"
 
 
 def test_확인_멘트는_돌아가며_쓴다():
@@ -474,17 +506,22 @@ def test_타임아웃_전에는_복구하지_않는다():
     assert h.sent == []
 
 
-def test_LLM_이_실패하면_지시문을_읽고_경고한다():
+def test_LLM_이_실패하면_고정_문장을_읽고_경고한다():
+    """~~도슨트 해설 생성이 터지면 지시문을 읽었다~~ — 해설은 이제 생성하지
+    않는다. LLM 이 터질 수 있는 자리는 관람객 질문 답뿐이고, 거기서도 벙어리가
+    되지 않고 사과문(`QA_FALLBACK`)으로 물러나며 **소리 내서** 경고한다."""
+    from stage.director import QA_FALLBACK
+
     def boom(role, brief, history):
         raise RuntimeError("추론 서버가 죽었다")
 
     h = Harness(generate=boom)
-    h.d.start()
+    _질문한다(h)
     h.clear()
-    h.ended("mc", "c1")
+    h.ended("mc", "c1:ack")
     said = h.says()
     assert len(said) == 1 and said[0][0] == "docent"
-    assert said[0][1]                      # 빈 대사를 말하지 않는다
+    assert said[0][1] == QA_FALLBACK       # 빈 대사를 말하지 않는다
     assert any("LLM" in w for w in h.warnings)
 
 
@@ -534,6 +571,7 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     "결과가 나왔다"는 사실 자체를 결정적으로 기다린다.
     """
     import stage.director as director_mod
+    from stage.director import QA_FALLBACK
 
     monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
 
@@ -542,27 +580,25 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     c1_box: dict[str, threading.Thread] = {}
 
     def gen(role, brief, history):
-        if brief == "첫 지시":
-            # **생성 스레드 자신을 여기서 집는다.** 예전에는 `h.d._gen_thread` 를
-            # 봤는데, 슬롯이 이름별로 갈리면서 "마지막에 띄운 스레드" 하나를
-            # 들고 있는 그 필드가 없어졌다(슬롯이 둘이면 뒤에 띄운 것이 앞의
-            # 핸들을 덮어써 엉뚱한 스레드를 join 하게 된다). 콜백 안에서 부르는
-            # `current_thread()` 가 곧 그 생성 스레드라 감독 내부를 안 들춰도 된다.
-            c1_box["t"] = threading.current_thread()
-            c1_entered.set()
-            release_c1.wait(5.0)
-            return "c1 늦은 대사"
-        return f"[{brief} 로 만든 대사]"
+        # **생성 스레드 자신을 여기서 집는다.** 예전에는 `h.d._gen_thread` 를
+        # 봤는데, 슬롯이 이름별로 갈리면서 "마지막에 띄운 스레드" 하나를
+        # 들고 있는 그 필드가 없어졌다. 콜백 안에서 부르는 `current_thread()`
+        # 가 곧 그 생성 스레드라 감독 내부를 안 들춰도 된다.
+        c1_box["t"] = threading.current_thread()
+        c1_entered.set()
+        release_c1.wait(5.0)
+        return "c1 늦은 답"
 
     h = Harness(generate=gen)
-    h.d.start()
-    assert c1_entered.wait(2.0), "c1 생성 스레드가 시작되지 않았다"
-    c1_thread = c1_box["t"]  # c1 의 생성 스레드 — 곧 유예시간을 넘긴다
+    _질문한다(h)
+    assert c1_entered.wait(2.0), "질문 답 생성 스레드가 시작되지 않았다"
+    c1_thread = c1_box["t"]  # 곧 유예시간을 넘긴다
 
-    h.ended("mc", "c1")  # 유예시간(0.05s) 안에 못 끝나 지시문 폴백
-    assert h.says()[-1] == ("docent", "첫 지시")
-    h.ended("docent", "c1:docent")
-    h.d.on_heard("다음")  # c2 시작 — 새 생성 스레드가 돈다
+    h.ended("mc", "c1:ack")  # 유예시간(0.05s) 안에 못 끝나 사과문 폴백
+    assert h.says()[-1] == ("docent", QA_FALLBACK)
+    h.ended("docent", "c1:qa")
+    h.ended("mc", "c1:reask")
+    h.d.on_heard("다음")     # c2 시작 — 세대가 오른다
     h.clear()
     h.warnings.clear()
 
@@ -571,61 +607,43 @@ def test_늦게_끝난_생성_스레드는_다음_큐로_새지_않고_버려진
     assert not c1_thread.is_alive()
 
     assert any("버려" in w for w in h.warnings)  # 폐기했다고 경고한다
-    assert h.says() == []  # 아직 c2 도슨트 대사를 말하지 않았다
+    assert h.says() == []  # 늦은 답이 새 섹션으로 새지 않았다
 
     h.ended("mc", "c2")
-    assert h.says() == [("docent", "[둘째 지시 로 만든 대사]")]  # c1 의 늦은 대사가 아니다
+    assert h.says() == [("docent", "둘째 해설")]  # c1 의 늦은 답이 아니다
 
 
 def test_정상_생성은_폐기_로직을_넣어도_그대로_말해진다():
     """review finding 1 회귀 방지 — 세대 검사를 넣어도 정상 경로(스레드가
-    늦지 않게 끝나는 경우)는 그대로 도슨트 대사를 말한다."""
+    늦지 않게 끝나는 경우)는 그대로 생성된 답을 말한다."""
     ready = threading.Event()
 
     def gen(role, brief, history):
-        text = f"[{brief} 로 만든 대사]"
         ready.set()
-        return text
+        return "제때 끝난 답"
 
     h = Harness(generate=gen)
-    h.d.start()
+    _질문한다(h)
     assert ready.wait(2.0)
     h.clear()
-    h.ended("mc", "c1")
-    assert h.says() == [("docent", "[첫 지시 로 만든 대사]")]
-
-
-def test_도슨트_생성이_빈_문자열이면_경고하고_지시문으로_폴백한다():
-    """review finding 2 — 빈 문자열도 벙어리가 되는 것과 같다."""
-    h = Harness(generate=lambda role, brief, history: "")
-    h.d.start()
-    h.clear()
-    h.ended("mc", "c1")
-    assert h.says() == [("docent", "첫 지시")]
-    assert any("빈" in w for w in h.warnings)
+    h.ended("mc", "c1:ack")
+    assert h.says() == [("docent", "제때 끝난 답")]
 
 
 def test_질문_응답이_빈_문자열이면_경고하고_폴백한다():
-    """review finding 2 — `_answer` 쪽 폴백도 같은 이유로 조용히 넘기지 않는다."""
-    calls = {"n": 0}
+    """review finding 2 — 빈 문자열도 벙어리가 되는 것과 같다. 조용히 넘기지 않는다.
 
-    def gen(role, brief, history):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
-        return ""  # 질문 응답만 빈 문자열
+    ~~도슨트 해설 쪽에도 같은 짝(`…지시문으로_폴백한다`)이 있었다~~ — 해설이
+    고정 대본이 되면서 빈 문자열이 나올 자리가 여기 하나로 줄었다.
+    """
+    from stage.director import QA_FALLBACK
 
-    h = Harness(generate=gen)
-    h.d.start()
-    h.ended("mc", "c1")
-    h.ended("docent", "c1:docent")
+    h = Harness(generate=lambda role, brief, history: "")
+    _질문한다(h)          # 경고는 여기서 이미 난다 — 생성 스레드가 `on_heard` 에서 돈다
     h.clear()
-    h.warnings.clear()
-    h.d.on_heard("마르코니가 누구예요")
     h.ended("mc", "c1:ack")
     said = [x for x in h.says() if x[0] == "docent"]
-    assert len(said) == 1
-    assert said[0][1]  # 빈 대사가 아니다
+    assert said == [("docent", QA_FALLBACK)]
     assert any("빈" in w for w in h.warnings)
 
 
@@ -677,14 +695,6 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
             reached.set()
             release.wait(timeout=5.0)
 
-    gen_started = threading.Event()
-    gen_release = threading.Event()
-
-    def gen(role, brief, history):
-        gen_started.set()
-        gen_release.wait(timeout=5.0)
-        return "도슨트 대사"
-
     class SimpleClock:
         def __init__(self):
             self.t = 0.0
@@ -692,20 +702,20 @@ def test_타이머와_발화종료가_겹쳐도_불변식이_깨지지_않는다
         def __call__(self):
             return self.t
 
+    # ~~생성 스레드가 끝나기를 먼저 기다렸다~~ — 해설이 고정 대본이 되면서
+    # 핸드오프는 락 안에서 곧장 끝난다. 경합의 두 주체(tick / speaking_ended)는
+    # 그대로라 이 테스트가 보는 불변식은 바뀌지 않는다.
     clock = SimpleClock()
     d = Director(
-        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
-        generate=gen,
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+                      points=(Turn("", {"일반": "도슨트 대사"}),))]),
+        generate=lambda role, brief, history: "쓰이지 않는다",
         send=lambda role, cmd: sent.append((role, cmd.type, cmd.fields)),
         now=clock,
         warn=warn,
     )
 
     d.start()  # 사회자 데드라인 설정
-    assert gen_started.wait(2.0), "생성 스레드가 시작되지 않았다"
-    gen_release.set()
-    assert d._snapshot_slot("docent")[0].wait(2.0), "도슨트 대사 생성이 끝나지 않았다"
-
     clock.t = 10_000.0  # 사회자 데드라인을 확실히 지난 시각으로 만든다
 
     timer = threading.Thread(target=d.tick, daemon=True)
@@ -771,7 +781,7 @@ def test_도슨트가_끊기면_사회자가_양쪽을_읽는다():
     said = h.says()
     assert len(said) == 1
     assert said[0][0] == "mc"                      # 도슨트 대사를 사회자가 읽는다
-    assert said[0][1] == "[첫 지시 로 만든 대사]"
+    assert said[0][1] == "첫 해설"
     assert any("1인 모드" in w for w in h.warnings)
 
 
@@ -906,19 +916,27 @@ def test_사회자_대사도_하나의_이력에_쌓인다():
     assert h.d.history[0]["content"] == "사회자: 사회자 첫 대사"
 
 
-def test_사회자_대사가_도슨트_생성에_실제로_넘어간다():
+def test_앞선_대사가_질문_답_생성에_실제로_넘어간다():
     """순서가 중요하다 — 생성 스레드는 `list(self.history)` 를 찍어간다.
-    스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다."""
+    스레드를 띄운 **뒤에** 넣으면 이번 답에는 안 들어간다.
+
+    ~~도슨트 해설 생성으로 봤다~~ — 해설이 고정 대본이 된 뒤로 이력을 찍어가는
+    곳은 관람객 질문 답 하나다. `_answer` 는 관람객 줄을 **먼저** 남기고 생성을
+    띄운다 — 거꾸로면 모델이 무엇을 물었는지 모르는 채로 답한다.
+    """
     본것: list[list[dict]] = []
 
     def gen(role, brief, history):
         본것.append(list(history))
-        return "도슨트 대사"
+        return "도슨트 답"
 
     h = Harness(generate=gen)
-    h.d.start()
+    _질문한다(h, "마르코니가 누구예요")
     assert h.d._snapshot_slot("docent")[0].wait(2.0)
-    assert 본것 and 본것[0][-1]["content"] == "사회자: 사회자 첫 대사"
+    assert 본것, "생성이 돌지 않았다"
+    본 = [l["content"] for l in 본것[0]]
+    assert 본[-1] == "관람객: 마르코니가 누구예요"
+    assert "사회자: 사회자 첫 대사" in 본     # 앞선 사회자 대사도 같이 간다
 
 
 def test_이력이_무한히_자라지_않는다():
@@ -1011,7 +1029,9 @@ def test_발화_중에_start_를_다시_불러도_이력과_생성이_오염되�
     with pytest.raises(TurnError):
         h.d.start()
     assert [l["content"] for l in h.d.history] == ["사회자: 사회자 첫 대사"]
-    assert len(h.gen_calls) == 1
+    # ~~`len(h.gen_calls) == 1`~~ — 큐를 시작해도 생성은 **하나도** 안 돈다
+    # (고정 대본). 거절된 `s` 가 생성을 새로 띄우지 않는다는 뜻은 그대로다.
+    assert h.gen_calls == []
     assert not any("버려졌다" in w for w in h.warnings)
 
 
@@ -1124,10 +1144,14 @@ def test_받아치기도_이력에_남는다():
 
 
 def test_생성_결과가_너무_짧으면_경고한다():
-    """조용히 짧게 나오는 것이 지금 문제의 본질이다 — 최소한 로그에는 드러나야 한다."""
+    """조용히 짧게 나오는 것이 지금 문제의 본질이다 — 최소한 로그에는 드러나야 한다.
+
+    ~~도슨트 해설로 봤다~~ — 해설이 고정 대본이 된 뒤 길이를 잴 생성물은
+    관람객 질문 답 하나다.
+    """
     h = Harness(generate=lambda role, brief, hist: "네.")
-    h.d.start()
-    h.ended("mc", "c1")
+    _질문한다(h)
+    h.ended("mc", "c1:ack")
     assert any("짧다" in w for w in h.warnings), h.warnings
 
 
@@ -1160,39 +1184,37 @@ def test_도슨트_분량_경고는_수준의_하한을_쓴다():
     """
     assert len(_50자) == 50, _50자
     h = Harness(generate=lambda role, brief, hist: _50자, docent_min_chars=180)
-    h.d.start()
+    _질문한다(h)
     h.warnings.clear()
-    h.ended("mc", "c1")          # 도슨트 해설(`role="docent"`)이 나가는 자리
+    h.ended("mc", "c1:ack")      # 도슨트 답(`role="docent"`)이 나가는 자리
     짧다 = [w for w in h.warnings if "너무 짧다" in w]
     assert 짧다, h.warnings
     assert "180" in 짧다[0], 짧다   # 무엇에 못 미쳤는지 로그가 말해야 한다
 
 
-def test_사회자_받아치기는_수준_하한이_아니라_고정_하한을_쓴다():
+def test_사회자_몫은_수준_하한이_아니라_고정_하한을_쓴다():
     """사회자 몫은 수준과 무관하게 `MIN_CHARS`(40) 다.
 
     `stage/prompts.py::_MC_MIN_CHARS` 가 사회자에게 수준과 **무관하게**
     "40~120자" 를 주기 때문이다(해설하지 않는 역할이라 분량이 수준을 따르지
     않는다). 여기에 도슨트 하한을 얹으면, 사회자가 프롬프트를 제대로 지켜
-    50자짜리 받아치기를 냈는데도 매 섹션 "너무 짧다" 경고가 뜬다 — 그러면
+    50자짜리 대사를 냈는데도 매 섹션 "너무 짧다" 경고가 뜬다 — 그러면
     바로 옆의 **진짜** 신호(도슨트가 조용히 짧아지는 것)가 그 안에 묻힌다.
 
     위 테스트와 **같은 50자 문자열**을 쓴다: 역할만 다르고 길이는 같은데 한쪽만
     경고가 나야 갈림이 실제로 역할의 함수임이 드러난다.
-    """
-    def gen(role, brief, hist):
-        if role == "mc":
-            return _50자
-        return "해설입니다. " * 40      # 도슨트는 충분히 길다 — 경고 원인을 하나로 둔다
 
-    h = Harness(generate=gen, after=("고정 받아치기", ""), docent_min_chars=180)
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")   # 받아치기(`role="mc"`)가 나가는 자리
-    assert [t for r, t in h.says() if r == "mc"][-1].startswith(_50자), h.says()
+    ~~받아치기 생성으로 흐름에서 봤다~~ — 받아치기가 큐시트 원문이 되면서
+    `role="mc"` 로 `_warn_if_short` 에 닿는 **흐름**이 지금은 없다. 그래도
+    갈림 자체는 코드에 남아 있고(다음에 사회자 쪽 생성이 생기면 곧바로 쓰인다),
+    이 규칙이 사라지면 그때 조용히 되돌아간다 — 함수를 직접 부른다.
+    """
+    h = Harness(docent_min_chars=180)
+    h.d._warn_if_short(_50자, "c1:after", "mc")
     assert not any("너무 짧다" in w for w in h.warnings), h.warnings
+    h.d._warn_if_short(_50자, "c1:qa", "docent")
+    짧다 = [w for w in h.warnings if "너무 짧다" in w]
+    assert len(짧다) == 1 and "180" in 짧다[0], h.warnings
 
 
 def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는다():
@@ -1201,21 +1223,9 @@ def test_빈_생성_결과의_폴백에는_짧다는_경고가_덧붙지_않는�
     걸면 "생성 실패" 경고 뒤에 "생성 결과가 짧다" 는 **틀린** 경고가 덧붙는다.
     로그만 보면 LLM 이 37자짜리 답을 낸 것으로 오판한다 — 폴백에는 걸리지 않는다.
     """
-    calls = {"n": 0}
-
-    def gen(role, brief, history):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return "[첫 지시 로 만든 대사]"  # 사전 생성(도슨트 첫 대사)은 정상
-        return ""  # 질문 응답만 빈 문자열 → QA_FALLBACK(37자) 로 대체된다
-
-    h = Harness(generate=gen)
-    h.d.start()
-    h.ended("mc", "c1")
-    h.ended("docent", "c1:docent")
+    h = Harness(generate=lambda role, brief, history: "")
+    _질문한다(h)
     h.clear()
-    h.warnings.clear()
-    h.d.on_heard("마르코니가 누구예요")
     h.ended("mc", "c1:ack")
     assert any("빈 문자열" in w for w in h.warnings), h.warnings
     assert not any("짧다" in w for w in h.warnings), h.warnings
@@ -1226,9 +1236,8 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
     **진짜로** 짧은 대사를 내놓아도 MIN_CHARS 경고가 침묵한다 — 조용히 짧아지는
     것을 잡으려고 만든 경고가 하필 그 상황에서 꺼진다.
 
-    슬롯이 하나뿐일 때는 닿기 어려웠지만, 받아치기(`"after"`)처럼 한 섹션 안에서
-    같은 슬롯이 여러 세대를 도는 자리가 생기면 "폴백 세대 → 진짜 생성" 배치가
-    정상 경로가 된다. 슬롯을 나누는 지금이 막기 가장 싼 자리다.
+    한 섹션에서 관람객이 **두 번 묻는** 것은 정상 경로다 — 그때 "폴백 세대 →
+    진짜 생성" 이 같은 슬롯에서 연달아 돈다.
 
     **어디를 봐야 하는가**: `_generate_pending` 은 `text` 와 `is_fallback` 을 한
     락 안에서 쌍으로 쓴 **뒤에야** `ready` 를 세우고, `_await_pending` 은 그
@@ -1249,16 +1258,17 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
         return "네."          # 진짜 생성 결과인데 MIN_CHARS(40) 미만
 
     h = Harness(generate=gen)
-    h.d.start()                                        # 1세대
+    _질문한다(h, "첫 질문")                              # 1세대
     ready1, _ = h.d._snapshot_slot("docent")
     assert ready1.wait(2.0), "1세대 생성이 끝나지 않았다"
     with h.d._gen_lock:
         assert h.d._slots["docent"]["is_fallback"] is True, "1세대가 폴백으로 갈리지 않았다"
 
-    h.ended("mc", "c1")                                # 1세대 폴백을 도슨트가 읽는다
-    h.ended("docent", "c1:docent")
+    h.ended("mc", "c1:ack")                            # 1세대 폴백을 도슨트가 읽는다
+    h.ended("docent", "c1:qa")
+    h.ended("mc", "c1:reask")
     h.warnings.clear()
-    h.d.on_heard("마르코니가 누구예요")                  # 2세대 — 같은 "docent" 슬롯
+    h.d.on_heard("둘째 질문")                            # 2세대 — 같은 "docent" 슬롯
 
     # 2세대는 게이트에 걸려 아직 아무것도 못 썼다. `_spawn_generate` 가 띄우면서
     # 표시를 내려놨어야 하는 바로 그 구간이다.
@@ -1272,23 +1282,26 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
 
 
 def test_슬롯이_다르면_서로를_지우지_않는다():
-    """도슨트 해설 생성이 받아치기 슬롯을 밀어내면 받아치기가 통째로 사라진다.
+    """한 슬롯의 생성이 다른 슬롯을 밀어내면 그쪽 대사가 통째로 사라진다.
 
     `_spawn_generate(slot, role, brief, fallback, label)` — 슬롯은 "밀어내지
-    않을 자리", `role` 은 "어느 페르소나로 말할지" 다. 이 태스크가 role 을
-    시그니처에 더했다(이후 태스크가 전부 이 5-인자 형태를 쓴다).
+    않을 자리", `role` 은 "어느 페르소나로 말할지" 다.
+
+    ~~해설 슬롯과 받아치기 슬롯으로 봤다~~ — 고정 대본 전환으로 실제로 도는
+    슬롯은 `"docent"` 하나뿐이다. 그래도 밀어내기의 단위가 **슬롯**이라는 것은
+    이 기계장치의 전제이고, 다음에 슬롯이 둘로 늘 때 여기가 먼저 깨져야 한다.
     """
-    from stage.director import FB_BRIEF, FB_SHEET, _Pending
+    from stage.director import FB_QA, _Pending
 
     h = Harness()
-    h.d._spawn_generate("docent", "docent", "해설 지시", "해설 폴백", "c1")
-    h.d._spawn_generate("after", "mc", "받아치기 지시", "받아치기 폴백", "c1:after")
+    h.d._spawn_generate("docent", "docent", "첫 지시", "첫 폴백", "c1:qa")
+    h.d._spawn_generate("다른칸", "mc", "둘째 지시", "둘째 폴백", "c1:다른칸")
     ready_d, tok_d = h.d._snapshot_slot("docent")
-    ready_a, tok_a = h.d._snapshot_slot("after")
+    ready_a, tok_a = h.d._snapshot_slot("다른칸")
     assert ready_d is not ready_a, "두 슬롯이 같은 Event 를 쓴다"
     assert ready_d.wait(3.0) and ready_a.wait(3.0)
-    pend_d = _Pending("docent", "docent", "c1:docent", "x", FB_BRIEF, "c1")
-    pend_a = _Pending("after", "mc", "c1:after", "y", FB_SHEET, "c1:after")
+    pend_d = _Pending("docent", "docent", "c1:qa", "x", FB_QA, "c1:qa")
+    pend_a = _Pending("다른칸", "mc", "c1:다른칸", "y", FB_QA, "c1:다른칸")
     assert h.d._await_pending(pend_d, ready_d, tok_d) != \
            h.d._await_pending(pend_a, ready_a, tok_a)
 
@@ -1311,89 +1324,16 @@ def test_생성_콜백은_슬롯이_아니라_role_을_받는다():
     assert h.gen_roles[-1] == "mc", h.gen_roles
 
 
-# ── Task 6 — 여는 대사 사전 생성 캐시 ────────────────────────────────
+def test_질문_답_지시문이_수준별_브리프를_싣는다():
+    """사회자 대사만 수준을 따르고 관람객 답이 안 따르면 기능이 반만 도는 것이다.
 
-def test_여는_대사_캐시가_없으면_큐시트_원문을_읽고_경고한다():
-    """캐시 미스는 조용히 넘어가면 안 된다 — 사전 생성을 빠뜨린 채 시연이
-    돌면 애드리브가 통째로 없는데 아무도 모른다. `mc_lines` 를 안 주면
-    (기본값) 늘 미스이므로 큐시트 원문(`cue.mc`)으로 물러나면서 경고해야
-    한다."""
-    h = Harness()
-    h.d.start()
-    assert h.says()[0][1] == "사회자 첫 대사"      # 큐시트 원문 그대로
-    assert any("캐시" in w for w in h.warnings), h.warnings
+    ~~도슨트 해설 사전 생성이 `cue.brief_for(level)[1]` 을 쓰는지 봤다~~ —
+    해설이 고정 대본이 되면서 그 자리가 없어졌다. 수준별 브리프가 실려야 하는
+    곳은 이제 관람객 질문 답 지시문 하나다(`_answer`): 그 답만 LLM 이 쓰므로,
+    여기가 옛 `cue.docent_brief` 로 돌아가면 모든 수준이 같은 근거로 답한다.
 
-
-def test_캐시_미스_경고에_키와_캐시_개수와_재생성_명령이_있다():
-    """리뷰 Important 2 — "사전 생성을 아예 안 돌렸다" 와 "브리프를 고쳐
-    해시가 바뀌었다"(해시를 키에 넣은 바로 그 목적)를 경고 문구가 구분 못
-    하면, `data/mc_lines.yaml` 을 grep 해서 원인을 좁힐 수조차 없다. 조회한
-    `key`, 로드된 캐시 개수, 재생성 명령을 경고에 담아야 그 즉시 원인을
-    좁힐 수 있다."""
-    from stage.mc_cache import cache_key
-
-    h = Harness(mc_lines={"엉뚱한|키|000000000000": "관련없는 값"})
-    h.d.start()
-
-    key = cache_key("c1", "일반", "")   # 기본 시트는 briefs 가 없어 mc_brief 가 ""
-    warning = next(w for w in h.warnings if "캐시가 없다" in w)
-    assert str(key) in warning, warning
-    assert "1개" in warning, warning   # 로드된 캐시 개수(엉뚱한 키 1개)
-    assert "pregen_mc_lines.py" in warning, warning
-
-
-def test_여는_대사_캐시가_있으면_캐시_문장을_읽는다():
-    """(A) 배선 확인 — `mc_lines`/`level_name` 이 `Director` 까지 실제로
-    흘러왔을 때만 캐시 히트가 쓰인다. 미스만 보는 앞 테스트는 `Director`
-    가 `mc_lines` 인자를 통째로 무시해도(늘 빈 dict 로 취급해도) 통과하므로
-    히트 쪽을 따로 확인한다 — `Director.__init__` 이 `mc_lines` 를
-    저장하지 않게 되돌리면 이 테스트가 실패한다.
-
-    **리뷰 Important 1** — 예전 버전은 `cache_key("c1", "초등", "")` 처럼
-    `mc_brief` 가 빈 퇴화 케이스만 봤다(기본 시트에 `briefs` 가 없어서).
-    그러면 `stage/director.py` 의 `cache_key(cue.id, self._level_name,
-    mc_brief)` 를 `cache_key(cue.id, self._level_name, "")` 로 바꿔도(=
-    지시문을 아예 안 본다) 이 테스트가 여전히 통과한다 — 캐시 키의 존재
-    이유("큐시트를 고치면 낡은 항목이 드러난다")를 검증하는 경로가 통째로
-    비어 있었다. 그래서 여기서는 `briefs` 를 채운 시트를 쓰고, **mc_brief
-    만 다른 둘째 큐로 넘어가면 미스가 되는지**까지 본다 — 히트한 이유가
-    "지시문을 봤기 때문"이지 "캐시에 뭐가 있든 무조건 맞기 때문"이 아님을
-    가른다.
-    """
-    sheet = CueSheet([
-        Cue("c1", "첫째", "여는 대사 c1", "지시1", "partner",
-            briefs={"초등": {"mc_brief": "초등 브리프 A", "docent_brief": "해설1"}}),
-        Cue("c2", "둘째", "여는 대사 c2", "지시2", "partner",
-            briefs={"초등": {"mc_brief": "초등 브리프 B", "docent_brief": "해설2"}}),
-    ])
-    key1 = cache_key("c1", "초등", "초등 브리프 A")   # c2 의 키(다른 브리프)는 일부러 안 넣는다
-    h = Harness(sheet=sheet, level_name="초등", mc_lines={key1: "캐시에서 읽은 여는 대사"})
-
-    h.d.start()
-    assert h.says() == [("mc", "캐시에서 읽은 여는 대사")]
-    assert not any("캐시가 없다" in w for w in h.warnings), h.warnings
-
-    # 같은 시트, 같은 수준인데 mc_brief 만 다른 c2 로 넘어간다 — 해시가
-    # 달라 다른 키가 되므로 미스여야 한다. `cache_key` 가 `mc_brief` 를
-    # 무시하게 망가지면 이 부분에서 (엉뚱하게) 다시 히트해 버린다.
-    h.clear()
-    h.ended("mc", "c1")
-    h.ended("docent", "c1:docent")
-    h.warnings.clear()
-    h.d.on_heard("다음")
-    assert h.says()[-1] == ("mc", "여는 대사 c2"), h.says()   # 캐시 미스 → 큐시트 원문
-    assert any("캐시가 없다" in w for w in h.warnings), h.warnings
-
-
-def test_도슨트_해설_브리프가_수준을_따른다():
-    """사회자 대사만 수준을 따르고 해설이 안 따르면 기능이 반만 도는 것이다.
-
-    계획 보완(2026-09-20) Step 5b, 첫째 자리 — `_begin_cue` 의 도슨트
-    사전 생성이 `cue.docent_brief` 대신 `cue.brief_for(level_name)[1]` 을
-    써야 한다. 생성은 별도 스레드에서 돌므로(`_spawn_generate`) `started`
-    이벤트로 결정적으로 기다린다 — 안 그러면 스레드가 아직 안 돈 시점에
-    `seen` 을 봐서 간헐적으로 실패한다(위 `사회자가_말하는_동안…` 테스트와
-    같은 함정).
+    생성은 별도 스레드에서 돌므로 `started` 이벤트로 결정적으로 기다린다 —
+    안 그러면 스레드가 아직 안 돈 시점에 `seen` 을 봐서 간헐적으로 실패한다.
     """
     sheet = CueSheet([Cue(
         "c1", "첫째", "여는 대사", "옛 지시문", "partner",
@@ -1403,6 +1343,8 @@ def test_도슨트_해설_브리프가_수준을_따른다():
             "일반": {"mc_brief": "일반 진행", "docent_brief": "일반 해설 지시"},
             "전문가": {"mc_brief": "전 진행", "docent_brief": "전문가 해설 지시"},
         },
+        points=(Turn("", {"초등": "초등 설명", "중고등": "중 설명",
+                          "일반": "일반 설명", "전문가": "전문가 설명"}),),
     )])
     seen: list[str] = []
     started = threading.Event()
@@ -1410,47 +1352,13 @@ def test_도슨트_해설_브리프가_수준을_따른다():
     def gen(role, brief, hist):
         seen.append(brief)
         started.set()
-        return "대사"
+        return "답"
 
     h = Harness(sheet=sheet, level_name="초등", generate=gen)
-    h.d.start()
-    assert started.wait(2.0), "도슨트 사전 생성이 돌지 않았다"
+    _질문한다(h)
+    assert started.wait(2.0), "질문 답 생성이 돌지 않았다"
     assert any("초등 해설 지시" in b for b in seen), seen
     assert not any("옛 지시문" in b for b in seen), seen
-
-
-def test_도슨트_해설_폴백도_수준을_따른다(monkeypatch):
-    """계획 보완 Step 5b, 둘째 자리 — `on_speaking_ended` 의 `pending` 폴백.
-
-    사전 생성이 유예시간(`GENERATE_GRACE_S`)을 넘기면 이 폴백이 그대로
-    도슨트 입에 오른다. 여기를 옛 `cue.docent_brief` 로 남겨 두면 첫째
-    자리(`_begin_cue`)만 고친 채로도 571개가 통과한다 — 사전 생성이
-    "느릴 때만" 드러나는 잔여 버그라 놓치기 쉽다.
-    """
-    import stage.director as director_mod
-
-    monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
-
-    sheet = CueSheet([Cue(
-        "c1", "첫째", "여는 대사", "옛 지시문", "partner",
-        briefs={
-            "초등": {"mc_brief": "초등 진행", "docent_brief": "초등 해설 지시"},
-            "중고등": {"mc_brief": "중 진행", "docent_brief": "중 해설 지시"},
-            "일반": {"mc_brief": "일반 진행", "docent_brief": "일반 해설 지시"},
-            "전문가": {"mc_brief": "전 진행", "docent_brief": "전문가 해설 지시"},
-        },
-    )])
-    gate = threading.Event()
-
-    def gen(role, brief, history):
-        gate.wait(5.0)          # 유예시간을 반드시 넘기게 붙잡아 둔다
-        return "늦은 대사"
-
-    h = Harness(sheet=sheet, level_name="초등", generate=gen)
-    h.d.start()
-    h.ended("mc", "c1")          # 유예시간(0.05s) 안에 못 끝나 폴백으로 진행
-    assert h.says()[-1] == ("docent", "초등 해설 지시"), h.says()
-    gate.set()                   # 뒤늦게 끝난 생성 스레드를 풀어 정리한다
 
 
 def test_질문_응답_브리프에_문장_수_지정이_없다():
@@ -1481,607 +1389,6 @@ def test_질문_응답_브리프에_문장_수_지정이_없다():
     qa_brief = seen[-1]
     assert "마르코니가 누구예요" in qa_brief, qa_brief   # 질문·섹션 맥락은 그대로 준다
     assert not re.search(r"\d+\s*문장\s*이내", qa_brief), qa_brief
-
-
-# ── Task 7 — 받아치기 이중 생성(예비·실제) ───────────────────────────
-#
-# 받아치기는 두 벌로 만든다. **예비**는 섹션 시작에 도슨트 *지시문*만 보고,
-# **실제**는 도슨트 대사를 보낼 때 도슨트가 *실제로 한 말*을 보고 만든다.
-# 폴백 사다리는 셋이다: 실제 → 예비 → 큐시트 원문. 아래 테스트들은 그 세 단을
-# 하나씩 밟는다 — 한 단이 끊기면 그 단의 테스트만 실패해야 원인이 바로 보인다.
-
-_SPARE_MARK = "도슨트가 이런 해설을 할 것이다"   # 예비 생성 지시문의 머리
-_REAL_MARK = "도슨트가 방금 이렇게 말했다"        # 실제 생성 지시문의 머리
-
-
-def _wait_slot(h, slot, timeout=3.0):
-    ready, _ = h.d._snapshot_slot(slot)
-    assert ready.wait(timeout), f"{slot!r} 슬롯 생성이 끝나지 않았다"
-
-
-def test_받아치기는_도슨트_실제_발언을_받는다():
-    """미리 만든 것보다 실제 반응이 낫다 — 제시간에 오면 그걸 쓴다.
-
-    **세대 재확인이 슬롯을 따라가는지도 여기서 드러난다.** 2구간의
-    `_snapshot_slot(...)` 에 `"docent"` 를 박아 두면 받아치기 갈래가 남의 슬롯
-    세대와 제 토큰을 비교하게 돼(둘은 따로 센다) 멀쩡한 받아치기가 매번
-    "다음 턴으로 넘어갔다" 며 버려진다 — 그러면 사회자가 아무 말도 안 한다.
-    """
-    def gen(role, brief, hist):
-        if role == "mc" and _REAL_MARK in brief:
-            return "실제 반응 대사입니다. 관람객 여러분 궁금한 점 있으실까요?"
-        return "[생성] " + brief
-
-    h = Harness(generate=gen, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"]
-    assert said and "실제 반응" in said[0], said
-
-
-def test_받아치기_실제_생성이_늦으면_예비를_읽는다(monkeypatch):
-    """예비는 **여유분**이다 — 실제가 늦으면 그것을 읽어야 존재 이유가 산다.
-
-    예비와 실제를 **한 슬롯**에 담으면 이 테스트가 실패한다: 같은 슬롯은
-    "마지막 하나만 산다" 라, 실제를 띄우는 순간 예비가 지워져 큐시트 원문까지
-    미끄러진다(예비 생성은 통째로 죽은 LLM 호출이 된다).
-    """
-    from stage import director as _director
-    monkeypatch.setattr(_director, "GENERATE_GRACE_S", 0.3)
-    gate = threading.Event()
-
-    def gen(role, brief, hist):
-        if _REAL_MARK in brief:
-            gate.wait(30)          # 유예를 넘긴다
-            return "너무 늦은 반응"
-        if _SPARE_MARK in brief:
-            return "미리 만들어 둔 반응입니다. 궁금한 점 있으실까요?"
-        return "해설입니다."
-
-    h = Harness(generate=gen, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")                   # 여기서 예비·실제가 나란히 뜬다
-    _wait_slot(h, "after_spare")          # 예비가 준비된 상태를 만든다
-    h.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"]
-    assert said, "받아치기가 안 나갔다"
-    assert "미리 만들어 둔 반응" in said[0], said
-    assert "너무 늦은" not in said[0], said
-    assert "고정 받아치기" not in said[0], said   # 큐시트까지 미끄러지지 않았다
-    gate.set()
-
-
-def test_예비도_실제도_늦으면_큐시트_고정_문장을_읽는다(monkeypatch):
-    """사다리의 마지막 단. 여기까지 내려와도 **조용히** 내려오지 않는다."""
-    from stage import director as _director
-    monkeypatch.setattr(_director, "GENERATE_GRACE_S", 0.3)
-    gate = threading.Event()
-    fixed = "저도 인상 깊었습니다. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요."
-
-    def gen(role, brief, hist):
-        if role == "mc":
-            gate.wait(30)          # 예비도 실제도 안 돌아온다
-            return "너무 늦은 반응"
-        return "해설입니다."
-
-    h = Harness(generate=gen, after=(fixed, ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"]
-    assert said == [fixed], said
-    assert any("늦다" in w for w in h.warnings), h.warnings
-    gate.set()
-
-
-def test_예비_받아치기는_도슨트_지시문을_사회자_역할로_받는다():
-    """슬롯과 role 은 **다른 축이다**(`_spawn_generate(slot, role, …)`).
-
-    대장 「값이 같은 두 인자를 서로 바꿔도 안 잡힌다」 — 도슨트 쪽은 slot 과 role
-    이 둘 다 "docent" 라 바꿔 넣어도 드러나지 않았다. 여기는 값이 다르니
-    ("after_spare"/"mc") 그 점을 쓴다: 생성 콜백에 "after_spare" 가 닿으면 슬롯이
-    새어 들어간 것이고, "docent" 가 닿으면 사회자가 **도슨트 분량**(수준에 따라
-    최대 5~7문장)으로 떠든다 — 받아치기는 짧아야 한다.
-    """
-    seen: list[tuple[str, str]] = []
-
-    def gen(role, brief, hist):
-        seen.append((role, brief))
-        return "네, 그렇군요. 궁금한 점 있으실까요?"
-
-    h = Harness(after=("고정 받아치기", ""), generate=gen)
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after_spare")
-    spare = [(r, b) for r, b in seen if _SPARE_MARK in b]
-    assert len(spare) == 1, seen
-    role, brief = spare[0]
-    assert role == "mc", f"예비 받아치기가 {role!r} 페르소나로 생성됐다"
-    assert "첫 지시" in brief, brief        # 도슨트 **지시문**을 보고 만든다
-
-
-def test_섹션_시작에는_도슨트_해설_생성만_띄운다():
-    """(리뷰 Important 1) **임계경로에 받아치기 생성을 얹지 않는다.**
-
-    `stage/__main__.py::build_generate` 는 LLM 호출 전체를 락 하나로 직렬화한다.
-    그런데 파이썬 `Lock` 은 FIFO 가 아니라, `_begin_cue` 가 도슨트 해설과 예비를
-    연달아 띄우면 **예비가 먼저 잡아 도슨트 해설 생성을 사회자 대사 한 벌만큼
-    통째로 미룰 수 있다.** 도슨트의 예산은 여는 대사 재생 + `GENERATE_GRACE_S`
-    8초뿐이고, 넘기면 폴백이 `docent_brief` 라 **도슨트가 지시문을 소리 내어
-    읽는다** — 이 작업이 숨기려던 지연을 이 작업이 새로 만드는 꼴이다.
-
-    그래서 섹션이 시작될 때 뜨는 생성은 **하나**여야 한다. 받아치기 두 벌은
-    도슨트 해설 생성이 끝난 뒤(도슨트 대사를 보낼 때) 나란히 뜬다.
-    """
-    seen: list[tuple[str, str]] = []
-
-    def gen(role, brief, hist):
-        seen.append((role, brief))
-        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
-
-    h = Harness(after=("고정 받아치기", ""), generate=gen)
-    h.d.start()
-    _wait_slot(h, "docent")
-    assert len(seen) == 1, f"섹션 시작에 생성이 {len(seen)}건 떴다: {seen}"
-    assert seen[0][0] == "docent", seen
-
-    h.ended("mc", "c1")                    # 도슨트 해설이 확정된 뒤에야
-    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
-    assert len(seen) == 3, seen            # 해설 + 예비 + 실제
-    assert any(_SPARE_MARK in b for _, b in seen), seen
-    assert any(_REAL_MARK in b for _, b in seen), seen
-
-
-def test_실제_받아치기_지시문은_도슨트가_실제로_한_말을_담는다():
-    """지시문이 아니라 **발언**을 받아야 진짜 반응이다 — 그래서 도슨트 대사를
-    확정한 뒤에야 띄운다. 도슨트 발화(~7-8초)가 이 생성 시간을 산다."""
-    seen: list[tuple[str, str]] = []
-
-    def gen(role, brief, hist):
-        seen.append((role, brief))
-        if role == "docent":
-            return "도슨트가 실제로 한 말입니다."
-        return "네, 그렇군요. 궁금한 점 있으실까요?"
-
-    h = Harness(after=("고정 받아치기", ""), generate=gen)
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after")
-    real = [(r, b) for r, b in seen if _REAL_MARK in b]
-    assert len(real) == 1, seen
-    role, brief = real[0]
-    assert role == "mc", f"실제 받아치기가 {role!r} 페르소나로 생성됐다"
-    assert "도슨트가 실제로 한 말입니다." in brief, brief
-    assert "첫 지시" not in brief, brief    # 지시문을 보고 만들면 '예비' 와 똑같아진다
-
-
-def test_질문_응답_뒤에는_받아치기를_생성하지_않는다():
-    """`:qa` 뒤에는 **생성된** 받아치기를 띄우지 않는다.
-
-    그 자리에서 생성을 띄우면 아무도 안 읽는 LLM 호출이 질문마다 하나씩 는다.
-    `_spawn_generate` 가 세대를 **동기적으로** 올리므로 토큰으로 본다.
-
-    답 뒤에 사회자가 다시 묻기는 한다(`:reask`) — 그건 고정 문장이라 LLM 을
-    부르지 않는다. 이 테스트가 지키는 것이 바로 그 구분이다.
-    """
-    h = Harness(after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1"); h.ended("docent", "c1:docent"); h.ended("mc", "c1:after")
-    assert h.d.state is State.LISTENING
-    _, before = h.d._snapshot_slot("after")
-
-    h.d.on_heard("마르코니가 누구예요")
-    h.ended("mc", "c1:ack")
-    h.ended("docent", "c1:qa")
-    h.ended("mc", "c1:reask")                # 고정 문장으로 다시 묻고 끝난다
-    assert h.d.state is State.LISTENING
-    _, after_tok = h.d._snapshot_slot("after")
-    assert after_tok == before, "질문 응답 뒤에 받아치기 생성이 떴다"
-
-
-# ── (A) 생성된 받아치기도 관람객 창구를 말로 연다 ──────────────────────
-
-
-def test_생성된_받아치기에_관람객_창구_안내가_없으면_고정_문장을_붙인다():
-    """마이크가 열려도 관람객은 그것을 모른다(리뷰 B2).
-
-    큐시트의 고정 `mc_after` 19곳은 전부 이 안내를 달고 있고 데이터 테스트가
-    그것을 못박는다(`tests/test_stage_cues.py::test_모든_큐에_받아치기가_있고_
-    다음을_안내한다`). 받아치기를 생성으로 바꾸면 그 보장이 **폴백에만** 남는다
-    — 생성이 성공할수록 관람객이 참여 방법을 모르게 되는 비대칭이다.
-    """
-    from stage.cues import ADVANCE_HINT, QUESTION_PROMPTS
-
-    h = Harness(generate=lambda role, brief, hist: "그렇군요. 저도 놀랐습니다.",
-                after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert said.startswith("그렇군요. 저도 놀랐습니다."), said   # 생성물을 버리지는 않는다
-    assert any(q in said for q in QUESTION_PROMPTS), said       # 질문을 받는다고 말한다
-    assert ADVANCE_HINT in said, said                           # 넘기는 법도 말한다
-    assert any("질문 유도가 없다" in w for w in h.warnings), h.warnings
-
-
-def test_받아치기에_이미_창구_안내가_있으면_덧붙이지_않는다():
-    """덧붙이는 것은 **빠졌을 때만**이다 — 늘 붙이면 같은 말이 두 번 나간다."""
-    from stage.cues import QUESTION_PROMPTS
-
-    line = f"저도 그 대목이 좋았습니다. {QUESTION_PROMPTS[0]} 이어가려면 '다음'이라고 해 주세요."
-    h = Harness(generate=lambda role, brief, hist: line, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert said == line, said
-    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
-
-
-def test_큐시트로_물러난_받아치기에는_안내를_덧붙이지_않는다():
-    """폴백은 이미 안전하다 — 사람이 다듬었고 데이터 테스트가 지킨다.
-
-    큐시트에는 `QUESTION_PROMPTS` 와 **글자가 다른** 안내가 있다(예: 15-emf 의
-    "궁금한 점 있으시면 말씀해 주시고, 아니면 '다음'이요."). 문자열 대조만으로
-    판정하면서 폴백까지 검사하면, 감독이 사람이 줄여 둔 대사 뒤에 같은 뜻의
-    문장을 또 붙인다 — 90자 예산도 같이 넘긴다.
-    """
-    fixed = "저도 인상 깊었습니다. 궁금한 점 있으시면 말씀해 주시고, 아니면 '다음'이요."
-    h = Harness(generate=lambda role, brief, hist: "" if role == "mc" else "해설입니다.",
-                after=(fixed, ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert said == fixed, said
-    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
-
-
-def test_창구_안내_고정_문장은_돌아가며_쓴다():
-    """같은 말이 19번 반복되면 녹음처럼 들린다 — `QA_ACK_LINES` 와 같은 이유다.
-
-    **한 바퀴를 다 돌려 순서까지 본다.** 예전에는 두 섹션만 돌고
-    `used[0] != used[1]` 만 봤는데, 그러면 `_q_i += 1` 을 `+= 2` 로 바꿔도
-    (연속한 둘은 여전히 다르므로) 통과한다 — 커서가 한 칸씩 도는지는
-    아무것도 안 지켰다(전체 리뷰). 같은 파일의
-    `test_질문_확인_멘트는_돌아가며_쓴다` 가 `len(set(seen)) == len(QA_ACK_LINES)`
-    로 한 바퀴를 보는 것이 올바른 모양이고, 여기에 **순서 리터럴**까지 더해
-    건너뛰기를 잡는다(`QUESTION_PROMPTS` 가 셋이라 두 칸씩 돌아도 집합은
-    똑같이 셋이 된다 — 집합만으로는 `+= 2` 를 못 잡는다).
-    """
-    from stage.cues import QUESTION_PROMPTS
-
-    # 한 바퀴(=`QUESTION_PROMPTS` 길이)를 돌 만큼의 섹션을 만든다. 기본 시트는
-    # 두 큐뿐이라 3번째를 못 돈다.
-    n = len(QUESTION_PROMPTS)
-    sheet = CueSheet([
-        Cue(f"c{i}", f"{i}번", f"사회자 {i}번 대사", f"{i}번 지시", "partner",
-            mc_after=f"고정{i}")
-        for i in range(1, n + 1)
-    ])
-    h = Harness(generate=lambda role, brief, hist: "그렇군요.", sheet=sheet)
-    h.d.start()
-    seen = []
-    for i in range(1, n + 1):
-        cue = f"c{i}"
-        h.ended("mc", cue)
-        h.clear()
-        h.ended("docent", f"{cue}:docent")
-        seen.append([t for r, t in h.says() if r == "mc"][0])
-        h.ended("mc", f"{cue}:after")
-        if i < n:
-            h.d.on_heard("다음")
-    used = [next(q for q in QUESTION_PROMPTS if q in s) for s in seen]
-    assert len(set(used)) == n, used          # 한 바퀴에 같은 말이 두 번 나오지 않는다
-    assert used == list(QUESTION_PROMPTS), used   # 그리고 한 칸씩, 순서대로 돈다
-
-
-def test_마지막_큐의_받아치기에는_진행_안내를_붙이지_않는다():
-    """더 넘어갈 데가 없다. 데이터 가드가 `cues[:-1]` 로 마지막을 빼는 것과 같은 예외다
-    — 마무리 인사 끝에 "이어가려면 '다음'" 이 붙으면 시연이 안 끝난 것처럼 들린다."""
-    from stage.cues import ADVANCE_HINT, QUESTION_PROMPTS
-
-    h = Harness(generate=lambda role, brief, hist: "오늘 이야기 고맙습니다.",
-                after=("고정1", "고정2"))
-    h.d.start()
-    h.ended("mc", "c1"); h.ended("docent", "c1:docent"); h.ended("mc", "c1:after")
-    h.d.on_heard("다음")                      # c2 — 기본 시트의 마지막 큐
-    h.ended("mc", "c2")
-    h.clear()
-    h.ended("docent", "c2:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert any(q in said for q in QUESTION_PROMPTS), said   # 질문은 마지막에도 받는다
-    assert ADVANCE_HINT not in said, said
-
-
-# ── (B) 큐가 바뀌면 받아치기 세대도 갈린다 ────────────────────────────
-
-
-def test_대기_중_다음_큐가_돌면_이전_큐의_받아치기는_안_나간다():
-    """(B) `_begin_cue` 가 `"docent"` 슬롯만 갈아끼우면 생기는 구멍.
-
-    받아치기가 고정 대사이던 동안에는 그래도 됐다. 생성이 들어오면 2구간의
-    **세대 검사가 큐 전환을 못 보게 된다** — 그 검사는 "기다리는 동안 이 슬롯이
-    갈렸는가" 로 판정하는데, 큐 전환이 `"after"` 를 안 갈면 판정 근거 자체가 없다.
-    상태 검사로도 못 잡는다: 다음 큐의 사회자 발화가 끝나면 상태는 **다시
-    LISTENING** 이라(`test_대기_중_다음_큐가_돌아…` 와 같은 틈) 이전 섹션 반응이
-    새 섹션에 그대로 얹힌다.
-    """
-    gate = threading.Event()
-
-    def gen(role, brief, hist):
-        if _REAL_MARK in brief:
-            gate.wait(5.0)
-            return "이전 섹션 반응입니다. 궁금한 점 있으실까요?"
-        return "짧은 대사입니다. 궁금한 점 있으실까요?"
-
-    h = Harness(generate=gen, after=("고정1", "고정2"))
-    errors: list[Exception] = []
-
-    def ended_in_thread(role, cue_id):
-        try:
-            h.ended(role, cue_id)
-        except Exception as exc:  # noqa: BLE001 — 스레드 밖으로 못 나가는 예외를 걷는다
-            errors.append(exc)
-
-    h.d.start()
-    h.ended("mc", "c1")          # 도슨트 해설이 나가면서 실제 받아치기 생성이 게이트에 걸린다
-    waiter = threading.Thread(target=ended_in_thread, args=("docent", "c1:docent"), daemon=True)
-    waiter.start()
-    assert _wait_state(h, State.LISTENING), "받아치기 대기 구간에 들어가지 않았다"
-
-    h.d.next()                   # c2 로 넘어간다 — 받아치기 세대가 갈려야 한다
-    assert h.d.state is State.MC_SPEAKING
-    h.clock.t += 1000
-    h.d.tick()                   # 강제로 LISTENING — 상태 검사로는 못 잡는 틈을 연다
-    assert h.d.state is State.LISTENING
-
-    gate.set()
-    waiter.join(timeout=5.0)
-    assert not waiter.is_alive(), "받아치기 대기 스레드가 안 끝났다(교착 의심)"
-    stale = [f for _, t, f in h.all_sent if t == "say" and f["cue_id"] == "c1:after"]
-    assert not stale, f"이전 섹션 받아치기가 나갔다: {stale}"
-    assert not errors, f"대기 스레드에서 예외가 났다: {errors}"
-
-
-def test_받아치기가_없는_큐로_넘어가면_예비_슬롯도_끊는다():
-    """(B) 구조적 보장. 받아치기가 없는 섹션은 이 슬롯을 **읽지 않으므로** 지금
-    당장 새어 나올 길은 없다 — 그래서 더더욱 여기서 끊어 둔다. 이 슬롯을 읽는
-    경로가 하나만 더 생기면(다음 태스크들이 그렇다) 이전 섹션 반응이 새 섹션의
-    폴백으로 조용히 들어간다. 규칙은 하나다: **큐가 바뀌면 받아치기 세대는
-    재생성되거나 무효화된다, 그대로 남지 않는다.**
-    """
-    h = Harness(after=("c1 고정 받아치기", ""))   # c2 에는 받아치기가 없다
-    h.d.start()
-    h.ended("mc", "c1")                           # c1 의 예비·실제가 뜬다
-    _wait_slot(h, "after_spare")
-    _, tok = h.d._snapshot_slot("after_spare")
-    with h.d._gen_lock:
-        assert h.d._slots["after_spare"]["text"], "예비가 생성되지 않았다"
-
-    h.ended("docent", "c1:docent"); h.ended("mc", "c1:after")
-    h.d.on_heard("다음")                          # c2 시작
-    _, tok2 = h.d._snapshot_slot("after_spare")
-    assert tok2 != tok, "큐가 바뀌었는데 예비 받아치기 세대가 그대로다"
-    with h.d._gen_lock:
-        assert h.d._slots["after_spare"]["text"] is None, "이전 큐의 예비가 남아 있다"
-
-
-# ── 리뷰 수정 — 사다리가 "늦음" 에만 걸리던 구멍 (Critical) ─────────────
-
-
-def _spare_ready_harness(real_result, after=("고정 받아치기", "")):
-    """c1 의 예비는 준비시키고, 실제 생성만 `real_result` 로 망가뜨린 하네스.
-
-    `real_result` 가 예외 클래스면 던지고, 문자열이면 그대로 돌려준다.
-    """
-    def gen(role, brief, hist):
-        if _REAL_MARK in brief:
-            if isinstance(real_result, type) and issubclass(real_result, Exception):
-                raise real_result("실제 생성이 터졌다")
-            return real_result
-        if _SPARE_MARK in brief:
-            return "미리 만들어 둔 반응입니다. 궁금한 점 있으실까요?"
-        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
-
-    h = Harness(generate=gen, after=after)
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after_spare")      # 예비는 **준비 완료** 상태다
-    _wait_slot(h, "after")
-    h.clear()
-    h.warnings.clear()
-    return h
-
-
-def test_실제_생성이_터져도_준비된_예비를_읽는다():
-    """**사다리가 "늦음" 에만 걸리면 안 된다**(리뷰 Critical).
-
-    `_generate_pending` 은 예외를 만나면 **띄울 때 받은 폴백**(= 큐시트 원문)을
-    슬롯에 넣고 `ready` 를 세운다. `_await_pending` 이 이벤트가 떴다는 이유로
-    그 값을 그대로 돌려주면, 1구간이 계산해 둔 "준비된 예비" 가 **안 쓰이고**
-    큐시트로 직행한다 — 늦을 때만 살아나는 반쪽짜리 사다리다.
-    """
-    h = _spare_ready_harness(RuntimeError)
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"]
-    assert said, "받아치기가 안 나갔다"
-    assert "미리 만들어 둔 반응" in said[0], said
-    assert "고정 받아치기" not in said[0], said
-
-
-def test_실제_생성이_빈_문자열이어도_준비된_예비를_읽는다():
-    """예외와 빈 문자열은 `_generate_pending` 안에서 **같은 길**을 탄다 —
-    한쪽만 고치면 다른 쪽이 조용히 남는다."""
-    h = _spare_ready_harness("")
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"]
-    assert said, "받아치기가 안 나갔다"
-    assert "미리 만들어 둔 반응" in said[0], said
-    assert "고정 받아치기" not in said[0], said
-
-
-def test_사다리_2단과_3단의_경고가_구별된다():
-    """`./reachy.sh logs` 로 원인을 가르는 저장소다 — "예비가 산 섹션" 과
-    "예비까지 죽은 섹션" 은 전혀 다른 문제인데 문구가 같으면 구분이 안 된다."""
-    from stage.director import FB_SHEET, FB_SPARE
-
-    h = _spare_ready_harness(RuntimeError)          # 예비는 살아 있다
-    h.ended("docent", "c1:docent")
-    assert any(FB_SPARE in w for w in h.warnings), h.warnings
-    assert not any(FB_SHEET in w for w in h.warnings), h.warnings
-
-    # 예비까지 죽은 경우 — 두 생성 다 터진다
-    def dead(role, brief, hist):
-        if role == "mc":
-            raise RuntimeError("사회자 생성이 통째로 죽었다")
-        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
-
-    h2 = Harness(generate=dead, after=("고정 받아치기", ""))
-    h2.d.start()
-    h2.ended("mc", "c1")
-    _wait_slot(h2, "after")
-    h2.warnings.clear()
-    h2.ended("docent", "c1:docent")
-    assert any(FB_SHEET in w for w in h2.warnings), h2.warnings
-    assert not any(FB_SPARE in w for w in h2.warnings), h2.warnings
-
-
-def test_예비를_읽어도_짧으면_경고한다():
-    """예비는 큐시트 원문과 달리 **진짜 생성 결과**다. 폴백이라는 이유로 길이
-    검사를 건너뛰면, 예비를 읽은 섹션만 "조용히 짧아지는 것" 의 사각지대가 된다."""
-    def gen(role, brief, hist):
-        if _REAL_MARK in brief:
-            raise RuntimeError("실제는 터진다")
-        if _SPARE_MARK in brief:
-            return "네, 그렇군요."            # 진짜 생성 결과인데 MIN_CHARS(40) 미만
-        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
-
-    h = Harness(generate=gen, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after_spare"); _wait_slot(h, "after")
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    assert any("너무 짧다" in w for w in h.warnings), h.warnings
-
-
-def test_큐시트로_물러날_때는_짧다는_경고가_안_붙는다():
-    """반대쪽 — 사람이 쓴 폴백에 길이를 재면 "LLM 이 짧은 답을 냈다" 는 **틀린**
-    경고가 로그에 남는다(QA_FALLBACK 이 37자, MIN_CHARS 가 40이다)."""
-    def dead(role, brief, hist):
-        if role == "mc":
-            raise RuntimeError("사회자 생성이 통째로 죽었다")
-        return "해설입니다. 충분히 긴 대사라고 가정한다. 정말 그렇다."
-
-    h = Harness(generate=dead, after=("짧은 큐시트", ""))   # 6자짜리 폴백
-    h.d.start()
-    h.ended("mc", "c1")
-    _wait_slot(h, "after")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    assert [t for r, t in h.says() if r == "mc"] == ["짧은 큐시트"], h.says()
-    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
-
-
-# ── 리뷰 수정 — 창구 안내 판정이 제 말도 알아본다 (Important 2) ──────────
-
-
-def test_받아치기가_제_말로_물었으면_고정_문장을_안_붙인다():
-    """사회자 지시문이 "관람객에게 질문을 권한다" 라, 모델은 `QUESTION_PROMPTS`
-    가 아니라 제 말로 묻는다. 완전 포함 검사만 하면 거의 매번 같은 뜻이 두 번
-    나가 **고정 문장을 생성으로 바꾼 이 작업의 목적이 도로 무너진다**(리뷰 I2).
-    """
-    line = "정말 흥미롭네요. 혹시 더 궁금하신 점 있으신가요? 아니면 '다음'이라고 말씀해 주세요."
-    h = Harness(generate=lambda role, brief, hist: line, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert said == line, said
-    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
-
-
-def test_수사의문만_있으면_창구_안내를_붙인다():
-    """물음표만으로 "물었다" 고 보면 안 된다 — "놀랍지 않나요?" 는 창구를 여는
-    말이 아니다. 그때는 붙이되, 로그에서 **"정말 빠졌다" 와 구별**되게 적는다."""
-    from stage.cues import QUESTION_PROMPTS
-
-    h = Harness(generate=lambda role, brief, hist: "이거 정말 놀랍지 않나요?",
-                after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert any(q in said for q in QUESTION_PROMPTS), said
-    assert any("물어보긴 했는데" in w for w in h.warnings), h.warnings
-
-
-def test_물음이_아예_없으면_다른_문구로_경고한다():
-    """"정말 빠졌다"(페르소나를 고쳐라)와 "못 알아봤다"(판정 문구를 넓혀라)는
-    고칠 곳이 다르다 — 로그가 같은 문장을 찍으면 어느 쪽인지 모른다."""
-    h = Harness(generate=lambda role, brief, hist: "그렇군요. 저도 놀랐습니다.",
-                after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    assert any("질문 유도가 없다" in w for w in h.warnings), h.warnings
-    assert not any("물어보긴 했는데" in w for w in h.warnings), h.warnings
-
-
-def test_진행_안내는_다음이라는_낱말_등장만으로_넘어가지_않는다():
-    """"다음 섹션도 기대되네요" 에는 '다음' 이 있지만 관람객은 **'다음' 이라고
-    말하면 된다**는 것을 못 듣는다 — 낱말이 아니라 안내인지를 본다."""
-    from stage.cues import ADVANCE_HINT
-
-    h = Harness(generate=lambda role, brief, hist: "다음 섹션도 기대되네요. 궁금한 점 있으실까요?",
-                after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert ADVANCE_HINT in said, said
-
-
-def test_진행_안내만_붙을_때는_경고하지_않는다():
-    """모델에게 "'다음'이라고 안내해라" 를 시키지 않으므로 빠지는 게 정상이다
-    (19섹션 중 18섹션에서 빠진다) — 그때마다 경고가 뜨면 "질문 유도가 **정말**
-    빠졌다" 는 진짜 신호가 그 안에 묻힌다. 물러나는 것이 아니라 설계된 조립이다.
-
-    반대로 이 경고를 없앴다고 **질문 유도** 쪽 경고까지 지우면
-    `test_물음이_아예_없으면_다른_문구로_경고한다` 가 실패한다 — 둘은 다른 신호다.
-    """
-    from stage.cues import ADVANCE_HINT
-
-    line = "정말 흥미롭네요. 혹시 더 궁금하신 점 있으신가요?"
-    h = Harness(generate=lambda role, brief, hist: line, after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.warnings.clear()
-    h.ended("docent", "c1:docent")
-    said = [t for r, t in h.says() if r == "mc"][0]
-    assert said == f"{line} {ADVANCE_HINT}", said
-    assert not any("고정 문장을 붙인다" in w for w in h.warnings), h.warnings
 
 
 # ── (D) 섹션 끝에 묻고, 침묵이면 스스로 넘어간다 ──────────────────────
@@ -2261,46 +1568,41 @@ def test_타임아웃_복구_뒤에도_침묵이_이어지면_다음_큐로_간�
 def test_생성을_기다리는_동안에는_침묵_기한이_섹션을_건너뛰지_않는다():
     """**이 작업에서 가장 위험한 자리다.**
 
-    `on_speaking_ended` 는 도슨트 대사를 기다리는 동안 락을 놓는데, 그때 상태는
-    이미 LISTENING 이다(1구간이 상태기계를 옮겨 둔다). 이전 섹션 끝에 걸어 둔
-    기한이 하필 그 대기 중에 만료되면 `tick()` 이 "침묵이다" 로 읽고 다음 섹션을
-    시작한다 — 관람객은 조용한 적이 없는데 섹션 하나가 통째로 사라진다.
-    1구간이 기한을 끄고, 쉬러 들어가는 갈래가 새로 거는 이유다.
+    `on_speaking_ended` 는 생성 결과를 기다리는 동안 락을 놓는데, 그때 상태는
+    이미 LISTENING 이다(1구간이 상태기계를 옮겨 둔다). 앞서 걸어 둔 기한이
+    하필 그 대기 중에 만료되면 `tick()` 이 "침묵이다" 로 읽고 다음 섹션을
+    시작한다 — 관람객은 방금 질문을 했는데 섹션 하나가 통째로 사라진다.
+    `on_heard` 가 기한을 끄고(1구간), 쉬러 들어가는 갈래가 새로 거는 이유다.
 
-    운영자 `n` 으로 재현한다: 기한이 걸린 채 다음 큐로 넘어가고, 그 큐의 도슨트
-    생성이 느리다.
+    ~~느린 도슨트 해설 생성으로 재현했다~~ — 고정 대본 전환으로 락을 놓고
+    기다리는 자리는 관람객 질문 답 하나만 남았다. 재현도 그 길로 옮긴다:
+    기한이 걸린 채 관람객이 묻고, 그 답 생성이 느리다.
     """
     gate = threading.Event()
     started = threading.Event()
 
     def gen(role, brief, hist):
-        if brief == "둘째 지시":
-            started.set()
-            gate.wait(5.0)
-        return f"[{brief} 로 만든 대사]"
+        started.set()
+        gate.wait(5.0)
+        return "늦은 답"
 
-    sheet = CueSheet([
-        Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
-        Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "partner"),
-        Cue("c3", "셋째", "사회자 셋째 대사", "셋째 지시", "partner"),
-    ])
-    h = Harness(sheet=sheet, generate=gen)
+    h = Harness(generate=gen)
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")          # 침묵 기한이 8.0 에 걸린다
     assert h.d.state is State.LISTENING
 
     h.clock.t = 1.0
-    h.d.next()                              # 운영자가 기한 만료 전에 넘긴다
-    assert started.wait(2.0), "둘째 큐 도슨트 생성이 시작되지 않았다"
+    h.d.on_heard("질문 있어요")              # 기한 만료 전에 관람객이 묻는다
+    assert started.wait(2.0), "질문 답 생성이 시작되지 않았다"
 
     done = threading.Event()
 
-    def end_mc():
-        h.ended("mc", "c2")                 # 여기서 생성 대기에 들어간다
+    def end_ack():
+        h.ended("mc", "c1:ack")             # 여기서 생성 대기에 들어간다
         done.set()
 
-    waiter = threading.Thread(target=end_mc, daemon=True)
+    waiter = threading.Thread(target=end_ack, daemon=True)
     waiter.start()
     # 대기 구간에 들어갔는지 상태로 본다 — `tick()` 은 진입 락을 잡으므로
     # 1구간이 끝난 뒤에야 돈다(경합이 아니라 순서가 보장된다).
@@ -2309,8 +1611,8 @@ def test_생성을_기다리는_동안에는_침묵_기한이_섹션을_건너�
     h.clear()
     h.clock.t = 8.1                         # c1 끝에 걸렸던 기한을 지난 시각
     h.d.tick()
-    assert h.says() == [], f"해설을 기다리는 사이에 섹션이 건너뛰어졌다: {h.says()}"
-    assert h.d._sheet.current().id == "c2"
+    assert h.says() == [], f"답을 기다리는 사이에 섹션이 건너뛰어졌다: {h.says()}"
+    assert h.d._sheet.current().id == "c1"
 
     gate.set()
     assert done.wait(3.0), "생성 대기 스레드가 안 끝났다"
@@ -2372,7 +1674,8 @@ def test_다시_묻는_말은_생성을_띄우지_않는다():
     `gen_calls` 는 스레드가 돌아야 쌓인다 — 개수만 보면 "아직 안 돌았을 뿐"
     인 것을 "안 띄웠다" 로 오판한다(간헐적으로 통과하는 테스트가 된다).
     """
-    slots = ("docent", "after", "after_spare")
+    # ~~슬롯 셋을 다 봤다~~ — 받아치기 생성이 사라지면서 도는 슬롯은 하나다.
+    slots = ("docent",)
     h = Harness(after=("고정 받아치기", ""))
     h.d.start()
     h.ended("mc", "c1")
@@ -2410,43 +1713,6 @@ def test_다시_묻는_말은_돌아가며_쓴다():
         h.ended("mc", "c1:reask")
     assert len(set(seen)) == len(QUESTION_PROMPTS), seen
     assert seen == list(QUESTION_PROMPTS), seen
-
-
-def test_받아치기_안내와_다시_묻는_말이_커서를_함께_쓴다():
-    """**한 섹션 안에서 같은 문장이 두 번 나가면 안 된다.**
-
-    두 자리가 모두 `QUESTION_PROMPTS` 에서 꺼낸다: 받아치기에 질문 유도가 빠졌을
-    때 붙이는 것(`_ensure_visitor_cue`)과 도슨트 답 뒤에 다시 묻는 것(`:reask`).
-    커서(`_q_i`)를 따로 두면 둘 다 0번을 집어, 관람객은 받아치기 끝에
-    "궁금한 점 있으실까요?" 를 듣고 질문에 답을 들은 직후 **똑같은 문장**을 또
-    듣는다 — 돌아가며 쓰는 이유(녹음처럼 들린다)가 바로 이 자리에서 무너진다.
-
-    **어느 칸을 집었는지까지 본다.** `reask != used[0]` 만 보면 커서가 한 칸이
-    아니라 두 칸씩 돌아도(`_q_i += 2`) 통과한다 — 두 자리가 커서를 공유하는지는
-    보지만 그 커서가 **한 칸씩** 도는지는 아무것도 안 지킨다(전체 리뷰). 0번
-    다음이 1번이라고 리터럴로 박는다.
-    """
-    from stage.cues import QUESTION_PROMPTS
-
-    h = Harness(generate=lambda role, brief, hist: "그렇군요. 저도 놀랐습니다.",
-                after=("고정 받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    h.clear()
-    h.ended("docent", "c1:docent")            # 받아치기 — 창구 안내가 붙는다
-    after_line = [t for r, t in h.says() if r == "mc"][0]
-    used = [q for q in QUESTION_PROMPTS if q in after_line]
-    assert len(used) == 1, (after_line, used)  # 안내가 실제로 붙었다
-    assert used[0] == QUESTION_PROMPTS[0], (after_line, used)   # 첫 자리는 0번
-    h.ended("mc", "c1:after")
-    h.d.on_heard("마르코니가 누구예요")
-    h.ended("mc", "c1:ack")
-    h.clear()
-    h.ended("docent", "c1:qa")                # 다시 묻기
-    reask = h.says()[0][1]
-    assert reask != used[0], (after_line, reask)
-    # 커서를 **공유하면서 한 칸씩** 돈다 — 0번 다음은 1번이다.
-    assert reask == QUESTION_PROMPTS[1], (after_line, reask)
 
 
 def test_다시_묻는_말도_이력에_남는다():
@@ -2652,12 +1918,20 @@ def _수준_브리프(tag):
     }
 
 
+def _수준_설명(tag):
+    """수준마다 다른 **고정 해설** — 어느 수준의 대본이 나갔는지 문자열로 가른다."""
+    return {lv: f"{tag} {lv} 설명" for lv in ("초등", "중고등", "일반", "전문가")}
+
+
 def _수준_시트():
-    """수준마다 브리프가 다른 3큐 시트 — 어느 수준의 브리프가 쓰였는지 문자열로 가른다."""
+    """수준마다 브리프와 턴 대본이 다른 3큐 시트."""
     return CueSheet([
-        Cue("c1", "첫째", "원문 c1", "옛 지시1", "partner", briefs=_수준_브리프("c1")),
-        Cue("c2", "둘째", "원문 c2", "옛 지시2", "partner", briefs=_수준_브리프("c2")),
-        Cue("c3", "셋째", "원문 c3", "옛 지시3", "partner", briefs=_수준_브리프("c3")),
+        Cue("c1", "첫째", "원문 c1", "옛 지시1", "partner", briefs=_수준_브리프("c1"),
+            points=(Turn("", _수준_설명("c1")),)),
+        Cue("c2", "둘째", "원문 c2", "옛 지시2", "partner", briefs=_수준_브리프("c2"),
+            points=(Turn("", _수준_설명("c2")),)),
+        Cue("c3", "셋째", "원문 c3", "옛 지시3", "partner", briefs=_수준_브리프("c3"),
+            points=(Turn("", _수준_설명("c3")),)),
     ])
 
 
@@ -2690,51 +1964,35 @@ def test_수준을_바꾸면_지금_큐가_아니라_다음_큐부터라고_알�
     assert h.d.state is State.MC_SPEAKING
 
 
-def test_대기_수준은_다음_큐를_시작할_때_캐시_키와_해설_브리프와_생성기에_한꺼번에_적용된다():
+def test_대기_수준은_다음_큐를_시작할_때_해설_대본과_생성기에_한꺼번에_적용된다():
+    """~~여는 대사 캐시 키까지 한꺼번에 봤다~~ — 캐시가 사라져 볼 것이 둘로 줄었다.
+    수준이 실제로 갈리는 곳은 이제 **턴 대본**(`points_for`)과 생성기 전환 훅이다."""
     훅: list[str] = []
-    got = threading.Event()
-    seen: list[str] = []
-
-    def gen(role, brief, hist):
-        seen.append(brief)
-        if brief == "c2 초등 해설":
-            got.set()
-        return "해설"
-
-    # c2 의 **초등** 캐시만 넣는다 — 중고등으로 시작하면 미스(원문)가 나야 한다.
-    mc_lines = {cache_key("c2", "초등", "c2 초등 진행"): "초등용 c2 여는 대사"}
-    h = _수준_감독(훅, generate=gen, mc_lines=mc_lines)
+    h = _수준_감독(훅)
     h.d.start()
     h.d.set_level("초등")
     h.d.abort()
     h.clear()
     h.warnings.clear()
     h.d.next()
-    assert h.says() == [("mc", "초등용 c2 여는 대사")]
-    assert got.wait(2.0), seen
+    assert h.says() == [("mc", "원문 c2")]
     assert 훅 == ["초등"]
     assert h.warnings == ["관람객 수준을 초등(으)로 바꿨다 — c2 부터"]
     assert _수준(h) == ("초등", None)
+    h.clear()
+    h.ended("mc", "c2")
+    assert h.says() == [("docent", "c2 초등 설명")], h.says()
 
 
-def test_지금_큐는_대기_수준이_있어도_원래_수준으로_끝까지_간다(monkeypatch):
-    """도슨트 해설 폴백(`on_speaking_ended`)이 지금 큐의 수준을 본다 — `set_level` 이
-    그 자리에서 수준을 바꿔 버리면 사회자는 중고등, 도슨트는 초등인 큐가 나간다."""
-    import stage.director as director_mod
-
-    monkeypatch.setattr(director_mod, "GENERATE_GRACE_S", 0.05)
-    gate = threading.Event()
-
-    def gen(role, brief, history):
-        gate.wait(5.0)                 # 유예를 넘겨 폴백(= 그 수준의 해설 지시문)으로 가게
-        return "늦은 대사"
-
-    h = _수준_감독(generate=gen)
+def test_지금_큐는_대기_수준이_있어도_원래_수준으로_끝까지_간다():
+    """`_begin_cue` 가 고른 턴 대본(`self._points`)이 지금 큐의 수준이다 —
+    `set_level` 이 그 자리에서 수준을 바꿔 버리면 사회자는 중고등, 도슨트는
+    초등인 큐가 나간다."""
+    h = _수준_감독()
     h.d.start()
     h.d.set_level("초등")
     h.ended("mc", "c1")
-    assert h.says()[-1] == ("docent", "c1 중고등 해설"), h.says()
-    gate.set()
+    assert h.says()[-1] == ("docent", "c1 중고등 설명"), h.says()
 
 
 def _듣는_중까지(h):
@@ -2845,16 +2103,22 @@ def test_수준을_바꾸면_도슨트_분량_하한도_그_수준을_따른다(
     h.d.set_level("전문가")
     h.d.abort()
     h.d.next()
+    _질문까지(h, "왜요?", cid="c2")     # 생성이 남은 유일한 길
     h.warnings.clear()
-    h.ended("mc", "c2")                # 도슨트 해설(`role="docent"`)이 나가는 자리
+    h.ended("mc", "c2:ack")            # 도슨트 답(`role="docent"`)이 나가는 자리
     assert h.says()[-1] == ("docent", 이백자)
-    assert "[c2] 생성 결과가 너무 짧다(200자, 하한 260자) — 그대로 쓴다" in h.warnings, h.warnings
+    assert "[c2:qa] 생성 결과가 너무 짧다(200자, 하한 260자) — 그대로 쓴다" in h.warnings, h.warnings
 
 
-def test_새_큐의_생성은_생성기를_새_수준으로_바꾼_뒤에_띄운다(monkeypatch):
-    """훅을 `_spawn_generate` 뒤에 부르면 새 큐의 도슨트 해설이 **옛 수준의 페르소나**
-    (역할·분량 프롬프트)로 새 수준의 지시문을 받는다. 스레드 시작 시점에 따라 나기도
-    안 나기도 하는 경합이라, 스레드를 그 자리에서 돌려(`_즉시`) 결정적으로 본다."""
+def test_새_큐의_질문_답은_생성기를_새_수준으로_바꾼_뒤에_띄운다(monkeypatch):
+    """훅을 빠뜨리면 새 큐의 생성이 **옛 수준의 페르소나**(역할·분량 프롬프트)로
+    새 수준의 지시문을 받는다.
+
+    ~~큐 시작에 띄우던 도슨트 해설 생성으로 봤다~~ — 해설이 고정 대본이 되면서
+    그 자리의 생성은 사라졌다. 남은 생성(관람객 질문 답)으로 같은 것을 본다:
+    섹션이 바뀐 뒤 처음 도는 생성이 새 수준의 생성기를 타야 한다. 스레드 시작
+    시점에 따라 나기도 안 나기도 하는 경합이라 그 자리에서 돌린다(`_즉시`).
+    """
     import types
 
     import stage.director as director_mod
@@ -2880,11 +2144,14 @@ def test_새_큐의_생성은_생성기를_새_수준으로_바꾼_뒤에_띄운
         sheet=_수준_시트(), level_name="중고등", generate=gen, levels=dict(_수준_하한),
         on_level_change=lambda name: 현재.__setitem__("수준", name),
     )
-    h.d.start()
+    _질문한다(h, "c1 질문")                 # 중고등으로 도는 섹션
     h.d.set_level("초등")
     h.d.abort()
     h.d.next()
-    assert seen == [("중고등", "c1 중고등 해설"), ("초등", "c2 초등 해설")]
+    _질문까지(h, "c2 질문", cid="c2")      # 섹션이 바뀐 뒤 처음 도는 생성
+    assert [lv for lv, _ in seen] == ["중고등", "초등"], seen
+    assert "c1 중고등 해설" in seen[0][1], seen[0]
+    assert "c2 초등 해설" in seen[1][1], seen[1]
 
 
 def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시작한다():
@@ -2898,7 +2165,6 @@ def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시�
     h = Harness(
         sheet=_수준_시트(), level_name="중고등", levels=dict(_수준_하한),
         on_level_change=터지는_훅,
-        mc_lines={cache_key("c2", "중고등", "c2 중고등 진행"): "중고등용 c2 여는 대사"},
     )
     h.d.start()
     h.d.set_level("초등")
@@ -2906,7 +2172,10 @@ def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시�
     h.clear()
     h.warnings.clear()
     h.d.next()
-    assert h.says() == [("mc", "중고등용 c2 여는 대사")]
+    assert h.says() == [("mc", "원문 c2")]
+    h.clear()
+    h.ended("mc", "c2")
+    assert h.says() == [("docent", "c2 중고등 설명")], h.says()   # 옛 수준 그대로
     assert h.warnings == [
         "관람객 수준 초등 전환 실패(RuntimeError: 페르소나 없음) — 중고등 그대로 간다"
     ]
@@ -3267,23 +2536,6 @@ def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
     assert h.mics() == [], f"대기 전환 뒤에 마이크 커맨드가 나갔다: {h.sent}"
 
 
-def test_포인트_분량_dict가_감독까지_닿는다():
-    h = Harness(
-        level_point_min_chars={"일반": 60}, level_point_max={"일반": (2, 95)},
-        level_point_min_sentences={"일반": 2},
-    )
-    assert h.d._level_point_min_chars["일반"] == 60
-    assert h.d._level_point_max["일반"] == (2, 95)
-    assert h.d._level_point_min_sentences["일반"] == 2
-
-
-def test_포인트_분량_dict를_안_주면_빈_dict다():
-    h = Harness()
-    assert h.d._level_point_min_chars == {}
-    assert h.d._level_point_max == {}
-    assert h.d._level_point_min_sentences == {}
-
-
 # ── 포인트 라운드 라우팅 (Task 5) ──────────────────────────────────────
 #
 # 한 섹션의 해설을 짧은 왕복 N회로 쪼갠다. **마지막 포인트의 도슨트 답은
@@ -3307,31 +2559,22 @@ def _포인트_큐(answers, mc_after="받아치기", guard=None):
     )
 
 
-def _첫줄로_답한다(role, brief, hist):
-    """턴 지시문은 첫 줄이 설명이고 그 아래에 형식·금지·분량 지시가 붙는다."""
-    return f"[{brief.splitlines()[0]} 답]"
-
-
 def test_포인트가_2개면_두_라운드_뒤_받아치기로_합류한다():
     sheet = CueSheet([_포인트_큐(["p1", "p2"])])
-    h = Harness(
-        sheet=sheet,
-        mc_lines={cache_key("c1", "일반", "p2 질문?"): "다리대사(p2로)"},
-        generate=_첫줄로_답한다,
-    )
+    h = Harness(sheet=sheet)
     h.d.start()
     assert h.says() == [("mc", "사회자 오프닝")]
 
-    h.ended("mc", "c1")  # 오프닝 끝 — point0(p1) 도슨트 답을 기다렸다 보낸다
-    assert h.says()[-1] == ("docent", "[p1 답]")
+    h.ended("mc", "c1")  # 오프닝 끝 — point0(p1) 설명이 그대로 나간다
+    assert h.says()[-1] == ("docent", "p1")
     assert h.d._machine.cue_id == "c1:pt0:docent"
 
-    h.ended("docent", "c1:pt0:docent")  # point0 답 끝 — 다리대사(p2)로 넘어간다
-    assert h.says()[-1] == ("mc", "다리대사(p2로)")
+    h.ended("docent", "c1:pt0:docent")  # point0 끝 — 1턴 질문(대본 원문)으로 넘어간다
+    assert h.says()[-1] == ("mc", "p2 질문?")
     assert h.d._machine.cue_id == "c1:pt1"
 
-    h.ended("mc", "c1:pt1")  # 다리대사 끝 — point1(p2, 마지막) 도슨트 답을 기다린다
-    assert h.says()[-1] == ("docent", "[p2 답]")
+    h.ended("mc", "c1:pt1")  # 질문 끝 — point1(p2, 마지막) 설명
+    assert h.says()[-1] == ("docent", "p2")
     assert h.d._machine.cue_id == "c1:docent"  # 종단 라벨 — 기존 받아치기 분기가 받는다
 
     h.ended("docent", "c1:docent")  # 마지막 포인트 끝 — 기존 받아치기 분기가 그대로 돈다
@@ -3343,17 +2586,18 @@ def test_포인트가_2개면_두_라운드_뒤_받아치기로_합류한다():
 
 def test_포인트가_1개면_기존_단일_라운드와_같은_모양이다():
     sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
+    h = Harness(sheet=sheet)
     h.d.start()
     h.ended("mc", "c1")
     assert h.d._machine.cue_id == "c1:docent"  # 포인트 1개는 바로 종단 라벨
-    assert h.says()[-1] == ("docent", "[p1 답]")
+    assert h.says()[-1] == ("docent", "p1")
     h.ended("docent", "c1:docent")
     assert h.says()[-1][0] == "mc"
 
 
-def test_points가_없는_큐는_기존_경로_그대로다():
-    """회귀 방지 — 이 계획의 가장 중요한 단언."""
+def test_턴이_하나인_큐는_오프닝_해설_받아치기_세_마디다():
+    """회귀 방지 — 기본 시트(1턴)가 옛 단일 라운드와 **같은 발화 id** 를 쓴다.
+    ~~`points` 가 없는 큐~~ 는 이제 큐시트 로더가 거절한다(`stage/cues.py`)."""
     h = Harness(after=("받아치기", ""))
     h.d.start()
     h.ended("mc", "c1")
@@ -3364,209 +2608,31 @@ def test_points가_없는_큐는_기존_경로_그대로다():
     assert h.d.state is State.LISTENING
 
 
-def test_다리_대사_캐시가_없으면_경고하고_질문_원문으로_잇는다():
-    """조용히 물러나지 않는다 — 여는 대사 캐시와 같은 규칙(`_begin_cue`).
-
-    예전 폴백은 포인트(사실 문장)를 사회자 입으로 읽었다 — 사회자가 도슨트의
-    답을 먼저 말해 버리는 꼴이었다. 이제 사람이 쓴 **질문**을 읽는다."""
-    sheet = CueSheet([_포인트_큐(["p1", "p2"])])
-    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
-    h.d.start()
-    h.ended("mc", "c1")
-    h.ended("docent", "c1:pt0:docent")
-    assert h.says()[-1] == ("mc", "p2 질문?")
-    assert any("다리 대사 캐시가 없다" in w for w in h.warnings), h.warnings
-
-
-def test_턴_지시문에_답변_형식과_그_수준의_금지_규칙이_붙는다():
-    """설명만 주면 모델은 사회자 질문을 "네, 맞아요" 로 확인만 하고, 옛 수준
-    브리프에 있던 금지 규칙("'캐나다'라고 하지 않는다")도 통째로 빠진다."""
-    briefs = []
-    sheet = CueSheet([_포인트_큐(["p1"], guard="'캐나다'라고 하지 않는다.")])
-    h = Harness(sheet=sheet, generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1])
-    h.d.start()
-    b = briefs[0]
-    assert b.startswith("p1")
-    assert "먼저 답하고" in b and "확인형" in b, b
-    assert "'캐나다'라고 하지 않는다." in b, b
-
-
-def test_턴_폴백은_설명_원문뿐이다():
-    """생성이 전부 실패하면 설명을 그대로 읽는다 — 형식 지시·금지 규칙이 섞이면
-    도슨트가 "'캐나다'라고 하지 않는다" 를 소리 내 읽는다."""
-    def gen(role, brief, hist):
-        raise RuntimeError("LLM 죽음")
-
-    sheet = CueSheet([_포인트_큐(["구어체 설명이에요."], guard="금지 규칙.")])
-    h = Harness(sheet=sheet, generate=gen, level_point_max={"일반": (3, 110)})
-    h.d.start()
-    h.ended("mc", "c1")
-    assert h.says()[-1] == ("docent", "구어체 설명이에요.")
-
-
-def test_턴_문장_하한이_지시문에_들어간다():
-    """"N문장 이내로 짧게" 만 주면 모델은 1문장으로 답한다 — 설명이 들어갈
-    자리가 없어 확인형 답이 된다. 하한을 함께 준다."""
-    briefs = []
-    sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(
-        sheet=sheet,
-        generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1],
-        level_point_min_sentences={"일반": 2},
-        level_point_max={"일반": (3, 110)},
-    )
-    h.d.start()
-    assert "2~3문장" in briefs[0] and "110자 이내" in briefs[0], briefs[0]
-    assert "짧게" not in briefs[0], briefs[0]
-
-
-def test_수준을_바꿔도_질문은_같고_설명만_바뀐다():
-    """턴 수와 질문 흐름은 수준과 무관하다 — 수준은 설명의 난이도만 바꾼다."""
-    cue = Cue(
-        "c1", "제목", "사회자 오프닝", "옛", "partner", mc_after="받아치기",
-        briefs={n: {"mc_brief": "mb", "docent_brief": "db"} for n in ("초등", "일반")},
-        points=(
-            Turn("", {"초등": "쉬운 0", "일반": "보통 0"}),
-            Turn("그럼 왜요?", {"초등": "쉬운 1", "일반": "보통 1"}),
-        ),
-    )
-    본것 = {}
-    for level in ("초등", "일반"):
-        h = Harness(sheet=CueSheet([cue]), level_name=level, generate=_첫줄로_답한다)
-        h.d.start()
-        h.ended("mc", "c1")
-        h.ended("docent", "c1:pt0:docent")
-        h.ended("mc", "c1:pt1")
-        본것[level] = h.says()
-    assert [s for s in 본것["초등"] if s[0] == "mc"] == [s for s in 본것["일반"] if s[0] == "mc"]
-    assert ("docent", "[쉬운 1 답]") in 본것["초등"]
-    assert ("docent", "[보통 1 답]") in 본것["일반"]
-
-
-def test_포인트_답은_포인트_하한으로_짧음을_잰다():
-    """도슨트 하한(수백 자)으로 재면 의도적으로 짧은 포인트 답이 매번 오탐이다."""
-    sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(
-        sheet=sheet,
-        generate=lambda role, brief, hist: "짧은 답.",
-        docent_min_chars=180,
-        level_point_min_chars={"일반": 5},
-        level_point_max={"일반": (2, 95)},
-    )
-    h.d.start()
-    h.ended("mc", "c1")
-    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
-
-
-def test_포인트_분량_상한이_실제로_적용되고_경고한다():
-    """**리뷰 Critical.** 생성기의 상한은 큐 단위(수준의 `max_chars`)라 포인트
-    답에는 몇 배로 느슨하다 — 감독이 여기서 한 번 더 안 자르면 N포인트 큐가
-    기존 한 라운드의 N배로 길어지고, 그것이 **조용히** 일어난다."""
-    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
-    sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(
-        sheet=sheet,
-        generate=lambda role, brief, hist: 긴답,
-        level_point_min_chars={"일반": 5},
-        level_point_max={"일반": (2, 95)},
-    )
-    h.d.start()
-    h.ended("mc", "c1")
-    말한것 = h.says()[-1][1]
-    assert 말한것 == "첫째 문장입니다. 둘째 문장입니다.", 말한것   # 2문장에서 잘렸다
-    assert any("상한을 넘어 잘랐다" in w for w in h.warnings), h.warnings
-    # 이력·받아치기 지시문도 **잘린 것**을 봐야 한다(자르기가 `_remember` 앞이다).
-    assert h.d.history[-1]["content"] == f"도슨트: {말한것}"
-
-
-def test_포인트_분량_지시가_생성_지시문에_붙는다():
-    """뒤에서 자르기만 하면 마지막 문장이 통째로 날아가 논지가 끊긴다 —
-    모델에게 먼저 말해 둔다. **폴백에는 안 붙는다**(지시문 낭독 사고)."""
-    briefs = []
-    sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(
-        sheet=sheet,
-        generate=lambda role, brief, hist: (briefs.append(brief), "답.")[1],
-        level_point_max={"일반": (2, 95)},
-    )
-    h.d.start()
-    assert briefs, "포인트 생성이 안 떴다"
-    assert briefs[0].startswith("p1")
-    assert "2문장 이내" in briefs[0] and "95자 이내" in briefs[0], briefs[0]
-
-
-def test_포인트_분량_배선이_없으면_아무것도_자르지_않는다():
-    """`_level_point_min_chars`/`_level_point_max` 는 수준 대조를 안 하는 맨
-    dict 라 빠진 수준이 있을 수 있다 — `[...]` 로 찾으면 섹션 한가운데서
-    KeyError 다. 그때는 도슨트 하한으로 물러나고 **자르지도, 분량을 지시하지도**
-    않는다(10억 자 이내로 말하라는 지시는 모델에게 잡음이다)."""
-    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
-    briefs = []
-    sheet = CueSheet([_포인트_큐(["p1"])])
-    h = Harness(
-        sheet=sheet,
-        generate=lambda role, brief, hist: (briefs.append(brief), 긴답)[1],
-        docent_min_chars=180,
-        level_point_min_chars={"전문가": 90},   # "일반" 이 빠져 있다
-        level_point_max={"전문가": (2, 95)},
-    )
-    assert h.d._point_budget() == (180, POINT_NO_LIMIT, POINT_NO_LIMIT)
-    h.d.start()        # KeyError 없이 돈다
-    h.ended("mc", "c1")
-    assert h.says()[-1][1] == 긴답               # 안 잘렸다
-    assert briefs[0].startswith("p1")
-    assert "자 이내" not in briefs[0], briefs[0]  # 분량 지시도 안 붙었다
-    assert not any("잘랐다" in w for w in h.warnings), h.warnings
-
-
-def test_포인트_폴백은_자르지_않는다():
-    """생성이 터져 포인트 원문을 읽는 자리다. 사람이 쓴 한 줄이고 `load_cues`
-    가 이미 검증했다 — 거기에 감독이 가위를 대면 안 된다(`_ensure_visitor_cue`
-    가 큐시트 원문을 비켜 가는 것과 같은 이유)."""
-    긴포인트 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
-
-    def gen(role, brief, hist):
-        raise RuntimeError("LLM 죽음")
-
-    sheet = CueSheet([_포인트_큐([긴포인트])])
-    h = Harness(sheet=sheet, generate=gen, level_point_max={"일반": (2, 95)})
-    h.d.start()
-    h.ended("mc", "c1")
-    assert h.says()[-1] == ("docent", 긴포인트)
-    assert not any("잘랐다" in w for w in h.warnings), h.warnings
-
-
-def test_포인트가_아닌_대사는_상한_검사를_아예_안_받는다():
-    """회귀 방지 — 기존 `_Pending` 은 `max_chars` 가 None 이라 새 코드가 안 돈다."""
-    긴답 = "첫째 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
-    h = Harness(generate=lambda role, brief, hist: 긴답, after=("받아치기", ""))
-    h.d.start()
-    h.ended("mc", "c1")
-    assert h.says()[-1][1] == 긴답, "포인트가 아닌 해설이 잘렸다"
-    assert not any("잘랐다" in w for w in h.warnings), h.warnings
-
-
 def test_다음_큐로_가면_포인트_상태가_초기화된다():
-    """포인트 큐 다음에 포인트 없는 큐가 오면 `_points` 가 안 비어 첫 갈래가
-    엉뚱하게 포인트 경로로 샌다 — `_begin_cue` 가 매번 다시 세운다."""
-    sheet = CueSheet([_포인트_큐(["p1", "p2"]), Cue("c2", "둘째", "둘째 대사", "둘째 지시", "audience")])
-    h = Harness(sheet=sheet, generate=_첫줄로_답한다)
+    """2턴 큐 다음에 1턴 큐가 오면 `_points`/`_point_i` 가 안 갈려 첫 갈래가
+    엉뚱한 턴으로 샌다 — `_begin_cue` 가 매번 다시 세운다."""
+    sheet = CueSheet([
+        _포인트_큐(["p1", "p2"]),
+        Cue("c2", "둘째", "둘째 대사", "둘째 지시", "audience",
+            points=(Turn("", _모든_수준("둘째 설명")),)),
+    ])
+    h = Harness(sheet=sheet)
     h.d.start()
     h.ended("mc", "c1")
     assert [p.answer for p in h.d._points] == ["p1", "p2"]
     h.d.abort()      # 운영자가 섹션 한가운데서 멈추고(`a`)
     h.d.next()       # 다음 섹션으로 넘긴다(`n`)
-    assert h.d._points == []
+    assert [p.answer for p in h.d._points] == ["둘째 설명"]
     assert h.d._point_i == 0
     h.ended("mc", "c2")
-    assert h.d._machine.cue_id == "c2:docent"   # 기존 단일 라운드 경로
+    assert h.d._machine.cue_id == "c2:docent"   # 1턴 큐는 바로 종단 라벨
 
 
 def test_받아치기가_없는_포인트_큐는_마지막_답_뒤_곧장_듣는다():
     """마지막 포인트가 종단 라벨을 쓰므로 `and cue.mc_after` 조건도 그대로
     먹는다 — 받아치기가 없으면 기존 큐와 똑같이 곧장 관람객 차례다."""
     sheet = CueSheet([_포인트_큐(["p1", "p2"], mc_after="")])
-    h = Harness(sheet=sheet, generate=lambda role, brief, hist: f"[{brief} 답]")
+    h = Harness(sheet=sheet)
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:pt0:docent")
@@ -3574,3 +2640,142 @@ def test_받아치기가_없는_포인트_큐는_마지막_답_뒤_곧장_듣는
     assert h.d._machine.cue_id == "c1:docent"
     h.ended("docent", "c1:docent")
     assert h.d.state is State.LISTENING
+
+
+# ── 고정 대본 흐름 (계획 3단계) ────────────────────────────────────────
+#
+# 해설은 공연 때마다 만들지 않는다. 큐시트의 검수된 문장을 그대로 말한다 —
+# 생성은 예측할 수 없는 관람객 질문에만 남는다(docs/lessons.md).
+
+
+def _대본_큐(answers=("설명0", "설명1"), mc_after="받아치기 다음", cid="c1"):
+    """오프닝 → 0턴 설명 → 1턴 질문 → 1턴 설명 → 받아치기."""
+    return Cue(
+        cid, "제목", "오프닝 대사", "옛 지시문", "partner",
+        mc_after=mc_after,
+        briefs={"일반": {"mc_brief": "mb", "docent_brief": "브리프", "guard": "금지 규칙."}},
+        points=tuple(
+            Turn(
+                "" if i == 0 else f"{a} 질문?",
+                {"일반": a},
+                ask_emotion="궁금",
+                answer_emotion="뿌듯",
+                listener_emotion="끄덕",
+            )
+            for i, a in enumerate(answers)
+        ),
+        mc_emotion="반가움",
+        mc_after_emotion="기쁨",
+    )
+
+
+def test_턴_대본이_생성_없이_그대로_나간다():
+    """해설 구간에서 LLM 호출이 한 번도 없어야 한다 — 검수한 문장이 매 회차
+    다시 쓰이면 조사 파일로 검증한 사실이 무의미해진다."""
+    h = Harness(sheet=CueSheet([_대본_큐()]), after=("받아치기 다음", ""))
+    h.d.start()
+    h.ended("mc", "c1")            # 오프닝 끝 → 0턴 설명
+    h.ended("docent", "c1:pt0:docent")  # 0턴 끝 → 1턴 질문
+    h.ended("mc", "c1:pt1")        # 질문 끝 → 1턴 설명(마지막)
+    h.ended("docent", "c1:docent")  # 마지막 설명 끝 → 받아치기
+    assert h.says() == [
+        ("mc", "오프닝 대사"),
+        ("docent", "설명0"),
+        ("mc", "설명1 질문?"),
+        ("docent", "설명1"),
+        ("mc", "받아치기 다음"),
+    ]
+    assert h.gen_calls == [], f"해설 구간에서 생성이 돌았다: {h.gen_calls}"
+    h.ended("mc", "c1:after")
+    assert h.d.state is State.LISTENING
+
+
+def test_대사마다_대본의_감정이_실린다():
+    h = Harness(sheet=CueSheet([_대본_큐()]))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:pt0:docent")
+    감정 = [c[2].get("emotion") for c in h.all_sent if c[1] == "say"]
+    assert 감정 == ["반가움", "뿌듯", "궁금"], 감정
+
+
+def test_수준을_바꾸면_설명만_바뀌고_사회자_대사는_같다():
+    cue = Cue(
+        "c1", "제목", "오프닝", "옛", "partner", mc_after="받아치기 다음",
+        briefs={n: {"mc_brief": "mb", "docent_brief": "b"} for n in ("초등", "일반")},
+        points=(
+            Turn("", {"초등": "쉬운0", "일반": "보통0"}),
+            Turn("그럼요?", {"초등": "쉬운1", "일반": "보통1"}),
+        ),
+    )
+    본것 = {}
+    for level in ("초등", "일반"):
+        h = Harness(sheet=CueSheet([cue]), level_name=level)
+        h.d.start()
+        h.ended("mc", "c1")
+        h.ended("docent", "c1:pt0:docent")
+        h.ended("mc", "c1:pt1")
+        본것[level] = h.says()
+    assert [s for s in 본것["초등"] if s[0] == "mc"] == [s for s in 본것["일반"] if s[0] == "mc"]
+    assert ("docent", "쉬운1") in 본것["초등"] and ("docent", "보통1") in 본것["일반"]
+
+
+def test_받아치기도_큐시트_원문_그대로다():
+    """예전에는 도슨트가 방금 한 말을 보고 받아치기를 생성했다(실제·예비 2벌).
+    고정 대본에서는 검수한 `mc_after` 가 그대로 나간다."""
+    h = Harness(sheet=CueSheet([_대본_큐(answers=("설명0",))]))
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "설명0")
+    h.ended("docent", "c1:docent")
+    assert h.says()[-1] == ("mc", "받아치기 다음")
+    assert h.gen_calls == []
+
+
+def test_관람객_질문_답에는_근거와_금지_규칙이_실린다():
+    """고정 대본으로 바꾸면 사실 위험이 전부 이 자리로 몰린다. 지시문에 이 수준의
+    브리프(근거)와 guard(금지 규칙), 지어내지 말라는 규칙이 함께 가야 한다."""
+    h = Harness(sheet=CueSheet([_대본_큐()]))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:pt0:docent")
+    h.ended("mc", "c1:pt1")
+    h.ended("docent", "c1:docent")
+    h.ended("mc", "c1:after")
+    h.d.on_heard("전파가 뭐예요?")
+    brief = h.gen_calls[-1][0]
+    assert "전파가 뭐예요?" in brief
+    assert "브리프" in brief, brief          # 이 수준의 근거
+    assert "금지 규칙." in brief, brief       # guard
+    assert "지어내지" in brief, brief         # 없는 사실을 만들지 말라는 규칙
+
+
+def test_관람객_질문_지시문에는_마크다운_강조가_없다():
+    """근거 브리프에는 사람이 읽으라고 `**` 가 들어 있다. 그대로 실으면 모델이
+    흉내 내 TTS 가 별표를 읽는다(stage/prompts.py 주석의 경로)."""
+    cue = _대본_큐(answers=("설명0",))
+    cue.briefs["일반"]["docent_brief"] = "**꼭** 이것만 말한다"
+    h = Harness(sheet=CueSheet([cue]))
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.ended("mc", "c1:after")       # 마이크가 열려야 관람객 발화가 들어간다
+    h.d.on_heard("질문이요")
+    brief = h.gen_calls[-1][0]
+    assert "**" not in brief, brief
+    assert "꼭" in brief
+
+
+# ── 이 전환에서 지운 테스트 (2026-09-23) ──────────────────────────────
+#
+# 고정 대본 전환으로 **기능 자체가 없어진** 것들이다. 무엇이 사라졌는지 나중에
+# 추적할 수 있게 분류만 남긴다(총 58개, `git log` 의 이 커밋에서 원문을 볼 수 있다).
+#
+# · 받아치기 생성(실제·예비·사다리·`_ensure_visitor_cue` 창구 안내 보정) — 받아치기는
+#   이제 검수한 `mc_after` 원문이고, 창구 안내는 데이터 테스트가 큐시트에서 강제한다
+#   (`test_stage_cues.py::test_모든_큐에_받아치기가_있고_다음을_안내한다`).
+# · 여는 대사 사전 생성 캐시 — 캐시와 스크립트를 지웠다(오프닝은 큐시트 원문).
+# · 포인트 분량 상한·분량 지시문·턴 지시문 조립 — 고정 대본은 런타임에 자르지 않는다.
+#   분량은 저작 규칙이 되어 데이터 테스트가 본다(`levels.yaml` 의 point_* 범위).
+# · 도슨트 해설 생성(브리프·폴백·짧음 경고·세대 검사) — 해설은 생성하지 않는다.
+#   같은 성질의 검사는 **관람객 질문 답** 경로로 옮겼다(이 파일 위쪽 QA 테스트들).

@@ -343,9 +343,15 @@ def _emotion(where: str, key: str, value, allow_empty: bool = False) -> str:
 
 
 def _load_turns(p: pathlib.Path, cue_id: str, raw) -> tuple[Turn, ...]:
-    """큐 최상위 `points` 를 턴 목록으로 읽는다. 없으면 빈 튜플(단일 라운드)."""
+    """큐 최상위 `points` 를 턴 목록으로 읽는다. **없으면 거절한다.**
+
+    해설은 전부 검수한 고정 대본이다(2026-09-23 전환) — 대본이 없는 큐는 시연에서
+    오프닝만 말하고 해설 없이 지나간다. 조용히 넘어가면 저작을 빠뜨린 큐가 있어도
+    아무도 모르므로 기동에서 막는다. ~~없으면 옛 단일 라운드(`docent_brief` 생성)로
+    돌았다~~ — 그 경로는 같은 전환에서 지웠다.
+    """
     if raw is None:
-        return ()
+        raise CueError(f"{p} {cue_id}: points(턴 대본)가 없다 — 해설은 고정 대본이다")
     if not isinstance(raw, list) or not raw:
         raise CueError(
             f"{p} {cue_id}: points 는 비어 있지 않은 목록이어야 한다 — "

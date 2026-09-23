@@ -165,6 +165,21 @@ def test_접속_뒤_이벤트와_주기_스냅샷이_온다(dash):
         assert _recv_until(ws, "snapshot")["cue_index"] == 6
 
 
+def test_say_의_감정_필드가_페이지까지_그대로_간다(dash):
+    """대사마다 감정 태그가 생겼다(계획 §12.5) — 감독은 `say` 에 `emotion` 을 싣고,
+    대시보드는 그 송신 기록(`sent`)의 `fields` 를 **손대지 않고 그대로** 흘린다.
+    서버가 필드를 골라 담기 시작하면 페이지의 감정 배지가 조용히 빈 채로 남는다
+    (계획이 "sent 이벤트에 필드가 이미 실려 온다" 고 전제한 자리다)."""
+    with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
+        json.loads(ws.recv(timeout=3))                 # hello
+        dash["hub"].publish("sent", role="mc", type="say",
+                            fields={"text": "와, 신기하네요!", "emotion": "놀람",
+                                    "cue_id": "02-history", "seq": 3})
+        m = _recv_until(ws, "sent")
+        assert m["fields"]["emotion"] == "놀람"
+        assert m["fields"]["text"] == "와, 신기하네요!"
+
+
 def test_버튼_명령은_콘솔과_같은_경로로_실행되고_결과가_모두에게_보인다(dash):
     with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
         json.loads(ws.recv(timeout=3))

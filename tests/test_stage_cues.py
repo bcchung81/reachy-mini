@@ -68,7 +68,14 @@ def test_빈_큐시트는_거절한다(tmp_path):
 
 def test_환경변수로_큐시트_경로를_바꾼다(tmp_path, monkeypatch):
     p = write(tmp_path, """
-- {id: "z", title: "t", mc: "m", docent_brief: "b", gaze: partner}
+- id: "z"
+  title: "t"
+  mc: "m"
+  mc_after: "받아치기"
+  docent_brief: "b"
+  gaze: partner
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
 """)
     monkeypatch.setenv("REACHY_CUES_PATH", str(p))
     assert load_cues()[0].id == "z"
@@ -242,13 +249,30 @@ def test_숫자인_id_는_거절한다(tmp_path):
 # ── 받아치기 mc_after (B2) ───────────────────────────────────────────
 
 
-def test_mc_after_는_선택이고_없으면_빈_문자열이다(tmp_path):
+def test_mc_after_를_읽는다(tmp_path):
+    """~~없으면 빈 문자열(선택 필드)~~ — 턴 대본이 필수가 되면서 `mc_after` 도 사실상
+    필수가 됐다(대본이 있으면 받아치기로 합류할 자리가 있어야 한다). 빠뜨린 경우는
+    `test_points가_있는데_mc_after가_없으면_거절한다` 가 본다."""
     p = write(tmp_path, """
-- {id: "a", title: "t", mc: "m", docent_brief: "b", gaze: partner}
-- {id: "b", title: "t", mc: "m", docent_brief: "b", gaze: partner, mc_after: "네, 그렇군요."}
+- id: "a"
+  title: "t"
+  mc: "m"
+  docent_brief: "b"
+  gaze: partner
+  mc_after: "아 그렇군요."
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
+- id: "b"
+  title: "t"
+  mc: "m"
+  docent_brief: "b"
+  gaze: partner
+  mc_after: "네, 그렇군요."
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
 """)
     a, b = load_cues(p)
-    assert a.mc_after == "" and b.mc_after == "네, 그렇군요."
+    assert a.mc_after == "아 그렇군요." and b.mc_after == "네, 그렇군요."
 
 
 def test_mc_after_가_문자열이_아니면_거절한다(tmp_path):
@@ -309,6 +333,8 @@ def test_수준별_브리프를_읽는다(tmp_path):
     중고등: {mc_brief: "중고등 진행", docent_brief: "중고등 해설"}
     일반: {mc_brief: "일반 진행", docent_brief: "일반 해설"}
     전문가: {mc_brief: "전문가 진행", docent_brief: "전문가 해설"}
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
 """)
     c = load_cues(p)[0]
     assert c.brief_for("초등") == ("초등 진행", "초등 해설")
@@ -321,8 +347,11 @@ def test_브리프가_없으면_옛_지시문으로_폴백한다(tmp_path):
 - id: "t1"
   title: "테스트"
   mc: "여는 대사"
+  mc_after: "받아치기"
   docent_brief: "옛 지시문"
   gaze: partner
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
 """)
     c = load_cues(p)[0]
     assert c.brief_for("초등") == ("", "옛 지시문")
@@ -486,9 +515,12 @@ def test_briefs가_없거나_null이면_빈_매핑으로_받는다(tmp_path):
 - id: "t1"
   title: "테스트"
   mc: "여는 대사"
+  mc_after: "받아치기"
   docent_brief: "옛 지시문"
   gaze: partner
   briefs:
+  points:
+    - answers: {초등: "쉬운 설명.", 중고등: "중 설명.", 일반: "일반 설명.", 전문가: "깊은 설명."}
 """)
     c = load_cues(p)[0]
     assert c.briefs == {}
@@ -690,14 +722,17 @@ def test_턴은_큐_최상위에서_읽고_수준은_설명만_가른다(tmp_pat
     assert [pt.answer for pt in 전문가] == ["깊은 0.", "깊은 1."]
 
 
-def test_points가_없으면_빈_목록이다(tmp_path):
+def test_points가_없으면_거절한다(tmp_path):
+    """~~없으면 빈 목록(옛 단일 라운드로 폴백)~~ — 해설이 전부 고정 대본이 된 뒤로는
+    대본 없는 큐가 해설 없이 지나가므로 기동에서 막는다(2026-09-23)."""
     raw = [{
         "id": "c1", "title": "t", "mc": "m", "docent_brief": "d",
         "gaze": "partner", "mc_after": "받아치기 다음",
     }]
     p = tmp_path / "cues.yaml"
     p.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
-    assert load_cues(p)[0].points_for("일반") == []
+    with pytest.raises(CueError, match="points"):
+        load_cues(p)
 
 
 def test_points가_빈_목록이면_거절한다(tmp_path):

@@ -12,9 +12,13 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from stage.console import run_console
-from stage.cues import Cue, CueSheet
+from stage.cues import Cue, CueSheet, Turn
 from stage.director import Director
 from stage.machine import State, TurnError
+
+
+def _모든_수준(text):
+    return {lv: text for lv in ("초등", "중고등", "일반", "전문가")}
 
 
 class Harness:
@@ -25,9 +29,14 @@ class Harness:
         self.warnings: list[str] = []
         self.out: list[str] = []
         if sheet is None:
+            # 해설은 고정 대본이다(2026-09-23) — `points` 없는 큐는 도슨트가
+            # 말할 것이 없어 오프닝 뒤 곧장 관람객 차례로 간다. 수준을 안 보는
+            # 테스트들이라 네 수준에 같은 문장을 채운다.
             sheet = CueSheet([
-                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner"),
-                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience"),
+                Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner",
+                    points=(Turn("", _모든_수준("첫 해설")),)),
+                Cue("c2", "둘째", "사회자 둘째 대사", "둘째 지시", "audience",
+                    points=(Turn("", _모든_수준("둘째 해설")),)),
             ])
         self.d = Director(
             sheet,
@@ -362,26 +371,30 @@ def test_단독에서도_a_는_멈춘다():
 
 def test_l_뒤_r_은_대기_수준을_바로_적용한다():
     """사용자 결정 — 바로 적용하려면 "이 큐 다시(R)". `r` 은 abort + start 라
-    `_begin_cue` 를 지나므로 같은 큐가 새 수준의 여는 대사(캐시)로 다시 열린다.
-    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③)."""
-    from stage.mc_cache import cache_key
+    `_begin_cue` 를 지나므로 같은 큐가 **새 수준의 대본**으로 다시 열린다.
+    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③).
 
+    ~~여는 대사 캐시가 갈리는 것으로 봤다~~ — 캐시가 사라져(고정 대본 전환)
+    수준이 갈리는 곳은 턴 대본이다. 여는 대사는 두 번 다 큐시트 원문이고,
+    그 뒤의 해설이 중고등 → 초등으로 바뀌는지를 본다."""
     def 브리프(수준):
         return {"mc_brief": f"{수준} 진행", "docent_brief": f"{수준} 해설"}
 
     sheet = CueSheet([
         Cue("c1", "첫째", "원문 c1", "옛 지시", "partner",
-            briefs={n: 브리프(n) for n in ("초등", "중고등", "일반", "전문가")}),
+            briefs={n: 브리프(n) for n in ("초등", "중고등", "일반", "전문가")},
+            points=(Turn("", {n: f"{n} 설명" for n in ("초등", "중고등", "일반", "전문가")}),)),
     ])
     훅: list[str] = []
     h = Harness(
         sheet=sheet, level_name="중고등", docent_min_chars=120,
-        mc_lines={cache_key("c1", "초등", "초등 진행"): "초등용 c1 여는 대사"},
         level_min_chars={"초등": 70, "중고등": 120, "일반": 180, "전문가": 260},
         on_level_change=훅.append,
     )
     h.run(["s", "l 초등", "r", "q"])
-    assert [t for _, t in h.says()] == ["원문 c1", "초등용 c1 여는 대사"]
+    assert [t for _, t in h.says()] == ["원문 c1", "원문 c1"]
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "초등 설명"), h.says()
     assert 훅 == ["초등"]
     assert "관람객 수준을 초등(으)로 바꿨다 — c1 부터" in h.warnings, h.warnings
     assert h.d.snapshot()["level"] == "초등"

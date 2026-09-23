@@ -140,9 +140,60 @@ def qwen_voice() -> str:
 # 어조를 더 얹고 싶을 때만 채운다(예: "밝고 씩씩하게"). 비우면 보내지 않는다.
 QWEN_INSTRUCT_DEFAULT = ""
 
+# ── 감정 어조 (설계 §12.5 — 스위치 뒤, 기본 꺼짐) ────────────────
+#
+# 대본의 감정 태그를 역할 기본 어조 뒤에 한 줄로 붙여 보낸다.
+#
+# **기본이 꺼짐인 이유**: Qwen3-TTS 는 요청마다 `instructions` 를 받는데, 지시문이
+# 발화마다 달라지면 음색·음높이가 흔들릴 수 있다. 근거 없는 걱정이 아니다 —
+# VoiceDesign(지시문으로 음색을 묘사하는 방식)으로 갔을 때 **문장마다 목소리가
+# 달라지는 것을 실제로 겪었고**(위 QWEN_VOICE_DEFAULT 주석), 그래서 내장 화자로
+# 되돌아왔다. 같은 문장 x 감정 8개를 청취 비교(음높이·음색·첫 소리 지연)한 뒤에
+# 기본값을 정한다. 그전까지 이 기능은 **켜야 도는 것**이다(CLAUDE.md: 시뮬/실험
+# 단계의 우회는 스위치 뒤에 두고 기본을 꺼짐으로).
+EMOTION_INSTRUCT: dict[str, str] = {
+    "반가움": "반갑게 인사하듯",
+    "기쁨": "즐겁고 신나게",
+    "놀람": "깜짝 놀란 듯이",
+    "궁금": "궁금해하며 묻듯이",
+    "뿌듯": "자랑스럽게",
+    "끄덕": "차분하게 맞장구치듯",
+    "아쉬움": "조금 아쉬운 듯",
+    "설명": "",   # 기본 태그 — 역할 기본 어조 그대로 간다
+}
+
+# 이번 발화의 감정. **모듈 전역인 이유**: `instructions` 는 합성 요청을 만드는
+# 순간(`_qwen_body`, 워커 스레드)에 읽히는데 그 자리까지 태그를 들고 갈 통로가
+# 없다(`_Item` 에 필드를 더하면 선요청·폴백·사운드 경로가 전부 그것을 알아야
+# 한다). 무대 모드는 **발화가 직렬**이라(불변식 ②: 직전 `speaking_ended` 전에는
+# 다음 `say` 가 오지 않는다) 한 발화 안에서는 값이 바뀌지 않는다.
+_emotion = ""
+
+
+def set_emotion(tag: str) -> None:
+    """이번 발화의 감정 태그를 정한다. 스위치가 꺼져 있으면(기본) 효과가 없다."""
+    global _emotion
+    _emotion = (tag or "").strip()
+
+
+def emotion_tts_enabled() -> bool:
+    """감정 어조를 지시문에 실을까. **기본 꺼짐** — 사다리로 켠다."""
+    return _config.get("REACHY_EMOTION_TTS", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
 
 def qwen_instruct() -> str:
-    return _config.get("TTS_QWEN_INSTRUCT", QWEN_INSTRUCT_DEFAULT)
+    base = _config.get("TTS_QWEN_INSTRUCT", QWEN_INSTRUCT_DEFAULT)
+    if not emotion_tts_enabled():
+        return base            # 꺼져 있으면 지금까지와 완전히 같다
+    extra = EMOTION_INSTRUCT.get(_emotion, "")
+    if not extra:
+        # 모르는 태그·'설명'·빈 값 — 역할 기본 어조 그대로. 여기서 경고하지
+        # 않는 이유는 `motion.category_for` 가 이미 같은 태그로 경고하기
+        # 때문이다(한 발화에 같은 경고가 두 줄 찍히면 로그가 묻힌다).
+        return base
+    return f"{base}, {extra}" if base else extra
 
 # 한국어 음성은 REACHY_VOICE 로 바꾼다. macOS 에는 ko_KR 음성이 9종 있다:
 #   Yuna / Eddy / Flo / Grandma / Grandpa / Reed / Rocko / Sandy / Shelley

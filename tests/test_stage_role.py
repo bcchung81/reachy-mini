@@ -301,7 +301,7 @@ def test_발화가_수신_루프를_막지_않는다():
     말하는중 = threading.Event()
     끝내라 = threading.Event()
 
-    def speak_one(cue_id, text, seq):
+    def speak_one(cue_id, text, seq, emotion=""):
         말하는중.set()
         끝내라.wait(5)
 
@@ -329,7 +329,7 @@ def test_말하는_도중에_abort_와_mic_이_처리된다():
     멈춰 = threading.Event()
     받은것: list[str] = []
 
-    def speak_one(cue_id, text, seq):
+    def speak_one(cue_id, text, seq, emotion=""):
         말하는중.set()
         멈춰.wait(5)   # speaker.wait_idle() 흉내 — 발화가 흐르는 동안
         받은것.append("발화끝")
@@ -374,7 +374,7 @@ def test_발화가_겹쳐_들어오면_기다리며_경고한다():
     끝내라 = threading.Event()
     순서: list[str] = []
 
-    def speak_one(cue_id, text, seq):
+    def speak_one(cue_id, text, seq, emotion=""):
         순서.append(f"start:{cue_id}")
         시작.set()
         끝내라.wait(5)
@@ -515,6 +515,153 @@ def test_abort_는_소리와_모션을_함께_끊는다():
     assert calls == ["stop"]
 
 
+# ── 감정·듣는 반응·시선 (설계 §12.5·§12.6) ──────────────────────────
+#
+# 지금까지 무대 모드의 모션은 문장 키워드 추측이었고, `gaze` 는 로그만 찍었다.
+# 큐시트가 감정을 명시하게 됐으므로 추측 대신 그 태그를 쓰고, 시선은 실제로
+# 머리를 돌린다. 셋 다 **감독이 caps 로 협상한다** — 배선이 빠지면 감독은
+# 보내는데 로봇은 아무것도 안 하는, 로그만 봐서는 정상인 상태가 된다.
+
+
+class _FakePlayer:
+    """`MotionPlayer` 대역 — 무엇을 어떤 경로로 걸었는지만 기록한다."""
+
+    def __init__(self, driver=None):
+        self.played: list[tuple[str, bool]] = []
+        self.driver = driver
+
+    def play_for(self, category, force=False, idle=False):
+        self.played.append((category, idle))
+        return f"move_{category}"
+
+
+class _FakeDriver:
+    def __init__(self):
+        self.gaze: list[float] = []
+
+    def set_gaze(self, yaw_deg: float) -> None:
+        self.gaze.append(yaw_deg)
+
+
+def test_SayRunner_가_감정을_그대로_넘긴다():
+    """`say.emotion` 이 워커까지 가야 `session.speak(category=…)` 가 쓴다."""
+    got: list[tuple] = []
+    done = __import__("threading").Event()
+
+    def speak_one(cue_id, text, seq, emotion=""):
+        got.append((cue_id, text, seq, emotion))
+        done.set()
+
+    r = main_mod.SayRunner(speak_one, warn=lambda m: None)
+    r.on_say("c1", "와!", 3, "놀람")
+    assert done.wait(2)
+    r.join(2)
+    assert got == [("c1", "와!", 3, "놀람")]
+
+
+def test_SayRunner_는_감정_없이도_불릴_수_있다():
+    """1대 모드·옛 감독 경로가 깨지지 않게 기본값을 둔다."""
+    got: list[tuple] = []
+    done = __import__("threading").Event()
+
+    def speak_one(cue_id, text, seq, emotion=""):
+        got.append((cue_id, text, seq, emotion))
+        done.set()
+
+    r = main_mod.SayRunner(speak_one, warn=lambda m: None)
+    r.on_say("c1", "안녕", None)
+    assert done.wait(2)
+    r.join(2)
+    assert got == [("c1", "안녕", None, "")]
+
+
+def test_듣는_반응은_소리_없이_모션만_낸다():
+    """상대가 말하는 중이다 — 발성이 겹치면 그 대사를 덮는다(설계 §12.6)."""
+    pl = _FakePlayer()
+    main_mod.make_react(pl, log=lambda m: None)("끄덕")
+    assert pl.played == [("ack", True)], "발성이 나가는 경로(idle=False)로 걸었다"
+
+
+def test_듣는_반응의_설명_태그는_아무것도_하지_않는다():
+    pl = _FakePlayer()
+    main_mod.make_react(pl, log=lambda m: None)("설명")
+    assert pl.played == []
+
+
+def test_모르는_반응_감정은_소리_내서_넘어간다():
+    """대본 오타를 조용히 삼키면 그 큐만 반응이 없고 로그는 정상이다."""
+    logs: list[str] = []
+    pl = _FakePlayer()
+    main_mod.make_react(pl, log=logs.append)("뾰로통")
+    assert pl.played == []
+    assert any("뾰로통" in m for m in logs)
+
+
+def test_로봇이_없으면_반응은_경고만_남긴다():
+    logs: list[str] = []
+    main_mod.make_react(None, log=logs.append)("끄덕")
+    assert any("경고" in m for m in logs)
+
+
+def test_상대_방향_기본은_오른쪽이다(monkeypatch, 빈_설정파일):
+    monkeypatch.delenv("REACHY_PARTNER_SIDE", raising=False)
+    assert main_mod.partner_side() == "right"
+
+
+def test_상대_방향은_설정_사다리를_탄다(monkeypatch, 빈_설정파일):
+    """실기 배치 정보다 — 셸 export 는 데몬의 자식인 앱에 닿지 않는다."""
+    monkeypatch.setenv("REACHY_PARTNER_SIDE", "LEFT")
+    assert main_mod.partner_side() == "left"
+
+
+def test_상대_방향_오타는_소리_내서_기본값으로_간다(monkeypatch, 빈_설정파일):
+    """시선이 반대로 도는 것은 연출 사고지 시연 중단 사유가 아니다 —
+    죽이지 않고 경고하고 기본값으로 간다(CLAUDE.md '폴백에는 경고')."""
+    logs: list[str] = []
+    monkeypatch.setenv("REACHY_PARTNER_SIDE", "왼쪽")
+    assert main_mod.partner_side(warn=logs.append) == "right"
+    assert any("REACHY_PARTNER_SIDE" in m for m in logs)
+
+
+def test_시선이_드라이버의_yaw_오프셋으로_간다(monkeypatch, 빈_설정파일):
+    """**직접 set_target 을 부르지 않는다**(공식 control-loops 규칙) —
+    쓰는 스레드는 드라이버 하나여야 한다."""
+    monkeypatch.setenv("REACHY_PARTNER_SIDE", "right")
+    drv = _FakeDriver()
+    on_gaze = main_mod.make_gaze(_FakePlayer(drv), log=lambda m: None)
+
+    on_gaze("partner")
+    on_gaze("audience")
+    assert drv.gaze == [-main_mod.GAZE_YAW_DEG, 0.0]
+
+
+def test_상대가_왼쪽이면_시선_부호가_뒤집힌다(monkeypatch, 빈_설정파일):
+    monkeypatch.setenv("REACHY_PARTNER_SIDE", "left")
+    drv = _FakeDriver()
+    main_mod.make_gaze(_FakePlayer(drv), log=lambda m: None)("partner")
+    assert drv.gaze == [+main_mod.GAZE_YAW_DEG]
+
+
+def test_모르는_시선_대상은_소리_내서_무시한다(monkeypatch, 빈_설정파일):
+    logs: list[str] = []
+    drv = _FakeDriver()
+    main_mod.make_gaze(_FakePlayer(drv), log=logs.append)("천장")
+    assert drv.gaze == []
+    assert any("천장" in m for m in logs)
+
+
+def test_시선_각도가_안전_한계_안이다():
+    """머리 pitch/roll ±40도, 머리-몸 yaw 차 65도. sway(±7.5도)를 더해도
+    한참 남아야 한다 — SDK 가 조용히 클램프하면 목표와 실제가 어긋난다.
+
+    드라이버의 상한도 함께 본다: `main` 쪽 각도만 키우면 드라이버가 **조용히**
+    잘라 "왜 덜 돌지" 가 된다(정확히 이 저장소가 싫어하는 부류)."""
+    import driver as driver_mod
+
+    assert main_mod.GAZE_YAW_DEG <= 25.0
+    assert main_mod.GAZE_YAW_DEG <= driver_mod.GAZE_MAX_DEG
+
+
 # ── 청취 스레드 생존 (리뷰 A5b) ─────────────────────────────────────
 
 
@@ -603,7 +750,13 @@ def test_stage_run은_카메라와_대기모드_핸들러를_배선한다(monkey
     assert callable(captured["handlers"].on_camera)
     assert callable(captured["handlers"].on_rtc)
     assert callable(captured["handlers"].on_standby)
-    assert captured["caps"] == ["camera"] or captured["caps"] == []
+    assert callable(captured["handlers"].on_gaze)
+    assert callable(captured["handlers"].on_react)
+    assert set(captured["caps"]) <= {"camera", "emotion", "react", "gaze"}
+    # 감정·반응·시선은 **앱 버전의 기능**이라 하드웨어와 무관하게 언제나 싣는다.
+    # 감독은 caps 에 없는 기능을 보내지 않으므로, 여기서 빠지면 새 로봇인데도
+    # 옛 로봇 취급을 받아 감정이 영영 안 온다(설계 §12.5).
+    assert {"emotion", "react", "gaze"} <= set(captured["caps"])
 
 
 def test_청취_루프가_죽으면_감독과_로그에_알린다():

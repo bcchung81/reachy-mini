@@ -178,7 +178,11 @@ def test_감독이_만든_지시가_로봇_핸들러에_그대로_닿는다():
         "ws://x",
         "mc",
         stage_client.Handlers(
-            on_say=lambda cue_id, text, seq: got.append(("say", cue_id, text, seq)),
+            # `emotion` 은 이 테스트의 관심사가 아니다(감독이 싣기 시작하면 값이
+            # 생긴다) — 여기서 보는 것은 cue_id·text·seq 의 **필드 이름**이다.
+            on_say=lambda cue_id, text, seq, emotion="": got.append(
+                ("say", cue_id, text, seq)
+            ),
             on_mic=lambda open_: got.append(("mic", open_)),
             on_gaze=lambda target: got.append(("gaze", target)),
             on_abort=lambda: got.append(("abort",)),
@@ -212,13 +216,18 @@ def test_로봇이_보낸_보고가_감독의_상태를_실제로_옮긴다():
 
     stage_client, protocol, _ = _cross_modules()
 
-    from stage.cues import Cue, CueSheet
+    from stage.cues import Cue, CueSheet, Turn
     from stage.machine import State
     from stage.server import StageServer
 
+    # 해설은 고정 대본이다(2026-09-23) — `points` 가 없으면 도슨트가 말할 것이
+    # 없어 오프닝 뒤 곧장 관람객 차례로 간다. 이 테스트가 보려는 것은 그 다음
+    # 발화가 실제로 나가는지라, 네 수준 모두에 한 줄을 채운다.
+    설명 = {lv: "도슨트 대사" for lv in ("초등", "중고등", "일반", "전문가")}
     server = StageServer(
-        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner")]),
-        generate=lambda role, brief, history: "도슨트 대사",
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+                      points=(Turn("", 설명),))]),
+        generate=lambda role, brief, history: "쓰이지 않는다",
         warn=lambda m: None,
     )
     server.director.on_connect("mc")

@@ -14,7 +14,9 @@ import json
 ROBOT_MSGS = frozenset(
     {"hello", "heard", "speaking_started", "speaking_ended", "error", "rtc"}
 )
-DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort", "camera", "rtc", "standby"})
+DIRECTOR_MSGS = frozenset(
+    {"say", "mic", "gaze", "abort", "camera", "rtc", "standby", "react"}
+)
 KNOWN_MSGS = ROBOT_MSGS | DIRECTOR_MSGS
 ROLES = frozenset({"mc", "docent"})
 

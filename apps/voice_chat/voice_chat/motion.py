@@ -18,7 +18,70 @@ CATEGORY_MOVES: dict[str, list[str]] = {
     "curious": ["curious1", "inquiring1", "thoughtful1"],
     "no": ["no1", "sad1"],
     "ack": ["yes1", "understanding1", "attentive1"],
+    # 아래 둘은 **대본 감정 태그 전용**이다(설계 §12.2). `classify` 의 키워드
+    # 규칙은 이 둘을 고르지 않는다 — 추측으로 "뿌듯" 을 맞히는 규칙을 만들면
+    # 엉뚱한 문장에서 터진다. 감독이 태그를 실어 줄 때만 쓴다.
+    "proud": ["proud1", "proud2", "proud3"],
+    "sad": ["sad1", "downcast1"],
 }
+
+# ── 대본 감정 태그 (설계 §12.2·§12.5) ──────────────────────────────
+#
+# 큐시트가 감정을 명시하고 감독이 `say.emotion` 으로 실어 준다. 로봇은 추측
+# (`classify`) 대신 그 태그를 쓴다 — 추측은 "타이타닉" 한 단어에 슬픈 모션을
+# 거는 식으로 대본과 어긋난다.
+#
+# **어휘는 두 벌이다.** 감독은 `stage/cues.py::EMOTIONS`, 로봇은 여기. 로봇 앱은
+# `stage/` 를 import 할 수 없다(실기에는 앱만 올라간다 —
+# `tests/test_deployment_contract.py` 가 그걸 고정한다). 둘이 어긋나면
+# `tests/test_emotions.py::test_감정_어휘가_감독과_로봇에서_같다` 가 깨진다.
+
+# '설명' — 모션도 리액션 발성도 내지 않는다(말할 때 driver 의 흔들림만 남는다).
+# 해설의 기본 태그라 여기서 모션을 내면 대사마다 몸이 튄다.
+NO_MOTION = "none"
+
+EMOTION_CATEGORY: dict[str, str] = {
+    "반가움": "greet",
+    "기쁨": "joy",
+    "놀람": "surprise",
+    "궁금": "curious",
+    "뿌듯": "proud",
+    "끄덕": "ack",
+    "아쉬움": "sad",
+    "설명": NO_MOTION,
+}
+STAGE_EMOTIONS: tuple[str, ...] = tuple(EMOTION_CATEGORY)
+
+# "감정이 아예 안 온다" 는 상태(감독이 옛 버전이거나 대본에 태그가 없다)는
+# 발화마다 나므로 한 번만 찍는다. 반대로 **모르는 태그**는 그 큐에서만 나므로
+# 매번 찍는다 — 한 번만 찍으면 어느 큐의 오타인지 알 수 없다.
+_emotion_warned: set[str] = set()
+
+
+def category_for(emotion: str, warn=print) -> str | None:
+    """대본 감정 태그 → 모션 범주. 모르면 `None`(호출부가 키워드 추측으로 내려간다).
+
+    `NO_MOTION` 은 '설명' 이다 — 호출부가 **모션을 아예 걸지 않아야** 한다.
+    `None`(모름)과 구별되는 값인 것이 핵심이다: 둘을 같은 값으로 두면 '설명'
+    대사가 전부 키워드 추측으로 내려가 해설 내내 모션이 터진다.
+    """
+    tag = (emotion or "").strip()
+    if not tag:
+        if "빈태그" not in _emotion_warned:
+            _emotion_warned.add("빈태그")
+            warn(
+                "  [감정 경고] say 에 감정이 실려 오지 않는다 — 키워드 추측"
+                "(classify)으로 돈다. 감독이 옛 버전이면 재배포가 필요하다"
+            )
+        return None
+    category = EMOTION_CATEGORY.get(tag)
+    if category is None:
+        warn(
+            f"  [감정 경고] 모르는 감정 태그다: {tag!r} — 키워드 추측으로 돈다 "
+            f"(쓸 수 있는 값: {', '.join(STAGE_EMOTIONS)})"
+        )
+        return None
+    return category
 
 # 위에서부터 먼저 맞는 규칙이 이긴다 — 인사·감정이 의문사보다 우선
 _RULES: list[tuple[str, list[str]]] = [
@@ -110,12 +173,27 @@ class MotionPlayer:
         '그만'이라고 해도 계속 춘다."""
         self._driver.cancel()
 
-    def play_for(self, category: str, force: bool = False) -> str | None:
+    @property
+    def driver(self):
+        """드라이버 자체. **모션 정책이 아닌 층**을 건드릴 때만 쓴다 — 지금은
+        시선(`set_gaze`)뿐이다. 로봇에 쓰는 것은 여전히 드라이버 하나다."""
+        return self._driver
+
+    def play_for(
+        self, category: str, force: bool = False, idle: bool = False
+    ) -> str | None:
         """범주에 맞는 모션을 골라 비차단 재생. 시작했으면 모션 이름을 돌려준다.
 
         force=True 면 진행 중인 모션을 끊고 재생한다. 공연(노래·춤) 요청처럼
         상호작용의 목적 자체인 동작은 겹친다고 버리면 안 된다.
+
+        idle=True 는 **소리 없는 경로**다(`play` 참조). 듣는 쪽 반응(`react`)이
+        여기로 온다 — 상대가 말하는 중이라 발성이 겹치면 그 대사를 덮는다.
+        내 차례가 오면 응답 모션이 이것을 밀어내는 것도 같은 이유로 옳다.
         """
+        if category == NO_MOTION:
+            # '설명' — 모션도 발성도 없다. 경고할 일이 아니라 **정상 경로**다.
+            return None
         if category not in CATEGORY_MOVES:
             # 조용히 None 을 주면 "왜 안 움직이지" 를 못 찾는다(리뷰 B1 — 'neutral').
             print(
@@ -128,7 +206,10 @@ class MotionPlayer:
         if not candidates:
             return None
         return self.play(
-            random.choice(candidates), force=force, full_sound=(category == "perform")
+            random.choice(candidates),
+            force=force,
+            idle=idle,
+            full_sound=(category == "perform"),
         )
 
     def play(

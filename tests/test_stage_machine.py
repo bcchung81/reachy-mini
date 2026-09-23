@@ -256,3 +256,17 @@ def test_seq_없는_종료_보고는_유령이다():
     m = TurnMachine()
     m.speak("mc", "c1", "…")
     assert m.on_speaking_ended("mc", "c1") == []
+
+
+def test_say_에_감정을_실어_보낸다():
+    """대사마다 감정 태그를 싣는다 — 로봇이 그 태그로 모션·어조를 고른다.
+    안 주면 필드를 아예 넣지 않는다: 옛 로봇 앱은 모르는 필드를 무시하지만,
+    빈 값을 굳이 실으면 로그가 지저분해지고 '감정이 없는 것'과 구분이 안 된다."""
+    m = TurnMachine()
+    cmds = m.speak("mc", "c1", "안녕하세요.", emotion="반가움")
+    say = [c for c in cmds if c.type == "say"][0]
+    assert say.fields["emotion"] == "반가움"
+
+    m2 = TurnMachine()
+    say2 = [c for c in m2.speak("mc", "c1", "안녕하세요.") if c.type == "say"][0]
+    assert "emotion" not in say2.fields

@@ -13,7 +13,9 @@ from typing import Callable
 from websockets.exceptions import ConnectionClosed
 
 _ROBOT_MSGS = frozenset({"hello", "heard", "speaking_started", "speaking_ended", "error", "rtc"})
-_DIRECTOR_MSGS = frozenset({"say", "mic", "gaze", "abort", "camera", "rtc", "standby"})
+_DIRECTOR_MSGS = frozenset(
+    {"say", "mic", "gaze", "abort", "camera", "rtc", "standby", "react"}
+)
 
 RETRY_S = 2.0
 # `ws.recv(timeout=...)` 폴링 주기.
@@ -33,20 +35,29 @@ POLL_S = 0.5
 class Handlers:
     """감독의 지시를 받는 곳. 전부 채워야 한다.
 
-    `on_say(cue_id, text, seq)` — `seq` 는 감독이 발화마다 매기는 번호다.
+    `on_say(cue_id, text, seq, emotion)` — `seq` 는 감독이 발화마다 매기는 번호다.
     `speaking_started`/`speaking_ended` 에 **그대로 되돌려 준다.** 그래야 감독이
     콘솔 `r` 로 같은 큐를 다시 발행했을 때 중단된 발화의 늦은 종료 보고를
     가릴 수 있다(설계 §4, 리뷰 A2). `gaze` 는 `say` 에 실려 온 적이 없다 —
     감독은 별도 `gaze` 지시를 보낸다.
+
+    `emotion` 은 큐시트가 정한 감정 태그다(설계 §12.5). 옛 감독은 안 싣는다 —
+    그때는 빈 문자열이 가고 로봇이 키워드 추측으로 돈다(경고를 남긴다).
+
+    `on_react(emotion)` 는 **듣는 쪽 반응**이다 — 상대가 말하는 동안 끄덕·놀람
+    모션을 소리 없이 낸다. 기본값이 `None` 인 이유는 옛 호출부(테스트 포함)를
+    깨지 않기 위해서고, 배선을 빠뜨린 채 `caps` 에 `"react"` 를 실으면
+    `_on_raw` 가 **경고를 남긴다** — 조용히 무시되면 "왜 안 끄덕이지" 를 못 찾는다.
     """
 
-    on_say: Callable[[str, str, int | None], None]
+    on_say: Callable[[str, str, int | None, str], None]
     on_mic: Callable[[bool], None]
     on_gaze: Callable[[str], None]
     on_abort: Callable[[], None]
     on_camera: Callable[[str, bool], None]
     on_rtc: Callable[[str, dict], None]
     on_standby: Callable[[bool], None]
+    on_react: Callable[[str], None] | None = None
 
 
 class StageClient:
@@ -178,7 +189,22 @@ class StageClient:
             return
         try:
             if t == "say":
-                self._h.on_say(msg.get("cue_id", ""), msg.get("text", ""), msg.get("seq"))
+                # `emotion` 이 없으면 빈 문자열 — 옛 감독과 붙어도 멈추지 않는다
+                # (로봇이 키워드 추측으로 내려가며 경고를 남긴다, 설계 §12.5).
+                self._h.on_say(
+                    msg.get("cue_id", ""),
+                    msg.get("text", ""),
+                    msg.get("seq"),
+                    msg.get("emotion") or "",
+                )
+            elif t == "react":
+                if self._h.on_react is None:
+                    self._warn(
+                        "react 지시를 받았지만 반응 핸들러가 배선되지 않았다 — "
+                        "감독은 보내는데 로봇은 아무것도 하지 않는다"
+                    )
+                else:
+                    self._h.on_react(msg.get("emotion") or "")
             elif t == "mic":
                 self._h.on_mic(bool(msg.get("open")))
             elif t == "gaze":

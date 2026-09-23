@@ -114,3 +114,95 @@ def test_기본_음성은_환경변수로_바뀐다(monkeypatch):
     finally:
         monkeypatch.delenv("REACHY_VOICE")
         importlib.reload(tts_mod)
+
+
+# ── 감정 어조 (설계 §12.5 — 스위치 뒤, 기본 꺼짐) ─────────────────────
+#
+# 역할 기본 어조(`main.ROLE_VOICE` 의 instruct)에 감정 한 줄을 덧붙여 보낸다.
+# **기본은 꺼짐이다**: Qwen3-TTS 는 요청마다 `instructions` 를 받는데, 지시문이
+# 발화마다 달라지면 음색·음높이가 흔들릴 수 있다(lessons.md 의 VoiceDesign 항목 —
+# 요청마다 음색을 새로 만들어 문장마다 목소리가 달라진 전례가 있다). 같은 문장 ×
+# 감정 8개 청취 비교 뒤에 기본값을 정한다.
+
+
+@pytest.fixture
+def 빈_설정파일(monkeypatch, tmp_path):
+    import config
+
+    monkeypatch.setattr(config, "path", lambda: tmp_path / "없는파일.json")
+    monkeypatch.setattr(config, "_cache", None)
+    yield
+    config._cache = None
+
+
+@pytest.fixture(autouse=True)
+def 감정_원복():
+    yield
+    tts_mod.set_emotion("")
+
+
+def test_감정_어조는_기본으로_꺼져_있다(monkeypatch, 빈_설정파일):
+    """꺼져 있으면 **지금 동작 그대로** — 역할 어조만 나간다."""
+    monkeypatch.delenv("REACHY_EMOTION_TTS", raising=False)
+    monkeypatch.setenv("TTS_QWEN_INSTRUCT", "차분하고 낮게, 설명하듯 또박또박")
+    tts_mod.set_emotion("놀람")
+    assert tts_mod.qwen_instruct() == "차분하고 낮게, 설명하듯 또박또박"
+    assert "instructions" in tts_mod._qwen_body("안녕", None, stream=True)
+    assert tts_mod._qwen_body("안녕", None, stream=True)["instructions"] == (
+        "차분하고 낮게, 설명하듯 또박또박"
+    )
+
+
+def test_켜면_역할_어조_뒤에_감정이_붙는다(monkeypatch, 빈_설정파일):
+    monkeypatch.setenv("REACHY_EMOTION_TTS", "1")
+    monkeypatch.setenv("TTS_QWEN_INSTRUCT", "차분하고 낮게, 설명하듯 또박또박")
+    tts_mod.set_emotion("놀람")
+    instruct = tts_mod.qwen_instruct()
+    assert instruct.startswith("차분하고 낮게, 설명하듯 또박또박")
+    assert instruct != "차분하고 낮게, 설명하듯 또박또박"
+    assert tts_mod.EMOTION_INSTRUCT["놀람"] in instruct
+
+
+def test_켜져_있어도_설명은_역할_어조_그대로다(monkeypatch, 빈_설정파일):
+    """'설명' 은 기본 태그다 — 해설 대부분이 여기라 지시문이 흔들리면 안 된다."""
+    monkeypatch.setenv("REACHY_EMOTION_TTS", "1")
+    monkeypatch.setenv("TTS_QWEN_INSTRUCT", "밝고 또렷하게, 진행자처럼 활기차게")
+    tts_mod.set_emotion("설명")
+    assert tts_mod.qwen_instruct() == "밝고 또렷하게, 진행자처럼 활기차게"
+
+
+def test_켜져_있어도_모르는_감정은_역할_어조_그대로다(monkeypatch, 빈_설정파일):
+    monkeypatch.setenv("REACHY_EMOTION_TTS", "1")
+    monkeypatch.setenv("TTS_QWEN_INSTRUCT", "밝고 또렷하게")
+    tts_mod.set_emotion("뾰로통")
+    assert tts_mod.qwen_instruct() == "밝고 또렷하게"
+
+
+def test_감정_어조_어휘가_대본_감정과_같다():
+    """대본의 8종 전부에 어조가 있어야 한다 — 하나 빠지면 그 감정만 조용히
+    역할 기본 어조로 돈다(켠 사람은 켰다고 믿는다)."""
+    import pathlib as _p
+    import sys as _s
+
+    _s.path.insert(0, str(_p.Path(__file__).parent.parent / "apps/voice_chat/voice_chat"))
+    from motion import STAGE_EMOTIONS
+
+    assert set(tts_mod.EMOTION_INSTRUCT) == set(STAGE_EMOTIONS)
+
+
+def test_스위치는_설정_사다리를_탄다(monkeypatch, tmp_path):
+    """실기의 앱은 데몬의 자식이라 셸 export 가 닿지 않는다 — 파일 단으로도
+    켤 수 있어야 한다(docs/lessons.md 의 config 사다리 항목)."""
+    import json
+
+    import config
+
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"REACHY_EMOTION_TTS": "1"}))
+    monkeypatch.setattr(config, "path", lambda: p)
+    monkeypatch.setattr(config, "_cache", None)
+    monkeypatch.delenv("REACHY_EMOTION_TTS", raising=False)
+    try:
+        assert tts_mod.emotion_tts_enabled() is True
+    finally:
+        config._cache = None

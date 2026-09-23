@@ -88,6 +88,8 @@ KNOWN_MOVES = {
     "surprised1", "amazed1", "curious1", "inquiring1", "thoughtful1",
     "no1", "sad1", "yes1", "understanding1", "attentive1",
     "dance2", "dance3",
+    # 대본 감정 태그 '뿌듯'·'아쉬움' 이 쓰는 범주(설계 §12.2)
+    "proud1", "proud2", "proud3", "downcast1",
 }
 
 
@@ -355,3 +357,73 @@ def test_모르는_category_는_경고하고_None_이다(capsys):
     p = MotionPlayer(FakeDriver(), FakeMoves(), None)
     assert p.play_for("neutral") is None
     assert "모션 범주" in capsys.readouterr().out
+
+
+# ── 대본 감정 태그 → 모션 범주 (설계 §12.2·§12.5) ─────────────────────
+#
+# 지금까지 무대 모드의 모션은 **문장 키워드 추측**(classify)이었다. 큐시트가
+# 감정을 명시하게 됐으므로 추측 대신 그 태그를 쓴다 — 추측이 대본과 어긋나면
+# "타이타닉" 한 단어에 슬픈 모션이 걸리는 식으로 연출이 뒤집힌다.
+
+
+def test_계약된_감정이_범주로_변환된다():
+    from motion import NO_MOTION, category_for
+
+    assert category_for("반가움") == "greet"
+    assert category_for("뿌듯") == "proud"
+    assert category_for("아쉬움") == "sad"
+    assert category_for("설명") == NO_MOTION
+
+
+def test_빈_감정은_추측으로_내려가되_한_번은_경고한다():
+    """감독이 아직 감정을 안 싣는 상태(반쯤 배포됨)다. 조용히 추측으로 돌면
+    "감정 표현이 왜 안 되지" 를 시연장에서 추적할 수 없다."""
+    import motion as motion_mod
+
+    warns: list[str] = []
+    motion_mod._emotion_warned.clear()
+    try:
+        assert motion_mod.category_for("", warn=warns.append) is None
+        assert motion_mod.category_for("", warn=warns.append) is None
+    finally:
+        motion_mod._emotion_warned.clear()
+    assert len(warns) == 1, "발화마다 같은 경고를 반복하면 로그가 묻힌다"
+    assert "추측" in warns[0]
+
+
+def test_모르는_감정은_매번_경고하고_추측으로_내려간다():
+    """대본 오타는 드물지만 그 큐에서만 난다 — 한 번만 찍으면 어느 큐인지 모른다."""
+    from motion import category_for
+
+    warns: list[str] = []
+    assert category_for("뾰로통", warn=warns.append) is None
+    assert category_for("뾰로통", warn=warns.append) is None
+    assert len(warns) == 2
+    assert "뾰로통" in warns[0]
+
+
+def test_설명은_모션도_발성도_내지_않는다(monkeypatch):
+    """'설명' 은 기본 태그다 — 해설 내내 모션과 리액션 발성이 터지면 안 된다
+    (말할 때 driver 의 흔들림만 남는다)."""
+    from motion import NO_MOTION
+
+    p, driver, speaker, _ = _player(monkeypatch)
+    assert p.play_for(NO_MOTION) is None
+    assert driver.played == []
+    assert speaker.sounds == []
+
+
+def test_듣는_쪽_반응은_소리_없이_모션만_낸다(monkeypatch):
+    """`react` — 상대가 말하는 중이라 소리가 겹치면 안 된다(설계 §12.6)."""
+    p, driver, speaker, _ = _player(monkeypatch)
+    assert p.play_for("ack", idle=True) is not None
+    assert driver.played and driver.played[0][1] is True, "idle 경로가 아니다"
+    assert speaker.sounds == [], "듣는 반응이 발성을 냈다"
+
+
+def test_듣는_반응은_발화_모션에_밀려난다(monkeypatch):
+    """내 차례가 오면(say) 응답 모션이 끄덕임을 덮어야 한다 — 그래서 idle 이다."""
+    p, driver, _, _ = _player(monkeypatch)
+    p.play_for("ack", idle=True)
+    assert p.play_for("joy") is not None
+    assert driver.played[-1][1] is False

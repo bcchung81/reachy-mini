@@ -52,13 +52,14 @@ def test_type_이_없으면_거절한다():
         protocol.decode(json.dumps({"text": "type 이 빠졌다"}))
 
 
-def test_메시지_종류는_12종이다():
+def test_메시지_종류는_13종이다():
     # 규약이 늘어나면 여기서 먼저 깨져야 한다 — 설계 문서 §4·카메라 설계 §프로토콜 표와 짝이다.
+    # `react`(듣는 쪽 반응, 설계 §12.5)가 13번째다.
     assert protocol.ROBOT_MSGS == frozenset(
         {"hello", "heard", "speaking_started", "speaking_ended", "error", "rtc"}
     )
     assert protocol.DIRECTOR_MSGS == frozenset(
-        {"say", "mic", "gaze", "abort", "camera", "rtc", "standby"}
+        {"say", "mic", "gaze", "abort", "camera", "rtc", "standby", "react"}
     )
-    assert len(protocol.ROBOT_MSGS | protocol.DIRECTOR_MSGS) == 12
+    assert len(protocol.ROBOT_MSGS | protocol.DIRECTOR_MSGS) == 13
     assert protocol.ROLES == {"mc", "docent"}

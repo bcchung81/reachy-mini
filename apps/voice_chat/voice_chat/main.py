@@ -31,10 +31,19 @@ from voice_loop import voice_loop  # noqa: E402
 import os
 
 import config as _config  # noqa: E402
+import motion as _motion  # noqa: E402
+import tts as _tts  # noqa: E402
 from camera_rtc import RtcStreamer  # noqa: E402
 from stage_client import Handlers, StageClient  # noqa: E402
 
 ROLES = ("mc", "docent")
+
+# 상대 로봇을 볼 때 쓰는 머리 yaw 각도(도). 양수가 왼쪽이다.
+# 작게 잡는다 — 20도면 "저쪽을 본다" 가 읽히고, sway(±7.5도)를 더해도 안전
+# 한계(머리-몸 yaw 차 65도)에 한참 못 미친다. 실기에서 두 로봇의 실제 간격을
+# 보고 조정할 값이지, 씬 좌표 같은 시뮬 전용 정보로 계산하지 않는다.
+GAZE_YAW_DEG = 20.0
+PARTNER_SIDES = {"left": +1.0, "right": -1.0}
 
 # 설계 §11. 배속은 **1.2 기준 환산값**이다 — TTS_QWEN_SPEED 기본이 1.2 라
 # (tts.py:46) 1.06/0.94 를 그대로 넣으면 시연 전체가 지금보다 느려진다.
@@ -110,6 +119,80 @@ def make_abort(speaker, player, log=print):
         log("  [감독 abort — 발화·모션 중단]")
 
     return on_abort
+
+
+def make_react(player, log=print):
+    """감독의 `react` — **듣는 쪽 반응**. 상대가 말하는 동안 끄덕·놀람을 낸다.
+
+    **발성 없이 모션만이다**(설계 §12.6). 상대 발화 위에 리액션 발성이 겹치면
+    그 대사를 덮어 버린다 — 그래서 소리가 안 나가는 경로(`play_for(idle=True)`)
+    로 건다. 부수효과도 옳은 방향이다: 내 차례가 와서 응답 모션이 걸리면
+    끄덕임이 밀려난다(`MotionPlayer.play` 의 우선순위).
+
+    모르는 태그는 **추측하지 않는다** — `say` 와 달리 분류할 문장이 없다.
+    """
+
+    def on_react(emotion: str) -> None:
+        if player is None:
+            log("  [경고] react 지시를 받았지만 모션을 낼 수 없다(로봇 없음)")
+            return
+        category = _motion.category_for(emotion, warn=log)
+        if category is None or category == _motion.NO_MOTION:
+            return  # 모르는 태그는 category_for 가 이미 경고했다
+        name = player.play_for(category, idle=True)
+        log(f"  [듣는 반응 {emotion}/{category}/{name}]")
+
+    return on_react
+
+
+def partner_side(warn=print) -> str:
+    """상대 로봇이 어느 쪽에 있나 — `left`/`right`, 기본 `right`.
+
+    **실기 배치 정보다.** 그래서 `config.get()` 사다리를 탄다 — 셸 export 는
+    데몬의 자식인 앱에 닿지 않는다(`config.py` 머리말, `role_of_env` 와 같은 이유).
+
+    오타는 **경고하고 기본값으로** 간다 — `REACHY_ROLE` 처럼 죽이지 않는다.
+    역할이 틀리면 시연 자체가 성립하지 않지만, 시선이 반대로 도는 것은 연출
+    사고지 시연 중단 사유가 아니다. 다만 조용히 넘어가지는 않는다.
+    """
+    raw = _config.get("REACHY_PARTNER_SIDE", "right").strip().lower()
+    if raw not in PARTNER_SIDES:
+        warn(
+            f"  [경고] REACHY_PARTNER_SIDE 가 {raw!r} 다 — "
+            f"쓸 수 있는 값: {', '.join(PARTNER_SIDES)}. 기본값 right 로 간다"
+        )
+        return "right"
+    return raw
+
+
+def make_gaze(player, log=print):
+    """감독의 `gaze` — 머리를 상대/관객 쪽으로 돌린다.
+
+    **직접 `set_target` 을 부르지 않는다**(공식 control-loops 규칙: 쓰는 곳은
+    하나). 드라이버의 sway 층에 머리 yaw 오프셋을 얹는다 — 녹화 모션이 도는
+    동안에는 primary 가 이기므로 저작된 모션을 덮지 않는다(`driver.set_gaze`).
+
+    방향은 기동 시 한 번 읽는다. 시연 중에 로봇을 옮기지 않기 때문이고,
+    발화마다 설정을 다시 읽으면 출처 경고도 발화마다 찍힌다.
+    """
+    sign = PARTNER_SIDES[partner_side(warn=log)]
+    driver = getattr(player, "driver", None) if player is not None else None
+
+    def on_gaze(target: str) -> None:
+        if target == "partner":
+            yaw = GAZE_YAW_DEG * sign
+        elif target == "audience":
+            yaw = 0.0
+        else:
+            log(f"  [경고] 모르는 시선 대상이다: {target!r} — 무시한다")
+            return
+        if driver is None:
+            log(f"  [시선 {target}] (로봇이 없어 머리는 움직이지 않는다)")
+            return
+        driver.set_gaze(yaw)
+        log(f"  [시선 {target} — 머리 yaw {yaw:+.0f}도]")
+
+    return on_gaze
 
 
 def make_camera_handlers(client, log=print):
@@ -329,7 +412,9 @@ class SayRunner:
         self._warn = warn
         self._thread: threading.Thread | None = None
 
-    def on_say(self, cue_id: str, text: str, seq: int | None = None) -> None:
+    def on_say(
+        self, cue_id: str, text: str, seq: int | None = None, emotion: str = ""
+    ) -> None:
         prev = self._thread
         if prev is not None and prev.is_alive():
             self._warn(
@@ -341,7 +426,7 @@ class SayRunner:
                 self._warn("  [경고] 이전 발화가 멈추지 않았다 — 겹쳐 말할 수 있다")
         t = threading.Thread(
             target=self._speak_one,
-            args=(cue_id, text, seq),
+            args=(cue_id, text, seq, emotion),
             daemon=True,
             name="stage-say",
         )
@@ -377,14 +462,22 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         client: StageClient | None = None
         voice_thread: threading.Thread | None = None
 
-        def speak_one(cue_id: str, text: str, seq: int | None) -> None:
+        def speak_one(
+            cue_id: str, text: str, seq: int | None, emotion: str = ""
+        ) -> None:
             """발화 하나. **워커 스레드에서 돈다**(SayRunner 참고).
 
             `seq` 는 감독이 `say` 에 실어 준 발화 번호 — 발성 경계 보고에
             그대로 되돌려 준다. 이것이 없으면 콘솔 `r` 뒤 중단된 발화의 늦은
-            종료 보고를 감독이 새 발화의 것으로 오인한다(리뷰 A2)."""
+            종료 보고를 감독이 새 발화의 것으로 오인한다(리뷰 A2).
+
+            `emotion` 은 큐시트가 정한 감정 태그다(설계 §12.5). 모션 범주로
+            바꿔 `speak()` 에 넘기고, 목소리 어조에도 실어 둔다 — 어조는
+            `REACHY_EMOTION_TTS` 가 꺼져 있으면(기본) 아무 효과가 없다."""
             try:
-                speak(text, speaker, player)
+                category = _motion.category_for(emotion)
+                _tts.set_emotion(emotion)
+                speak(text, speaker, player, category=category)
             except Exception as exc:
                 # 워커 스레드라 raise 해도 아무도 못 받는다 — 대신 감독에게
                 # 올리고 로그를 남긴다. 그리고 아래 finally 가 발성 경계를
@@ -407,6 +500,11 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         # caps: 이 로봇이 카메라 스트림을 실제로 열 수 있을 때만 싣는다(재배포 안 된
         # 옛 앱은 아예 안 실어 감독이 그 로봇에 camera 지시를 보내지 않는다).
         caps = ["camera"] if RtcStreamer(send_rtc=lambda *a: None).available() else []
+        # 감정·듣는 반응·시선은 **앱 버전의 기능**이라 하드웨어와 무관하다
+        # (설계 §12.5). 감독은 caps 에 없는 기능을 보내지 않고 접속 때 한 번
+        # 경고한다 — 여기서 빠지면 새 로봇인데도 옛 로봇 취급을 받아 감정이
+        # 영영 안 오고, 로그만 봐서는 정상으로 보인다.
+        caps += ["emotion", "react", "gaze"]
 
         # **순환 의존을 끊는 순서다.** `Handlers` 의 `on_camera`/`on_rtc` 는
         # `RtcStreamer(send_rtc=client.rtc, ...)` 로 이 `client` 자신을 참조해야
@@ -424,11 +522,12 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
         client.set_handlers(Handlers(
             on_say=say_runner.on_say,
             on_mic=on_mic,
-            on_gaze=lambda target: print(f"  [시선 {target}]"),
+            on_gaze=make_gaze(player),
             on_abort=make_abort(speaker, player),
             on_camera=on_camera,
             on_rtc=on_rtc,
             on_standby=on_standby,
+            on_react=make_react(player),
         ))
 
         # 사회자만 듣는다. 도슨트는 감독의 지시만 받는다.
