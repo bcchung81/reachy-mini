@@ -298,7 +298,7 @@ A단계에서 §3 실측의 7줄만 다듬는다. 조사 파일(`02-history.yaml
 | 항목 | 고정값 |
 |---|---|
 | 감정 필드 | `say` 메시지의 `emotion` (문자열). 없거나 빈 값이면 로봇이 기존 키워드 추측으로 돈다 |
-| 감정 어휘 | `반가움·기쁨·놀람·궁금·뿌듯·끄덕·아쉬움·설명` 8종. 감독은 `stage/cues.py::EMOTIONS`, 로봇은 같은 목록을 한 벌 더 갖고 테스트가 둘을 묶는다 |
+| 감정 어휘 | ~~`반가움·기쁨·놀람·궁금·뿌듯·끄덕·아쉬움·설명` 8종~~ → **18종**(2026-09-24, `2026-09-24-emotion-vocabulary.md` — 8종이 대본의 결을 `궁금·기쁨·끄덕` 에 뭉개 단조로웠다). 감독은 `stage/cues.py::EMOTIONS`, 로봇은 같은 목록을 한 벌 더 갖고 테스트가 둘을 묶는다 |
 | 듣는 쪽 반응 | 새 메시지 `react` — `{"type": "react", "emotion": "<태그>"}`. **발성 없이 모션만.** 감독 쪽 `stage/protocol.py::DIRECTOR_MSGS` 와 로봇 쪽 `stage_client._DIRECTOR_MSGS` 에 함께 추가 |
 | 기능 협상 | 로봇 `hello` 의 `caps` 에 `"emotion"`, `"react"`, `"gaze"`. 감독은 `caps` 에 없는 기능은 **보내지 않고**, 접속 때 한 번 경고한다 |
 | 시선 | 기존 `gaze` 메시지(`target`: `partner`/`audience`)를 로봇이 실제로 따른다. 상대 방향은 로봇 설정 `REACHY_PARTNER_SIDE`(`left`/`right`, 기본 `right`), `config.get()` 사다리를 탄다 |

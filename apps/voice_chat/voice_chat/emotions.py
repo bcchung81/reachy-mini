@@ -78,7 +78,21 @@ IDLE_MOVES: list[str] = [
 ]
 
 
-def pick_idle(available: set[str]) -> str | None:
-    """대기 모션 하나를 고른다. 카탈로그에 없는 이름은 제외한다."""
-    candidates = [n for n in IDLE_MOVES if n in available]
+# 무대(2대) 모드의 대기 모션(2026-09-24). 무대에서 "대기" 는 대개 **상대가 말하는 동안**이다
+# — 위 목록의 `boredom1`(지루해 졸기)·`indifferent1`("뭐 어때")·`shy1`·`uncertain1` 이 도슨트
+# 설명 도중에 무작위로 나와 사회자가 딴청을 피우는 것처럼 보였다(앱 로그: 도슨트 차례에
+# `[대기 모션 indifferent1]`). 무대에서는 **듣는 자세**만 남긴다. `simple_nod`·`uh_huh_tilt` 는
+# 춤 라이브러리(소리 없음) — 못 읽은 로봇에서는 `available` 거름에서 빠진다.
+STAGE_IDLE_MOVES: list[str] = [
+    "attentive1", "attentive2", "understanding1", "thoughtful1", "thoughtful2",
+    "serenity1", "inquiring2", "simple_nod", "uh_huh_tilt",
+]
+
+
+def pick_idle(available: set[str], moves: list[str] | None = None) -> str | None:
+    """대기 모션 하나를 고른다. 카탈로그에 없는 이름은 제외한다.
+
+    `moves` 를 안 주면 1대 모드 목록(`IDLE_MOVES`)이다. 무대 모드는 `STAGE_IDLE_MOVES`.
+    """
+    candidates = [n for n in (moves or IDLE_MOVES) if n in available]
     return random.choice(candidates) if candidates else None

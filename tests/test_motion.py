@@ -90,6 +90,13 @@ KNOWN_MOVES = {
     "dance2", "dance3",
     # 대본 감정 태그 '뿌듯'·'아쉬움' 이 쓰는 범주(설계 §12.2)
     "proud1", "proud2", "proud3", "downcast1",
+    # 태그 18종으로 넓히며 더한 것(2026-09-24) — 감정 라이브러리
+    "welcoming2", "laughing2", "success2", "enthusiastic2", "dance1", "surprised2",
+    "inquiring2", "inquiring3", "thoughtful2", "understanding2", "attentive2",
+    "yes_sad1", "relief1", "relief2", "calming1", "serenity1", "grateful1", "helpful1",
+    "helpful2", "loving1", "come1", "oops1", "oops2",
+    # 춤 라이브러리(pollen-robotics/reachy-mini-dances-library, 소리 없음)
+    "groovy_sway_and_roll", "neck_recoil", "yeah_nod", "uh_huh_tilt", "simple_nod",
 }
 
 
@@ -369,9 +376,11 @@ def test_모르는_category_는_경고하고_None_이다(capsys):
 def test_계약된_감정이_범주로_변환된다():
     from motion import NO_MOTION, category_for
 
-    assert category_for("반가움") == "greet"
+    assert category_for("반가움") == "welcome"
     assert category_for("뿌듯") == "proud"
     assert category_for("아쉬움") == "sad"
+    assert category_for("감탄") == "admire"
+    assert category_for("권유") == "invite"
     assert category_for("설명") == NO_MOTION
 
 
@@ -427,3 +436,41 @@ def test_듣는_반응은_발화_모션에_밀려난다(monkeypatch):
     p.play_for("ack", idle=True)
     assert p.play_for("joy") is not None
     assert driver.played[-1][1] is False
+
+
+def test_같은_범주에서_직전_동작을_연달아_고르지_않는다(monkeypatch):
+    """무작위만 쓰면 후보 2~3개짜리 범주에서 같은 동작이 연달아 나온다 — 대본이 같은 태그를
+    이어 쓰는 자리(맞장구·경청)에서 녹화된 것처럼 보였다(2026-09-24)."""
+    player, driver, _, _ = _player(monkeypatch)
+    names = []
+    for _ in range(40):
+        names.append(player.play_for("admire", idle=True))   # 후보 둘: amazed1·yeah_nod
+        driver.finish()
+    assert all(a != b for a, b in zip(names, names[1:])), names
+
+
+def test_후보가_하나뿐이면_같은_동작을_다시_고른다(monkeypatch):
+    player, driver, _, _ = _player(monkeypatch)
+    monkeypatch.setitem(CATEGORY_MOVES, "admire", ["amazed1"])
+    assert player.play_for("admire", idle=True) == "amazed1"
+    driver.finish()
+    assert player.play_for("admire", idle=True) == "amazed1"
+
+
+def test_동작_라이브러리를_합치면_앞_라이브러리가_이긴다():
+    from motion import MoveLibrary
+
+    class Lib:
+        def __init__(self, tag, names):
+            self.tag, self.names = tag, names
+
+        def list_moves(self):
+            return self.names
+
+        def get(self, name):
+            return (self.tag, name)
+
+    lib = MoveLibrary([Lib("감정", ["a", "b"]), Lib("춤", ["b", "c"])])
+    assert lib.list_moves() == ["a", "b", "c"]
+    assert lib.get("b") == ("감정", "b")
+    assert lib.get("c") == ("춤", "c")

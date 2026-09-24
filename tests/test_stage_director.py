@@ -2914,4 +2914,5 @@ def test_관람객_질문_경로의_대사도_감정을_싣는다():
     assert qa["cue_id"] == "c1:qa" and qa["emotion"] == "설명", qa
     h.ended("docent", "c1:qa")
     reask = [f for r, t, f in h.sent if t == "say"][-1]
-    assert reask["cue_id"] == "c1:reask" and reask["emotion"] == "궁금", reask
+    # 재질문은 관람객에게 말을 걸어 보라는 **권유**다(2026-09-24 어휘 확장, come1 손짓).
+    assert reask["cue_id"] == "c1:reask" and reask["emotion"] == "권유", reask

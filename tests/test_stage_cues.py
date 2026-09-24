@@ -885,8 +885,11 @@ def test_옛_지시문에_조사가_틀렸다고_한_문구가_없다(cue_id, wr
 # 가르는 이유: 문장 안 태그("[놀람] 와!")는 파싱을 한 번 빠뜨리면 TTS 가 태그를 읽는다.
 
 
-def test_감정_어휘는_여덟_개이고_설명이_기본이다():
-    assert cues_mod.EMOTIONS == ("반가움", "기쁨", "놀람", "궁금", "뿌듯", "끄덕", "아쉬움", "설명")
+def test_감정_어휘는_열여덟_개이고_설명이_기본이다():
+    assert cues_mod.EMOTIONS == (
+        "반가움", "기쁨", "신남", "놀람", "감탄", "궁금", "골똘", "뿌듯", "끄덕",
+        "경청", "아쉬움", "안도", "안심", "감사", "작별", "권유", "멋쩍음", "설명",
+    )
     assert cues_mod.DEFAULT_EMOTION == "설명"
 
 
@@ -1054,3 +1057,37 @@ def test_관람객_경로_고정_대사의_감정이_어휘_안에_있다():
     assert len(cues_mod.QA_ACK_EMOTIONS) == len(cues_mod.QA_ACK_LINES)
     for e in (*cues_mod.QA_ACK_EMOTIONS, cues_mod.QUESTION_PROMPT_EMOTION, cues_mod.QA_ANSWER_EMOTION):
         assert e in cues_mod.EMOTIONS, e
+
+
+def _감정_태그들(c):
+    tags = [c.mc_emotion, c.mc_after_emotion]
+    for i, t in enumerate(c.points):
+        if i > 0:
+            tags.append(t.ask_emotion)
+        tags += [t.answer_emotion, t.listener_emotion]
+    return tags
+
+
+def test_데이터_감정은_여러_갈래로_쓰고_한_태그에_쏠리지_않는다():
+    """태그 8종 시절엔 `끄덕` 이 24%(듣는 반응 31개)였고, 30분 내내 같은 몸짓이 돌았다
+    (2026-09-24, 계획 `2026-09-24-emotion-vocabulary.md`). 어휘를 넓혀도 저작이 한 태그로
+    돌아가면 소용없다 — 가짓수와 쏠림을 같이 본다. `설명`(모션 없음)은 쏠림에서 뺀다."""
+    from collections import Counter
+
+    tags = Counter(t for c in load_cues() for t in _감정_태그들(c) if t)
+    assert len(tags) >= 12, tags
+    total = sum(tags.values())
+    worst, n = max(((k, v) for k, v in tags.items() if k != "설명"), key=lambda kv: kv[1])
+    assert n / total <= 0.20, f"{worst} 가 {n}/{total} — 한 태그에 쏠렸다"
+
+
+def test_데이터_듣는_반응은_한_갈래로만_돌지_않는다():
+    """듣는 반응(`listener_emotion`)은 한 큐에 2~3번씩 19큐 내내 나간다 — 가장 쉽게 단조로워지는
+    자리다. 한 태그가 듣는 반응의 절반을 넘지 않게 한다."""
+    from collections import Counter
+
+    tags = Counter(t.listener_emotion for c in load_cues() for t in c.points if t.listener_emotion)
+    total = sum(tags.values())
+    worst, n = tags.most_common(1)[0]
+    assert n / total <= 0.5, f"{worst} 가 듣는 반응 {n}/{total}"
+    assert len(tags) >= 6, tags

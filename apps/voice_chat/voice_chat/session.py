@@ -25,7 +25,7 @@ from clauses import split_sentences
 from driver import RobotDriver
 from idler import Idler
 from llm import LLMClient
-from motion import NO_MOTION, MotionPlayer, classify
+from motion import NO_MOTION, MotionPlayer, MoveLibrary, classify
 from tts import Speaker
 
 HERE = Path(__file__).parent
@@ -85,7 +85,7 @@ def announce_endpoints() -> None:
     config.announce()
 
 
-def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
+def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None, idle_moves=None):
     """대화에 필요한 것들을 만든다.
 
     `mini` 를 주면 **그것을 쓰고 닫지 않는다** — 실기에서는 ReachyMiniApp
@@ -106,7 +106,20 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
     if not no_robot:
         from reachy_mini.motion.recorded_move import RecordedMoves
 
-        moves = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
+        # 감정 라이브러리(발성 있음)가 본체다. 춤 라이브러리(소리 없는 짧은 동작)는 대본 감정
+        # 태그의 끄덕·움찔·감탄 후보를 넓히는 **덤**이라(계획 2026-09-24-emotion-vocabulary),
+        # 못 읽으면 경고하고 빼고 간다 — 그 범주 후보에서 춤 동작만 빠진다. 데몬이 기동 때 두
+        # 라이브러리를 **같이** 받으므로(SDK `DEFAULT_DATASETS`) 실기에서 새 의존성은 아니다.
+        libraries = [RecordedMoves("pollen-robotics/reachy-mini-emotions-library")]
+        try:
+            libraries.append(RecordedMoves("pollen-robotics/reachy-mini-dances-library"))
+        except Exception as exc:  # noqa: BLE001 — 덤이 본체를 막으면 안 된다
+            print(
+                f"  [경고] 춤 라이브러리를 못 읽었다({type(exc).__name__}: {exc}) — "
+                "감정 라이브러리만으로 돈다(끄덕·움찔 후보가 줄어든다)",
+                flush=True,
+            )
+        moves = MoveLibrary(libraries)
         if mini is None:
             from reachy_mini import ReachyMini
 
@@ -124,10 +137,13 @@ def build(stack: contextlib.ExitStack, no_robot: bool = False, mini=None):
         player = MotionPlayer(driver, moves, speaker)
 
         # 아무도 말을 걸지 않을 때 혼자 감정 표현을 한다(소리 없이).
+        # `idle_moves` — 무대 모드는 듣는 자세 목록(`emotions.STAGE_IDLE_MOVES`)을 넘긴다.
+        # 1대 모드(None)는 지금 목록 그대로다.
         idler = Idler(
             player,
             lambda: speaker.speaking,
             on_play=lambda n: print(f"  [대기 모션 {n}]"),
+            moves=idle_moves,
         )
         idler.start()
         stack.callback(idler.stop)

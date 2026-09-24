@@ -29,8 +29,11 @@ class Idler:
         min_gap: float = MIN_GAP_S,
         max_gap: float = MAX_GAP_S,
         on_play=None,
+        moves: list[str] | None = None,
     ):
         self._player = player
+        # 고를 대기 모션 목록. None 이면 1대 모드 목록(`emotions.IDLE_MOVES`).
+        self._moves = moves
         self._is_speaking = is_speaking
         self._min_gap, self._max_gap = min_gap, max_gap
         self._on_play = on_play
@@ -61,7 +64,7 @@ class Idler:
                 and not self._player.moving
                 and not getattr(self._player, "user_speaking", False)
             ):
-                name = emotions.pick_idle(self._player.available)
+                name = emotions.pick_idle(self._player.available, self._moves)
                 if name and self._player.play(name, idle=True) and self._on_play:
                     self._on_play(name)
             if self._stop.wait(self._next_gap()):

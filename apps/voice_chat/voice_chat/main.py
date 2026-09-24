@@ -31,6 +31,7 @@ from voice_loop import voice_loop  # noqa: E402
 import os
 
 import config as _config  # noqa: E402
+from emotions import STAGE_IDLE_MOVES  # noqa: E402
 import motion as _motion  # noqa: E402
 import tts as _tts  # noqa: E402
 from camera_rtc import RtcStreamer  # noqa: E402
@@ -457,7 +458,8 @@ def stage_run(reachy_mini, stop_event: threading.Event, role: str) -> None:
           f"역할: {role} ({_config.source('REACHY_ROLE')})")
 
     with contextlib.ExitStack() as stack:
-        llm, speaker, player = build(stack, mini=reachy_mini)
+        # 무대에서 "대기" 는 대개 상대가 말하는 동안이다 — 딴청(지루함·무관심) 대신 듣는 자세만.
+        llm, speaker, player = build(stack, mini=reachy_mini, idle_moves=STAGE_IDLE_MOVES)
         mic_open = threading.Event()
         client: StageClient | None = None
         voice_thread: threading.Thread | None = None

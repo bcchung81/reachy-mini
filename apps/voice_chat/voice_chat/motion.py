@@ -22,8 +22,44 @@ CATEGORY_MOVES: dict[str, list[str]] = {
     # 규칙은 이 둘을 고르지 않는다 — 추측으로 "뿌듯" 을 맞히는 규칙을 만들면
     # 엉뚱한 문장에서 터진다. 감독이 태그를 실어 줄 때만 쓴다.
     "proud": ["proud1", "proud2", "proud3"],
-    "sad": ["sad1", "downcast1"],
+    # ~~"sad": ["sad1", "downcast1"]~~ — sad1 은 원작자 설명이 "칭얼거린다"(9초)라 해설 대담의
+    # 아쉬움에 과했다. 쓸쓸한 수긍(yes_sad1)이 타이타닉 같은 무거운 소재에 맞는다.
+    "sad": ["downcast1", "yes_sad1"],
+    # ── 대본 감정 태그 전용 범주(2026-09-24, 계획 `2026-09-24-emotion-vocabulary.md`) ──
+    #
+    # 태그 8종으로는 대본의 결(감탄·체험 권유·깊이 묻기·멋쩍음·안심시키기·감사·작별 …)이
+    # `궁금`·`기쁨`·`끄덕` 에 뭉개졌다 — 85개 중 19개만 썼다. 동작은 **원작자 설명**
+    # (라이브러리 JSON 의 description)으로 골랐다. 위 1대 모드 범주(`classify` 가 고르는
+    # greet·joy·surprise·curious·ack …)는 **건드리지 않는다** — 대본 태그 때문에 1대 대화의
+    # 반응이 바뀌면 안 된다. 그래서 겹쳐 보이는 것도 새 이름을 쓴다.
+    #
+    # `DANCE_MOVES` 의 것(아래)은 pollen-robotics/reachy-mini-dances-library — 소리 없는
+    # 1.8~2초짜리라 듣는 쪽 반응(`react`, 원래 소리 없는 경로)에 특히 맞는다.
+    "welcome": ["welcoming1", "welcoming2"],
+    "happy": ["cheerful1", "laughing1", "laughing2", "success2"],
+    "excited": ["enthusiastic1", "enthusiastic2", "dance1", "groovy_sway_and_roll"],
+    "startled": ["surprised1", "surprised2", "neck_recoil"],
+    "admire": ["amazed1", "yeah_nod"],
+    # ~~curious1~~ 은 "여러 사람을 둘러본다"(11.8초)라 질문 동작이 아니다 — 질문은 inquiring.
+    "ask": ["inquiring1", "inquiring2", "inquiring3"],
+    "ponder": ["thoughtful1", "thoughtful2"],
+    "nod": ["understanding1", "understanding2", "yes1", "uh_huh_tilt", "simple_nod"],
+    "listen": ["attentive1", "attentive2", "simple_nod"],
+    "relief": ["relief1", "relief2"],
+    "reassure": ["calming1", "serenity1"],
+    "thanks": ["grateful1", "helpful2"],
+    "farewell": ["loving1", "welcoming2"],
+    "invite": ["come1", "helpful1"],
+    "sheepish": ["oops1", "oops2"],
 }
+
+# 춤 라이브러리(pollen-robotics/reachy-mini-dances-library, 실측 19개 중 위에서 쓰는 것).
+# 감정 라이브러리와 **따로 싣는다**(`session.build`) — 이 목록은 테스트가 두 라이브러리의
+# 실측 목록과 대조하는 데 쓴다. 못 읽으면 이 동작들만 후보에서 빠진다(`play_for` 가
+# `available` 로 거른다).
+DANCE_MOVES = frozenset({
+    "groovy_sway_and_roll", "neck_recoil", "yeah_nod", "uh_huh_tilt", "simple_nod",
+})
 
 # ── 대본 감정 태그 (설계 §12.2·§12.5) ──────────────────────────────
 #
@@ -40,14 +76,26 @@ CATEGORY_MOVES: dict[str, list[str]] = {
 # 해설의 기본 태그라 여기서 모션을 내면 대사마다 몸이 튄다.
 NO_MOTION = "none"
 
+# ~~8종~~ → **18종**(2026-09-24). 옛 8종도 새 범주로 옮겼다 — `궁금`→ask(질문 동작),
+# `끄덕`→nod(끄덕 5종) 등. 옛 범주(greet·joy·curious·ack)는 1대 모드 `classify` 몫으로 남는다.
 EMOTION_CATEGORY: dict[str, str] = {
-    "반가움": "greet",
-    "기쁨": "joy",
-    "놀람": "surprise",
-    "궁금": "curious",
+    "반가움": "welcome",
+    "기쁨": "happy",
+    "신남": "excited",
+    "놀람": "startled",
+    "감탄": "admire",
+    "궁금": "ask",
+    "골똘": "ponder",
     "뿌듯": "proud",
-    "끄덕": "ack",
+    "끄덕": "nod",
+    "경청": "listen",
     "아쉬움": "sad",
+    "안도": "relief",
+    "안심": "reassure",
+    "감사": "thanks",
+    "작별": "farewell",
+    "권유": "invite",
+    "멋쩍음": "sheepish",
     "설명": NO_MOTION,
 }
 STAGE_EMOTIONS: tuple[str, ...] = tuple(EMOTION_CATEGORY)
@@ -111,6 +159,31 @@ def classify(text: str) -> str:
     return "ack"  # 아무 반응 없는 것이 제일 어색하다 — 가벼운 끄덕임
 
 
+class MoveLibrary:
+    """동작 라이브러리 여러 벌을 **하나처럼** 보이게 한다(`list_moves`/`get`).
+
+    `MotionPlayer` 는 `RecordedMoves` 하나를 전제로 쓰였다. 감정 라이브러리에 춤 라이브러리
+    (소리 없는 짧은 동작)를 더하면서 플레이어를 고치지 않고 여기서 합친다. 이름이 겹치면
+    **앞 라이브러리가 이긴다** — 감정 라이브러리를 앞에 두므로 발성이 있는 쪽이 남는다.
+    """
+
+    def __init__(self, libraries) -> None:
+        self._libs = list(libraries)
+
+    def list_moves(self) -> list[str]:
+        seen: dict[str, None] = {}
+        for lib in self._libs:
+            for name in lib.list_moves():
+                seen.setdefault(name, None)
+        return list(seen)
+
+    def get(self, name: str):
+        for lib in self._libs:
+            if name in lib.list_moves():
+                return lib.get(name)
+        raise KeyError(name)
+
+
 class MotionPlayer:
     """어떤 모션을 걸지 정하고 사운드를 붙인다. **로봇에 직접 쓰지 않는다.**
 
@@ -134,6 +207,8 @@ class MotionPlayer:
         self._moves = moves  # RecordedMoves
         self._available = set(moves.list_moves())  # 기동 시 1회
         self._speaker = speaker
+        # 범주 → 마지막으로 **실제로 건** 동작(`play_for` 의 연속 반복 방지).
+        self._last_by_category: dict[str, str] = {}
         self.user_speaking = False  # Idler 가 본다 — 사용자 발화 중 대기 모션 금지
         # **우선순위 검사와 걸기를 한 덩어리로 묶는다.** 호출자가 둘이다 —
         # 응답 모션(voice_loop 스레드)과 대기 모션(Idler 스레드). 잠금 없이
@@ -205,12 +280,21 @@ class MotionPlayer:
         candidates = [n for n in CATEGORY_MOVES[category] if n in self._available]
         if not candidates:
             return None
-        return self.play(
-            random.choice(candidates),
+        # **같은 범주에서 직전 동작은 다시 고르지 않는다**(후보가 둘 이상일 때, 2026-09-24).
+        # 순수 무작위면 후보 2~3개짜리 범주에서 같은 동작이 연달아 나온다 — 대본이 같은
+        # 태그를 두 번 이어 쓰는 자리(맞장구·경청)에서 로봇이 녹화된 것처럼 보인다.
+        last = self._last_by_category.get(category)
+        fresh = [n for n in candidates if n != last] or candidates
+        choice = random.choice(fresh)
+        name = self.play(
+            choice,
             force=force,
             idle=idle,
             full_sound=(category == "perform"),
         )
+        if name is not None:
+            self._last_by_category[category] = name
+        return name
 
     def play(
         self,

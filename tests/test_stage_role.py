@@ -579,7 +579,7 @@ def test_듣는_반응은_소리_없이_모션만_낸다():
     """상대가 말하는 중이다 — 발성이 겹치면 그 대사를 덮는다(설계 §12.6)."""
     pl = _FakePlayer()
     main_mod.make_react(pl, log=lambda m: None)("끄덕")
-    assert pl.played == [("ack", True)], "발성이 나가는 경로(idle=False)로 걸었다"
+    assert pl.played == [("nod", True)], "발성이 나가는 경로(idle=False)로 걸었다"
 
 
 def test_듣는_반응의_설명_태그는_아무것도_하지_않는다():
@@ -723,9 +723,12 @@ def test_stage_run은_카메라와_대기모드_핸들러를_배선한다(monkey
         def stop(self) -> None:
             pass
 
-    def 가짜_build(stack, no_robot: bool = False, mini=None):
+    받은_대기_모션: list = []
+
+    def 가짜_build(stack, no_robot: bool = False, mini=None, idle_moves=None):
         # 진짜 build() 는 RobotDriver/Idler 로 reachy_mini SDK 를 직접 두드린다 —
         # 여기서는 stage_run 이 조립하는 Handlers 배선만 보면 되므로 최소로 흉내낸다.
+        받은_대기_모션.append(idle_moves)
         return object(), _가짜스피커(), None
 
     class 가짜미니:
@@ -757,6 +760,10 @@ def test_stage_run은_카메라와_대기모드_핸들러를_배선한다(monkey
     # 감독은 caps 에 없는 기능을 보내지 않으므로, 여기서 빠지면 새 로봇인데도
     # 옛 로봇 취급을 받아 감정이 영영 안 온다(설계 §12.5).
     assert {"emotion", "react", "gaze"} <= set(captured["caps"])
+    # 무대 모드는 대기 모션을 **듣는 자세**로만 고른다(2026-09-24) — 1대 목록을 쓰면 상대가
+    # 설명하는 동안 지루함·무관심 동작이 무작위로 나온다.
+    from emotions import STAGE_IDLE_MOVES
+    assert 받은_대기_모션 == [STAGE_IDLE_MOVES]
 
 
 def test_청취_루프가_죽으면_감독과_로그에_알린다():
