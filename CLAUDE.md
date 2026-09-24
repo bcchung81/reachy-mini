@@ -81,6 +81,10 @@ open http://localhost:8000/docs         # REST API 문서 (OpenAPI)
 
 ## 작업 규약
 
+- **모든 작업은 `main` 브랜치에서 한다**(2026-09-24 사용자 지시). 기능 브랜치·git 워크트리를
+  만들지 않고, 서브에이전트에도 워크트리 격리(`isolation: "worktree"`)를 쓰지 않는다. 커밋은
+  `main` 에 바로 한다. 스킬(예: using-git-worktrees·finishing-a-development-branch)이 브랜치를
+  권해도 이 규칙이 우선한다. 푸시는 사용자가 요청할 때만 한다.
 - 코드를 쓰기 전에 `plan.md`로 접근을 정리하고 사용자 승인을 받는다(공식 AGENTS.md 규칙).
 - 앱은 `apps/` 아래에 만든다.
 - 동작을 바꾼 뒤에는 시뮬레이터에서 실제로 돌려보고, `GET /api/state/full`로 결과를 되읽어 확인한다.
