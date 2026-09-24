@@ -964,3 +964,93 @@ def test_데이터_고정_대사에_약칭_KCA가_없다():
             lines += [(f"{i}턴 {lv}", a) for lv, a in t.answers.items()]
         for where, text in lines:
             assert "KCA" not in text, f"{c.id} {where}: {text!r}"
+
+
+# ── 무대 P0 보강 (2026-09-24) ─────────────────────────────────────────────
+
+
+def _고정_대사(c):
+    """한 큐가 소리 내 읽는 고정 문장 전부 — (어디, 문장)."""
+    lines = [("mc", c.mc), ("mc_after", c.mc_after)]
+    for i, t in enumerate(c.points):
+        if t.ask:
+            lines.append((f"{i}턴 ask", t.ask))
+        lines += [(f"{i}턴 {lv}", a) for lv, a in t.answers.items()]
+    return lines
+
+
+def test_데이터_고정_대사는_글말_어미로_끝나지_않는다():
+    """계획 `2026-09-22-podcast-turns-qa.md` §3-1. 판정은 생성 직후 경고와 **같은 함수**다
+    (`stage/speech_text.py::written_endings`) — 둘을 따로 적으면 한쪽만 고쳐진다."""
+    from stage.speech_text import written_endings
+
+    bad = [
+        (c.id, where, s)
+        for c in load_cues()
+        for where, text in _고정_대사(c)
+        for s in written_endings(text)
+    ]
+    assert bad == [], bad
+
+
+def test_데이터_고정_대사에_글에서만_쓰는_기호가_없다():
+    """§3-2 — TTS 가 기호를 읽거나 괄호 속을 끊어 읽는다."""
+    for c in load_cues():
+        for where, text in _고정_대사(c):
+            for sym in ("→", "**", "·", "(", ")"):
+                assert sym not in text, f"{c.id} {where}: {sym!r} — {text!r}"
+
+
+def test_데이터_고정_대사의_단위는_읽는_대로_쓴다():
+    """§3-3 — '3,500km' 는 TTS 가 '케이엠' 으로 읽는다. '3,500킬로미터' 로 쓴다."""
+    import re
+
+    unit = re.compile(r"\d\s*(?:km|cm|mm|kg|Hz|kHz|MHz|GHz|m|W)\b")
+    for c in load_cues():
+        for where, text in _고정_대사(c):
+            assert not unit.search(text), f"{c.id} {where}: {text!r}"
+
+
+def test_데이터_턴_설명은_그_수준의_분량_안에_든다():
+    """§3-4 — `levels.yaml` 의 point_* 는 런타임 자르기가 아니라 **저작 규칙**이다. 사람이 쓴
+    문장은 런타임에 자르지 않으므로 여기서 막지 않으면 넘친 설명이 그대로 나간다."""
+    from stage.levels import load_levels
+    from stage.speech_text import split_sentences
+
+    levels = load_levels()
+    for c in load_cues():
+        for i, t in enumerate(c.points):
+            for name, a in t.answers.items():
+                lv = levels[name]
+                n, ns = len(a), len(split_sentences(a))
+                assert lv.point_min_chars <= n <= lv.point_max_chars, (
+                    f"{c.id} {i}턴 {name}: {n}자 (범위 {lv.point_min_chars}~{lv.point_max_chars})"
+                )
+                assert lv.point_min_sentences <= ns <= lv.point_max_sentences, (
+                    f"{c.id} {i}턴 {name}: {ns}문장 — {a!r}"
+                )
+
+
+@pytest.mark.parametrize("text", [
+    # 감독 로그(2026-09-22 실기)에 실제로 찍힌 잡음 전사들
+    "아", "ome", "omeomeomeome", "실ome", "Up until theλιλιλιλι", "Watch out.",
+    "Okay. Okay. Okay.", "ㅋㅋㅋㅋ", "세로 세로 세로", "Two. Two. Thank you.", "", "  !  ",
+])
+def test_잡음_전사는_질문으로_보지_않는다(text):
+    assert cues_mod.noise_reason(text) is not None
+
+
+@pytest.mark.parametrize("text", [
+    # 통과시킬 가장 짧은 질문과 영문·숫자가 섞인 질문이 문턱의 기준이다
+    "왜요?", "누가요?", "마르코니가 누구예요", "GMDSS가 뭐예요?", "5G는요?",
+    "하하하 재밌어요", "그건 왜 그런가요?", "질문 있어요",
+])
+def test_짧거나_영문이_섞인_진짜_질문은_통과한다(text):
+    assert cues_mod.noise_reason(text) is None
+
+
+def test_관람객_경로_고정_대사의_감정이_어휘_안에_있다():
+    """확인 멘트는 문장과 감정이 **자리끼리** 짝이다 — 길이가 어긋나면 엉뚱한 감정이 붙는다."""
+    assert len(cues_mod.QA_ACK_EMOTIONS) == len(cues_mod.QA_ACK_LINES)
+    for e in (*cues_mod.QA_ACK_EMOTIONS, cues_mod.QUESTION_PROMPT_EMOTION, cues_mod.QA_ANSWER_EMOTION):
+        assert e in cues_mod.EMOTIONS, e

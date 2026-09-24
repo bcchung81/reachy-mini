@@ -12,11 +12,15 @@ tracking"). 시뮬에서는 이 스크립트도 그냥 즉시 끝난다.
 
 실행:
     REACHY_LLM_URL=http://<PC-LAN-IP>:8080 \
-    /venvs/apps_venv/bin/python3.12 test_hand_raise_vision.py [반복횟수] [간격초]
+    /venvs/apps_venv/bin/python3.12 probe_hand_raise.py [반복횟수] [간격초]
 
 사람이 실제로 카메라 앞에서 손을 들었다 내렸다 하는 동안 한 줄씩 판정을 찍는다 — 정답은
-이 스크립트가 아니라 그 사람이 안다. 실기 전용 진단이라 pytest가 수집해도 아무 일도
-하지 않도록(모듈 최상단에서 부작용 없음) `if __name__ == "__main__":` 뒤에만 둔다.
+이 스크립트가 아니라 그 사람이 안다. 실행 본체는 `if __name__ == "__main__":` 뒤에만 둔다.
+
+~~이름이 `test_hand_raise_vision.py` 였고 "pytest가 수집해도 아무 일도 하지 않는다" 고
+적어 뒀다~~ — **틀렸다**(2026-09-24). 최상단 `import camera_in` 이 저장소 루트에서는
+안 풀려서 루트 `pytest` 가 수집 단계에서 ModuleNotFoundError 로 통째로 멈췄다. 테스트가
+아니니 `test_` 로 시작하지 않는 이름으로 바꾸고, 루트 `pytest.ini` 가 `tests/` 만 모은다.
 """
 
 import platform

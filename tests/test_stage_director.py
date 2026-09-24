@@ -468,7 +468,7 @@ def test_발화_중에_들린_말은_버리고_경고한다():
     h.clear()
     h.d.on_heard("다음")
     assert h.says() == []
-    assert any("발화 중" in w for w in h.warnings)
+    assert any("듣는 중이 아닐 때(mc_speaking)" in w for w in h.warnings), h.warnings
 
 
 def test_마지막_큐에서_진행_신호를_받으면_끝내고_경고한다():
@@ -534,7 +534,8 @@ def test_unit_id_가_다르면_기동에서_실패한다():
 
 def test_unit_id_가_맞으면_통과한다():
     h = Harness(expect_units={"mc": "aaaa", "docent": "bbbb"})
-    h.d.on_hello("mc", "aaaa", "1.9.0")
+    # 무대 연출 능력을 다 알리는 앱이다 — 빠지면 재배포 경고가 한 줄 붙는다(아래 caps 테스트).
+    h.d.on_hello("mc", "aaaa", "1.9.0", caps=["emotion", "react", "gaze"])
     assert h.warnings == []
 
 
@@ -556,7 +557,9 @@ def test_abort_는_양쪽을_멈춘다():
     h.d.start()
     h.clear()
     h.d.abort()
-    assert sorted(h.types()) == [("docent", "abort"), ("mc", "abort")]
+    assert sorted(h.types()) == [("docent", "abort"), ("docent", "mic"), ("mc", "abort"), ("mc", "mic")]
+    # 양쪽 마이크를 **닫는다**(2026-09-24) — 멈춘 뒤에 열린 마이크가 남지 않는다.
+    assert h.mics() == [("mc", False), ("docent", False)]
     assert h.d.state is State.IDLE
 
 
@@ -2522,6 +2525,9 @@ def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
     검사 사이에 상태가 바뀔 수 없다. 그 분기를 지워도 동작은 그대로여야
     한다는 것을 여기서 직접 확인한다: LISTENING 에서 대기로 전환해도
     `mic` 커맨드가 전혀 안 나간다(운영자가 이어서 진행 명령을 눌러야 한다).
+
+    2026-09-24: 중단이 양쪽 마이크를 **닫는다**(`TurnMachine.abort`). 그래서 이제는
+    "마이크 지시가 없다" 가 아니라 "**여는** 지시가 없다" 를 본다 — 닫기만 나간다.
     """
     h = Harness()
     h.d.on_connect("mc")
@@ -2533,7 +2539,7 @@ def test_듣는_중_대기_전환은_마이크를_다시_열지_않는다():
     h.clear()
     h.d.toggle_standby("docent")
     assert h.d.state is State.IDLE
-    assert h.mics() == [], f"대기 전환 뒤에 마이크 커맨드가 나갔다: {h.sent}"
+    assert h.mics() == [("mc", False), ("docent", False)], f"대기 전환 뒤에 마이크가 열렸다: {h.sent}"
 
 
 # ── 포인트 라운드 라우팅 (Task 5) ──────────────────────────────────────
@@ -2779,3 +2785,133 @@ def test_관람객_질문_지시문에는_마크다운_강조가_없다():
 #   분량은 저작 규칙이 되어 데이터 테스트가 본다(`levels.yaml` 의 point_* 범위).
 # · 도슨트 해설 생성(브리프·폴백·짧음 경고·세대 검사) — 해설은 생성하지 않는다.
 #   같은 성질의 검사는 **관람객 질문 답** 경로로 옮겼다(이 파일 위쪽 QA 테스트들).
+
+
+# ── 무대 P0 보강 (2026-09-24, 계획 `2026-09-24-stage-p0-hardening.md`) ──────────
+
+
+_모든_능력 = ["emotion", "react", "gaze"]
+
+
+def _둘_다_붙은(h, caps=_모든_능력):
+    """두 로봇이 무대 연출 능력을 알리며 붙은 상태 — 듣는 로봇 몫이 나가는 조건이다."""
+    for role in ("mc", "docent"):
+        h.d.on_connect(role)
+        h.d.on_hello(role, None, "1.9.0", caps=list(caps))
+    h.warnings.clear()
+
+
+def test_듣는_중에_멈추면_리스너_마이크가_닫힌다():
+    """IDLE 에서 사회자 STT 가 소음을 계속 올리던 원인(감독 로그 221건)."""
+    h = Harness()
+    _듣는_중까지(h)
+    assert h.mics()[-1] == ("mc", True)          # 전제: 리스너 마이크가 열려 있었다
+    h.clear()
+    h.d.abort()
+    assert h.mics() == [("mc", False), ("docent", False)]
+
+
+def test_듣는_중_잡음_전사는_질문이_아니고_침묵_기한은_그대로_흐른다():
+    h = Harness(after=("", ""))
+    _듣는_중까지(h)
+    h.clear()
+    for 잡음 in ("아", "omeomeomeome", "Up until theλιλιλι", "세로 세로 세로", "Watch out."):
+        h.d.on_heard(잡음)
+    assert h.says() == [] and h.gen_calls == [], h.sent
+    assert sum("관람객 질문으로 보지 않는다" in w for w in h.warnings) == 5, h.warnings
+    # 잡음은 관람객이 입을 연 것이 아니다 — 8초 침묵이면 그대로 다음 큐로 간다.
+    h.clock.t += 8.0
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")]
+
+
+def test_짧은_진짜_질문과_진행어는_잡음_게이트를_지난다():
+    h = Harness()
+    _듣는_중까지(h)
+    h.d.on_heard("왜요?")
+    assert h.gen_calls, "짧은 질문이 잡음으로 버려졌다"
+    h2 = Harness()
+    _듣는_중까지(h2)
+    h2.d.on_heard("다음")
+    assert h2.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_사회자가_물으면_도슨트가_사회자를_본다():
+    h = Harness(sheet=CueSheet([_대본_큐()]))
+    _둘_다_붙은(h)
+    h.d.start()                                  # 사회자 오프닝(도슨트에게 묻는다)
+    assert ("docent", "gaze", {"target": "partner"}) in h.sent, h.sent
+    h.clear()
+    h.ended("mc", "c1")                          # 도슨트 설명 — 이번엔 사회자가 듣는다
+    assert ("mc", "gaze", {"target": "partner"}) in h.sent, h.sent
+
+
+def test_시선을_모르는_앱에는_듣는_로봇_시선을_보내지_않는다():
+    h = Harness(sheet=CueSheet([_대본_큐()]))
+    _둘_다_붙은(h, caps=["emotion"])
+    h.d.start()
+    assert [r for r, t, _ in h.sent if t == "gaze"] == ["mc"], h.sent   # 말하는 로봇 몫만
+
+
+def test_1인_모드에서는_듣는_로봇_몫이_없다():
+    h = Harness(sheet=CueSheet([_대본_큐()]))
+    h.d.on_connect("mc")
+    h.d.on_hello("mc", None, "1.9.0", caps=_모든_능력)
+    h.d.start()
+    assert [r for r, t, _ in h.sent if t in ("gaze", "react")] == ["mc"], h.sent
+
+
+def test_듣는_반응은_상대_발화_중간쯤에_한_번_나간다():
+    h = Harness(sheet=CueSheet([_대본_큐(answers=("설명 설명 설명 설명 설명",))]))
+    _둘_다_붙은(h)
+    h.d.start()
+    h.ended("mc", "c1")                          # 도슨트가 0턴 설명을 말하기 시작한다
+    h.started("docent", "c1:docent")
+    h.clear()
+    h.d.tick()
+    assert [t for _, t, _ in h.sent if t == "react"] == [], "말이 시작되자마자 반응했다"
+    h.clock.t += len("설명 설명 설명 설명 설명") / CHARS_PER_SEC * 0.4
+    h.d.tick()
+    assert [(r, t, f) for r, t, f in h.sent if t == "react"] == [
+        ("mc", "react", {"emotion": "끄덕"})
+    ]
+    h.clock.t += 5
+    h.d.tick()
+    assert len([t for _, t, _ in h.sent if t == "react"]) == 1   # 한 번만
+
+
+def test_발화가_먼저_끝나면_늦은_반응은_버린다():
+    h = Harness(sheet=CueSheet([_대본_큐(answers=("설명",))]))
+    _둘_다_붙은(h)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.started("docent", "c1:docent")
+    h.ended("docent", "c1:docent")               # 반응 시각 전에 끝났다 → 받아치기로
+    h.clear()
+    h.clock.t += 60
+    h.d.tick()
+    assert [t for _, t, _ in h.sent if t == "react"] == []
+
+
+def test_무대_연출_능력이_빠진_앱은_접속_때_한_번_알린다():
+    h = Harness()
+    h.d.on_hello("mc", None, "1.9.0", caps=["camera", "emotion"])
+    assert any("react, gaze 를 모른다" in w and "재배포" in w for w in h.warnings), h.warnings
+    h.warnings.clear()
+    h.d.on_hello("docent", None, "1.9.0", caps=_모든_능력)
+    assert not any("재배포" in w for w in h.warnings), h.warnings
+
+
+def test_관람객_질문_경로의_대사도_감정을_싣는다():
+    """감정이 없으면 로봇이 "감독이 옛 버전" 이라는 거짓 경고와 함께 키워드로 모션을 고른다."""
+    h = Harness()
+    _듣는_중까지(h)
+    h.d.on_heard("마르코니가 누구예요")
+    ack = [f for r, t, f in h.sent if t == "say"][-1]
+    assert ack["cue_id"] == "c1:ack" and ack["emotion"] == "기쁨", ack
+    h.ended("mc", "c1:ack")
+    qa = [f for r, t, f in h.sent if t == "say"][-1]
+    assert qa["cue_id"] == "c1:qa" and qa["emotion"] == "설명", qa
+    h.ended("docent", "c1:qa")
+    reask = [f for r, t, f in h.sent if t == "say"][-1]
+    assert reask["cue_id"] == "c1:reask" and reask["emotion"] == "궁금", reask

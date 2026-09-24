@@ -365,7 +365,10 @@ def test_단독에서도_a_는_멈춘다():
     h.sent.clear()
     h.warnings.clear()
     console.dispatch(h.d, "a", out=h.out.append)
-    assert [(r, t) for r, t, _ in h.sent] == [("mc", "abort"), ("docent", "abort")]
+    # 중단은 양쪽 마이크를 닫고 멈춘다(2026-09-24, `TurnMachine.abort`).
+    assert [(r, t) for r, t, _ in h.sent] == [
+        ("mc", "mic"), ("docent", "mic"), ("mc", "abort"), ("docent", "abort"),
+    ]
     assert h.warnings == []
 
 
@@ -454,3 +457,12 @@ def test_도움말에_z_와_c_가_있다():
     h.run(["?", "q"])
     assert any("z <mc|docent>  대기모드 켜고 끄기" in m for m in h.out), h.out
     assert any("c <mc|docent>  카메라 스트림 켜고 끄기" in m for m in h.out), h.out
+
+
+def test_콘솔_조작은_로그에_한_줄씩_남는다():
+    """운영자가 친 글자는 표준입력이라 `start` 의 tee 로그에 안 남았다 — IDLE 에서 들린 말
+    221건이 `a` 뒤에 생긴 것인지 로그만으로 가를 수 없었다(2026-09-24). 도움말은 조작이 아니다."""
+    h = Harness()
+    h.run(["s", "a", "?", "", "n"])
+    ops = [m for m in h.out if m.startswith("[운영]")]
+    assert ops == ["[운영] 콘솔 s", "[운영] 콘솔 a", "[운영] 콘솔 n"], ops

@@ -65,6 +65,34 @@ def split_sentences(text: str) -> list[str]:
     return [text[a:b].strip() for a, b in _sentence_spans(text)]
 
 
+# 글말 어미 — **막을 것을 목록으로 둔다**(docs/lessons.md 「구어체 검사를 "허용 어미 목록"
+# 으로 만들면…」). 말끝은 열린 집합(감탄·호명·의성어)이라 허용 목록은 영원히 미완성이고,
+# 글말 어미는 손에 꼽는 닫힌 집합이다. '~니다' 는 입말이라 '~다' 에서 뺀다.
+_WRITTEN_ENDINGS = ("다", "것", "함", "음")
+_SPOKEN_EXCEPTIONS = ("니다",)
+# 문장 끝에서 걷어낼 것 — 종결부호·따옴표·괄호·공백.
+_TRAILING = " \t\n.?!…\"'”’)」』"
+
+
+def written_endings(text: str) -> list[str]:
+    """글말 어미로 끝나는 문장들. 없으면 빈 목록.
+
+    **고정 대본의 데이터 테스트와 생성 직후 경고가 같은 판정을 쓴다** — 두 자리에 규칙을
+    따로 적으면 한쪽만 고쳐져, 테스트는 통과하는데 생성물은 경고가 나거나(또는 그 반대)
+    한다(대장 「감지와 제거는 같은 규칙이어야 한다」 와 같은 줄기).
+    """
+    out = []
+    for s in split_sentences(text):
+        tail = s.rstrip(_TRAILING)
+        if not tail:
+            continue
+        if tail.endswith(_SPOKEN_EXCEPTIONS):
+            continue
+        if tail.endswith(_WRITTEN_ENDINGS):
+            out.append(s)
+    return out
+
+
 def cap_length(text: str, max_sentences: int, max_chars: int) -> tuple[str, bool]:
     """문장 경계에서 분량 상한을 건다. (결과, 잘랐는지).
 

@@ -18,12 +18,16 @@ from typing import Callable, NamedTuple
 # (`tests/test_stage_cues.py::test_모든_큐에_받아치기가_있고_다음을_안내한다`).
 # 그래서 셋은 `stage/cues.py` 에 그대로 남아 있고 여기서만 안 쓴다.
 from stage.cues import (
+    QA_ACK_EMOTIONS,
     QA_ACK_LINES,
+    QA_ANSWER_EMOTION,
+    QUESTION_PROMPT_EMOTION,
     QUESTION_PROMPTS,
     Cue,
     CueSheet,
     Point,
     is_advance,
+    noise_reason,
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.protocol import ROLES
@@ -78,6 +82,16 @@ GENERATE_GRACE_S = 8.0
 # 그건 회복이 안 된다(사람이 무안해서 다시 입을 열지 않는다). 길면 정적이
 # 흐를 뿐이고 운영자가 콘솔 `n` 으로 즉시 넘긴다.
 QUESTION_WAIT_S = 8.0
+
+# 듣는 쪽 반응(`react`)을 상대 발화의 어디쯤에서 낼지 — 추정 길이(`len/CHARS_PER_SEC`)
+# 에 대한 비율. 말이 시작되자마자 놀라면 내용을 듣기 전에 반응하는 꼴이고, 끝에 붙이면
+# 다음 대사와 겹친다. `CHARS_PER_SEC` 는 보수적으로 느린 값이라(실제 5~6자/초) 0.4 가
+# 실제 발화의 대략 절반쯤에 떨어진다(추정 — 시뮬에서 보고 조정한다).
+REACT_AT_FRACTION = 0.4
+
+# 무대 연출에 필요한 로봇 앱 능력(설계 §12.5). hello 의 `caps` 에 없으면 감독은 그
+# 기능을 보내지 않고 접속 때 한 번 알린다 — 재배포가 반쯤만 된 상태가 로그에 보여야 한다.
+STAGE_CAPS = ("emotion", "react", "gaze")
 
 # 대화 이력 상한(줄 수). 큐시트가 19섹션이고 그 위에 관람객 질문이 얹히므로
 # 상한이 없으면 시연이 진행될수록 프롬프트가 계속 커진다 — TTFT 가 늘고,
@@ -263,6 +277,12 @@ class Director:
         # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
         # 참고.
         self._speak_budget: float = 0.0
+        # 듣는 쪽 반응 예약(`_speak` 가 세우고 `tick` 이 보낸다). `_react_plan` 은
+        # (듣는 로봇, 감정, 그 발화의 seq, 발화 시작부터의 지연), `_react_at` 은 실제로
+        # 보낼 시각 — `speaking_started` 가 와야 선다. 시작 보고 전에 시계를 걸면 합성
+        # 지연만큼 반응이 말보다 앞선다.
+        self._react_plan: tuple[str, str, int, float] | None = None
+        self._react_at: float | None = None
         # 생성 슬롯 — **이름으로 나뉜다.** 예전에는 하나뿐이라 "한 턴에 생성은
         # 하나" 였는데, 사회자 받아치기가 도슨트 해설과 동시에 살아 있어야 해서
         # 나눴다. 슬롯이 하나면 나중에 띄운 생성이 앞선 생성을 밀어내고, 밀려난
@@ -293,7 +313,7 @@ class Director:
         # — 예비 생성이 통째로 죽은 LLM 호출이 된다.
         self._slots: dict[str, dict] = {}
         self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
-        self._q_i = 0     # 생성된 받아치기에 붙일 질문 유도를 돌아가며 쓰는 커서
+        self._q_i = 0     # 재질문(`:reask`) 문장을 돌아가며 쓰는 커서
         # 슬롯을 읽고 쓰는 락. "세대 확인 + 결과 반영"을 한 번에 묶어 그 사이에
         # `_spawn_generate` 가 끼어드는 경합을 막는다. 슬롯이 여럿이어도 락은
         # **하나로 둔다** — 쥐는 구간이 딕셔너리 한 칸을 읽고 쓰는 정도라 쪼갤
@@ -481,6 +501,15 @@ class Director:
             # hello 마다 **갈아끼운다**(합치지 않는다) — 같은 자리에 옛 앱이 다시 인사하면
             # 그 앱이 모르는 능력이 남으면 안 된다.
             self._caps[role] = set(caps or ())
+            # 무대 연출 능력이 빠졌으면 **접속 때 한 번** 알린다(설계 §12.5). 감독은 빠진
+            # 기능을 보내지 않으므로(`_speak`) 멈추지는 않지만, 알리지 않으면 "로봇이 고개를
+            # 안 돌린다" 가 재배포 누락인지 버그인지 로그로 못 가른다.
+            missing = [c for c in STAGE_CAPS if c not in self._caps[role]]
+            if missing:
+                self._warn(
+                    f"[{role}] 이 로봇 앱은 {', '.join(missing)} 를 모른다 — 그 연출 없이 "
+                    "돈다. 로봇 앱 재배포가 필요하다"
+                )
             if expected is None:
                 return
             if unit_id is None:
@@ -493,8 +522,22 @@ class Director:
     def on_heard(self, text: str) -> None:
         with self._lock:
             if self._machine.state is not State.LISTENING:
-                self._warn(f"발화 중({self._machine.state.value})에 들린 말을 버린다: {text!r}")
+                # ~~"발화 중(idle)"~~ — IDLE 은 발화 중이 아니다. 문구가 상태와 어긋나면
+                # 로그를 읽는 사람이 "멈췄는데 누가 말하고 있었나" 를 찾아 헤맨다.
+                self._warn(
+                    f"듣는 중이 아닐 때({self._machine.state.value}) 들린 말을 버린다: {text!r}"
+                )
                 return
+            # **잡음 전사는 질문이 아니다**(2026-09-24). 로봇 쪽 환각 필터는 공백 토큰
+            # 반복만 봐서 `'아'`·`'omeome…'`·`'Up until theλιλι…'` 가 그대로 올라왔다
+            # (감독 로그 221건). LISTENING 이었다면 LLM 이 '아' 에 답했다. 감독에서
+            # 거르면 재배포가 필요 없다. **침묵 기한은 끄지 않는다** — 잡음은 관람객이
+            # 입을 연 것이 아니므로 자동 진행이 그대로 흘러야 한다.
+            if not is_advance(text):
+                reason = noise_reason(text)
+                if reason is not None:
+                    self._warn(f"관람객 질문으로 보지 않는다({reason}): {text!r}")
+                    return
             # 관람객이 입을 열었다 — 침묵이 아니다. 아래 두 갈래는 대개 곧바로
             # 발화로 넘어가고 `tick()` 의 침묵 갈래는 LISTENING 일 때만 보지만,
             # **LISTENING 에 그대로 머무는 갈래가 실제로 있다**: 마지막 큐에서
@@ -529,6 +572,10 @@ class Director:
                 self._warn_ghost("speaking_started", role, cue_id, seq)
                 return
             self._deadline = self._now() + self._speak_budget
+            # 듣는 쪽 반응의 시계도 **실제로 말을 시작한 때**부터 건다.
+            plan = self._react_plan
+            if plan is not None and plan[2] == seq:
+                self._react_at = self._now() + plan[3]
 
     def _warn_ghost(self, kind: str, role: str, cue_id: str, seq: int | None) -> None:
         """유령 보고를 **소리 내서** 버린다 — 두 종류의 경고문이 따로 놀지 않게 한 곳에."""
@@ -611,8 +658,8 @@ class Director:
                 self._remember(f"사회자: {next_point.ask}")
                 self._emit(
                     cmds
-                    + self._machine.speak(
-                        self._who("mc"), f"{cue.id}:pt{next_i}", next_point.ask,
+                    + self._speak(
+                        "mc", f"{cue.id}:pt{next_i}", next_point.ask,
                         gaze="partner", emotion=next_point.ask_emotion,
                     )
                 )
@@ -649,8 +696,9 @@ class Director:
                 self._remember(f"사회자: {prompt}")
                 self._emit(
                     cmds
-                    + self._machine.speak(
-                        self._who("mc"), f"{cue.id}:reask", prompt, gaze="audience"
+                    + self._speak(
+                        "mc", f"{cue.id}:reask", prompt,
+                        gaze="audience", emotion=QUESTION_PROMPT_EMOTION,
                     )
                 )
                 return
@@ -665,8 +713,8 @@ class Director:
                 self._remember(f"사회자: {cue.mc_after}")
                 self._emit(
                     cmds
-                    + self._machine.speak(
-                        self._who("mc"), f"{cue.id}:after", cue.mc_after,
+                    + self._speak(
+                        "mc", f"{cue.id}:after", cue.mc_after,
                         gaze="audience", emotion=cue.mc_after_emotion,
                     )
                 )
@@ -722,11 +770,13 @@ class Director:
             # 한 대가 읽어야 한다(설계 §7). 1구간의 판단을 들고 가면 이미 끊긴
             # 로봇에게 보내고, 전송 계층은 "아직 붙지 않았다" 경고만 남기고 버린다
             # — 상태기계는 그 로봇이 말하는 중이라 믿으므로 `speaking_ended` 가
-            # 영영 오지 않고 tick 타임아웃까지 정적이 된다.
+            # 영영 오지 않고 tick 타임아웃까지 정적이 된다. `_speak` 가 `_who()` 를
+            # 이 시점에 부르므로 그 규칙이 그대로다.
             self._emit(
                 cmds
-                + self._machine.speak(
-                    self._who(pending.role), pending.cue_id, text, gaze="audience"
+                + self._speak(
+                    pending.role, pending.cue_id, text,
+                    gaze="audience", emotion=QA_ANSWER_EMOTION,
                 )
             )
 
@@ -940,10 +990,10 @@ class Director:
         안에서 abort 뒤 상태가 바뀔 수 없다). `set_mode` 가 abort 뒤에 재동기화를 안 하는
         것과 같은 기본값이다 — 운영자가 `s`/`r`/`n` 등으로 이어서 진행시킨다.
 
-        **말하는 중 마이크가 열려 있던 로봇이 대기로 들어가도 그 마이크를 따로 닫지
-        않는다** — `on_disconnect` 도 안 닫는다(같은 이유: `speak()` 가 다음 큐에서 양쪽을
-        닫고, 그 전에는 서버의 리스너 검사(`solo_role` 아니면 `heard` 를 버린다)가 이미
-        막는다). 대칭을 깨지 않는다.
+        ~~말하는 중 마이크가 열려 있던 로봇이 대기로 들어가도 그 마이크를 따로 닫지
+        않는다~~ — 2026-09-24부터 `_abort_locked()` 가 **양쪽 마이크를 닫는다**
+        (`TurnMachine.abort`). 듣는 중에 대기로 들어가도 열린 마이크가 남지 않는다.
+        `on_disconnect` 는 여전히 안 닫는다 — 끊긴 로봇에는 보낼 소켓이 없다.
         """
         with self._lock:
             if role not in ROLES:
@@ -1080,6 +1130,19 @@ class Director:
         고쳐도 고장 복구가 섹션 건너뛰기로 둔갑하지 않는다.
         """
         with self._lock:
+            # 듣는 쪽 반응은 위 두 기한과 **독립**이다 — 누가 말하는 동안에만 뜻이 있고,
+            # 그 발화(seq)가 아직 흐르는 중일 때만 보낸다. 끝났거나 멈췄거나 다음 발화로
+            # 넘어갔으면 버린다(늦은 끄덕임은 다음 대사 위에 얹힌다).
+            if self._react_at is not None and self._now() >= self._react_at:
+                listener, emotion, seq, _ = self._react_plan
+                self._react_plan = None
+                self._react_at = None
+                if (
+                    self._machine.state in SPEAKING
+                    and self._machine.seq == seq
+                    and listener in self._connected
+                ):
+                    self._emit([Command(to=listener, type="react", fields={"emotion": emotion})])
             if self._deadline is not None and self._now() >= self._deadline:
                 role = self._machine.speaking_role
                 self._warn(f"[{role}] 발화 종료 응답이 없다 — 강제로 듣기 상태로 되돌린다")
@@ -1119,6 +1182,8 @@ class Director:
         `set_mode` 가 공개 `abort()` 를 부르면 재진입이 안 되는 락에서 교착이다.
         """
         self._deadline = None
+        self._react_plan = None
+        self._react_at = None
         self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
@@ -1134,11 +1199,58 @@ class Director:
         self._remember(f"도슨트: {point.answer}")
         self._emit(
             cmds
-            + self._machine.speak(
-                self._who("docent"), self._point_label(cue, i), point.answer,
+            + self._speak(
+                "docent", self._point_label(cue, i), point.answer,
                 gaze="audience", emotion=point.answer_emotion,
+                react=point.listener_emotion,
             )
         )
+
+    def _speak(
+        self, role: str, cue_id: str, text: str, gaze: str | None = None,
+        emotion: str | None = None, react: str = "",
+    ) -> list[Command]:
+        """대사 하나를 내보낼 지시 묶음 — **말하는 로봇과 듣는 로봇 둘 다**의 몫.
+        `self._lock` 을 쥔 채 부른다. 발화는 전부 여기를 지난다(2026-09-24).
+
+        `role` 은 **대본의 역할**이다 — 실제로 읽을 로봇은 여기서 `_who()` 로 정한다.
+        호출부가 저마다 `_who()` 를 부르던 것을 한 곳으로 모았다: 듣는 로봇을 가르는
+        규칙(`_listener_of`)이 말하는 로봇과 같은 순간의 판단을 봐야 해서다.
+
+        듣는 로봇 몫은 둘이다.
+        - **시선**: 상대가 말하는 동안 상대를 본다. 예전에는 `gaze` 가 말하는 로봇에게만
+          가서, 사회자가 "도슨트, …?" 하고 물어도 도슨트는 정면만 봤다.
+        - **반응**(`react`): 대본의 `listener_emotion`. 말이 시작되자마자 놀라면 내용을
+          듣기도 전에 반응하는 꼴이라, 상대 발화 추정 길이의 `REACT_AT_FRACTION` 지점에
+          `tick()` 이 보낸다(`on_speaking_started` 가 시계를 건다).
+
+        둘 다 **그 로봇 앱이 caps 로 알렸을 때만** 보낸다 — 옛 앱은 모르는 메시지를
+        경고하고 버린다(접속 때 `on_hello` 가 한 번 알린다). 1인 모드에서는 듣는 로봇이
+        없다(남은 한 대가 양쪽을 읽는다).
+        """
+        speaker = self._who(role)
+        cmds = self._machine.speak(speaker, cue_id, text, gaze=gaze, emotion=emotion)
+        # 새 발화가 나가면 앞 발화의 반응 예약은 무효다 — `tick()` 도 seq 로 한 번 더 본다.
+        self._react_plan = None
+        self._react_at = None
+        listener = self._listener_of(speaker)
+        if listener is not None:
+            caps = self._caps.get(listener, set())
+            if "gaze" in caps:
+                cmds.append(Command(to=listener, type="gaze", fields={"target": "partner"}))
+            if react and "react" in caps:
+                delay = len(text) / CHARS_PER_SEC * REACT_AT_FRACTION
+                self._react_plan = (listener, react, self._machine.seq, delay)
+        return cmds
+
+    def _listener_of(self, speaker: str) -> str | None:
+        """지금 말하는 로봇의 상대 — 진행에 참여하는(붙어 있고 대기 아닌) 로봇일 때만."""
+        if self.solo_role is not None:
+            return None
+        other = "docent" if speaker == "mc" else "mc"
+        if other not in self._connected or other in self._standby:
+            return None
+        return other
 
     def _point_label(self, cue: Cue, i: int) -> str:
         """포인트 i 도슨트 답의 발화 id. **마지막 포인트는 항상 종단 라벨**
@@ -1174,10 +1286,9 @@ class Director:
         # 사전 생성 **앞**에 둔다: 이 큐 전체가 새 수준으로 돌아야 한다.
         if self._level_pending is not None:
             self._apply_pending_level(cue)
-        # **수준별 브리프를 여기서 한 번 가른다.** `brief_for` 는 이 섹션에
-        # `briefs` 가 없으면 옛 `docent_brief` 로 폴백하므로, 아래 두 자리
-        # (여는 대사 캐시 키·도슨트 사전 생성) 모두 이 한 쌍만 보면 된다.
-        mc_brief, docent_brief = cue.brief_for(self._level_name)
+        # ~~수준별 브리프를 여기서 한 번 가른다~~ — 여는 대사 캐시 키와 도슨트 해설
+        # 사전 생성이 쓰던 값인데 둘 다 고정 대본 전환으로 없어졌다. 수준별 브리프는
+        # 이제 관람객 질문 답(`_answer`)만 그 자리에서 읽는다.
 
         # **여는 대사는 큐시트 원문이다.** ~~사전 생성 캐시(`data/mc_lines.yaml`)에서
         # 읽는다~~ — 2026-09-23부터 해설 전체가 검수한 고정 대본이라 캐시가 할 일이
@@ -1185,28 +1296,15 @@ class Director:
         # 있다는 캐시의 존재 이유는 이제 큐시트 자체가 갖는다.
         mc_text = cue.mc
 
-        # **사회자 대사도 이력에 넣는다 — 생성 스레드를 띄우기 전에.**
-        # 설계 §5.2 는 이력이 하나이고 `사회자:`/`도슨트:`/`관람객:` 접두로
-        # 구분한다고 못박는다. 사회자 몫을 빠뜨리면 도슨트의 LLM 은 방금
-        # 사회자가 뭐라고 넘겼는지 못 본다 — "도슨트, 맥스웰부터 부탁해요"
-        # 라는 넘김을 못 보고 해설을 시작하니 말이 이어지지 않는다.
-        # 순서가 중요하다: `_generate_docent` 가 `list(self.history)` 를
-        # 찍어가므로 스레드를 띄운 **뒤에** 넣으면 이번 큐에는 안 들어간다.
+        # **사회자 대사도 이력에 넣는다.** 설계 §5.2 는 이력이 하나이고
+        # `사회자:`/`도슨트:`/`관람객:` 접두로 구분한다고 못박는다. 고정 대사도
+        # 말한 순간 남겨야 관람객 질문 답 생성이 "방금 무슨 얘기를 했는가" 를 본다.
         self._remember(f"사회자: {mc_text}")
 
-        # **도슨트 대사를 미리 만든다.** 사회자가 고정 대사를 말하는 3~5초 동안
-        # 생성이 끝나므로 LLM 지연이 섹션 전환에 실리지 않는다.
-        # role="docent" — 이 슬롯은 도슨트 해설 전용이다.
-        # **수준별 브리프를 쓴다** — 옛 `cue.docent_brief` 를 그대로 두면
-        # 사회자 대사만 수준을 따르고 해설은 수준과 무관해진다(계획 보완
-        # Step 5b). 폴백도 같은 값을 줘야 한다 — `brief_for` 가 브리프 없는
-        # 섹션에서는 옛 `docent_brief` 를 돌려주므로 폴백 의미가 그대로다.
-        # **포인트가 있으면 첫 포인트만 띄운다.** 한 섹션의 해설을 짧은 왕복
-        # N회로 쪼개는 것이 포인트 라운드다(설계 §2). 여기서 N개를 한꺼번에
-        # 띄우면 `stage/__main__.py::build_generate` 의 LLM 락을 두세 벌이
-        # 동시에 노려, 정작 임계경로(지금 나갈 첫 답)가 뒤로 밀린다
-        # 이 큐의 턴 대본을 수준에 맞춰 한 번 고른다. 여기서 생성하는 것은 없다 —
-        # 오프닝이 끝나면 `on_speaking_ended` 가 0턴 설명을 그대로 말한다.
+        # ~~도슨트 대사를 미리 만든다(사회자 여는 대사 동안 해설 생성)~~ — 2026-09-23
+        # 고정 대본 전환으로 없어졌다. 이 큐의 턴 대본을 수준에 맞춰 한 번 고를 뿐,
+        # 여기서 생성하는 것은 없다 — 오프닝이 끝나면 `on_speaking_ended` 가 0턴
+        # 설명을 그대로 말한다.
         self._points = cue.points_for(self._level_name)
         self._point_i = 0
         if not self._points:
@@ -1229,11 +1327,7 @@ class Director:
         # ~~`_invalidate_slot`~~ 은 받아치기 슬롯과 함께 지웠다 — 끊을 슬롯이
         # 하나뿐이라 `_bump_slot` 을 직접 부른다(세대를 올리고 대기자를 깨운다).
         self._bump_slot("docent")
-        self._emit(
-            self._machine.speak(
-                self._who("mc"), cue.id, mc_text, gaze=cue.gaze, emotion=cue.mc_emotion,
-            )
-        )
+        self._emit(self._speak("mc", cue.id, mc_text, gaze=cue.gaze, emotion=cue.mc_emotion))
 
     def _apply_pending_level(self, cue: Cue) -> None:
         """대기 수준을 적용한다. **`self._lock` 을 쥔 채** `_begin_cue` 에서만 부른다.
@@ -1529,11 +1623,14 @@ class Director:
         # 동안 스레드에서 만든다 — 관람객에게도 정적 대신 반응이 먼저 간다(B3).
         # 큐 전환의 "고정 대사로 지연 은닉" 과 같은 수법이다.
         self._spawn_generate("docent", "docent", brief, QA_FALLBACK, f"{cue.id}:qa")
-        ack = QA_ACK_LINES[self._ack_i % len(QA_ACK_LINES)]
+        i = self._ack_i % len(QA_ACK_LINES)
+        ack = QA_ACK_LINES[i]
         self._ack_i += 1
         self._remember(f"사회자: {ack}")
         self._emit(
-            self._machine.speak(self._who("mc"), f"{cue.id}:ack", ack, gaze="audience")
+            self._speak(
+                "mc", f"{cue.id}:ack", ack, gaze="audience", emotion=QA_ACK_EMOTIONS[i],
+            )
         )
 
     def _remember(self, line: str) -> None:

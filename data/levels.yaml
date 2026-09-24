@@ -1,18 +1,24 @@
-# 관람객 수준 프로필. **분량은 섹션이 아니라 수준의 함수다** — 초등에게 6문장은
-# 길고 전문가에게 2문장은 부실하다. 큐시트의 "N문장 이내" 를 여기로 올렸다.
-# 글자 수는 발화 길이로 환산된다(CHARS_PER_SEC = 4.0): 초등 약 18~30초,
-# 전문가 약 65~100초.
+# 관람객 수준 프로필. **분량은 섹션이 아니라 수준의 함수다.**
+#
+# min/max_* 는 **관람객 질문 답**(감독이 LLM 으로 만드는 유일한 대사)의 분량이다
+# (2026-09-24). ~~도슨트 해설 분량(초등 70~120자 … 전문가 260~400자)~~ 이었는데, 해설이
+# 고정 대본이 된 뒤로 이 값을 쓰는 생성은 질문 답뿐이었고 — 전문가 수준이면 질문 하나에
+# 65~100초짜리 답을 "최소 5문장 채워서" 만들라는 지시가 됐다. 근거 브리프는 한두 문단인데
+# 분량을 채우라고 하면 근거 밖 내용을 지어낼 압력이 생긴다("지어내지 않는다" 와 정면 충돌).
+# 그래서 모든 수준 2~3문장으로 줄이고 글자 수만 어휘 밀도에 맞춰 수준별로 둔다.
+# 글자 수는 발화 길이로 환산된다(CHARS_PER_SEC = 4.0): 초등 약 13~25초, 전문가 약 23~45초.
 #
 # point_* 는 턴(사회자 질문 → 도슨트 설명) 하나의 도슨트 분량이다. **문장 수는
 # 모든 수준이 2~3으로 같다** — 수준은 설명의 난이도만 바꾸고 턴 구조는 안 바꾼다.
 # 하한이 2인 이유: 1문장이면 답만 말하고 끝나 사회자 질문을 확인하는 대화가
 # 된다(docs/lessons.md). 글자 수만 어휘 밀도 차이로 수준별이다. 한 큐 최대 3턴
 # (`stage/cues.py::MAX_TURNS`)이면 도슨트 몫이 초등 약 38~60초, 전문가 약 60~98초.
+# 턴 설명은 고정 대본이라 이 값은 **저작 규칙**이다 — 데이터 테스트가 본다.
 초등:
   min_sentences: 2
   max_sentences: 3
-  min_chars: 70
-  max_chars: 120
+  min_chars: 50
+  max_chars: 100
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 50
@@ -24,10 +30,10 @@
   # 이 예외가 없으면 페르소나의 "정식 명칭으로 부른다" 와 이 줄이 부딪힌다.
   sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 중고등:
-  min_sentences: 3
-  max_sentences: 4
-  min_chars: 120
-  max_chars: 200
+  min_sentences: 2
+  max_sentences: 3
+  min_chars: 60
+  max_chars: 120
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 60
@@ -37,10 +43,10 @@
   numbers: "연도만 말한다. 정밀한 수치는 생략한다."
   sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 일반:
-  min_sentences: 4
-  max_sentences: 5
-  min_chars: 180
-  max_chars: 280
+  min_sentences: 2
+  max_sentences: 3
+  min_chars: 70
+  max_chars: 140
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 70
@@ -50,10 +56,10 @@
   numbers: "연도와 개략 수치를 말한다."
   sources: "기관 이름까지는 말해도 된다."
 전문가:
-  min_sentences: 5
-  max_sentences: 7
-  min_chars: 260
-  max_chars: 400
+  min_sentences: 2
+  max_sentences: 3
+  min_chars: 90
+  max_chars: 180
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 80

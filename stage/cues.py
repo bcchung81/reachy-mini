@@ -6,6 +6,7 @@
 
 import os
 import pathlib
+import re
 from dataclasses import dataclass, field
 
 import yaml
@@ -32,6 +33,19 @@ QA_ACK_LINES = (
     "오, 그건 저도 궁금했어요. 도슨트?",
     "네, 그건 도슨트가 잘 알 거예요. 도슨트, 부탁해요.",
 )
+# 위 확인 멘트와 **같은 자리끼리** 짝을 이루는 감정(계획 §12.3). 따로 둔 이유: 멘트를
+# (문장, 감정) 짝으로 바꾸면 이 상수를 문자열로 읽는 자리가 전부 흔들린다. 길이가 어긋나면
+# 테스트가 잡는다(`tests/test_stage_cues.py::test_관람객_경로_고정_대사의_감정이_어휘_안에_있다`).
+#
+# 감정을 안 실으면 로봇이 "감독이 옛 버전이면 재배포가 필요하다" 는 **거짓 경고**를 찍고
+# 문장 키워드로 모션을 추측한다(2026-09-24 점검) — 관람객 답에 '타이타닉' 이 나오면
+# 고개를 젓는다.
+QA_ACK_EMOTIONS = ("기쁨", "궁금", "끄덕")
+# 재질문(`QUESTION_PROMPTS`)은 셋 다 묻는 말이다.
+QUESTION_PROMPT_EMOTION = "궁금"
+# 관람객 질문 답은 LLM 생성이라 내용마다 감정을 붙일 수 없다 — 형식 이탈 위험을 지지
+# 않으려고 첫 판은 '설명'(모션 없이 흔들림만)으로 고정한다(계획 §12.3).
+QA_ANSWER_EMOTION = "설명"
 
 # 섹션 끝에 사회자가 관람객 창구를 **말로** 여는 문장. 마이크가 열려도 관람객은
 # 그것을 모른다(리뷰 B2) — 그래서 큐시트의 고정 `mc_after` 19곳이 전부 이 안내를
@@ -448,6 +462,52 @@ def is_advance(text: str) -> bool:
         last_word.startswith(w) and len(last_word) - len(w) <= 2
         for w in _ADVANCE_WORDS
     )
+
+
+# 관람객 질문으로 받을 최소 조건(2026-09-24). 수치는 감독 로그의 **실제 잡음 전사**에서
+# 뽑았다 — `'아'`(71회)·`'ome'`·`'omeomeome…'`·`'Up until theλιλιλι…'`·`'Watch out.'`·
+# `'ㅋㅋㅋㅋ'`·`'세로 세로 세로'`. 로봇 쪽 환각 필터(`voice_loop._hallucinated`)는 **공백으로
+# 나뉜 토막**의 반복만 봐서 이것들이 전부 통과했다.
+#
+# 문턱은 **통과시킬 가장 짧은 질문**에 맞췄다(docs/lessons.md 「문턱은 막으려는 것이
+# 아니라 통과시킬 것에 맞춘다」): "왜요?"·"누가요?" 가 한글 두 음절이다. 영어·약어가 섞인
+# 질문("GMDSS가 뭐예요?", "5G는요?")도 통과해야 하므로 라틴 문자·숫자는 막지 않고,
+# 한글 음절 수만 센다.
+_MIN_HANGUL_SYLLABLES = 2
+_HANGUL_SYLLABLE = re.compile(r"[가-힣]")
+# 한글(음절·자모)·라틴·숫자 밖의 글자. Whisper 가 잡음에서 그리스·키릴 문자를 낸다.
+_FOREIGN_SCRIPT = re.compile(r"[^0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ]")
+# 1~4글자 토막이 3번 이상 **붙어서** 반복되고 전체의 60% 이상을 차지하면 반복 환각이다.
+# `'하하하 재밌어요'`(43%)는 통과하고 `'세로세로세로'`(100%)는 걸린다.
+_REPEAT_UNIT_MAX = 4
+_REPEAT_MIN_TIMES = 3
+_REPEAT_MIN_SHARE = 0.6
+
+
+def noise_reason(text: str) -> str | None:
+    """이 전사를 관람객 질문으로 **보지 않을** 이유. 질문으로 받아도 되면 None.
+
+    감독(`Director.on_heard`)이 LISTENING 에서 부른다 — 진행어(`is_advance`)는 먼저
+    통과시킨 뒤다. 잡음에 LLM 이 답하는 것은 침묵보다 나쁘다: 관람객은 아무 말도
+    안 했는데 로봇이 "좋은 질문이네요" 하고 엉뚱한 답을 한다.
+
+    판정 오류의 방향: 여기서 질문을 잘못 버리면 관람객이 다시 묻거나 운영자가
+    본다(경고가 남는다). 잡음을 질문으로 받으면 회복할 길이 없다 — 이미 말했다.
+    """
+    flat = re.sub(r"[\W_]+", "", text or "")
+    if not flat:
+        return "빈 전사"
+    if _FOREIGN_SCRIPT.search(flat):
+        return "한글·영문 밖 문자"
+    n = len(_HANGUL_SYLLABLE.findall(flat))
+    if n < _MIN_HANGUL_SYLLABLES:
+        return f"한글 음절 {n}개"
+    for size in range(1, _REPEAT_UNIT_MAX + 1):
+        pattern = rf"(.{{{size}}})\1{{{_REPEAT_MIN_TIMES - 1},}}"
+        for m in re.finditer(pattern, flat):
+            if len(m.group(0)) >= len(flat) * _REPEAT_MIN_SHARE:
+                return "같은 토막 반복"
+    return None
 
 
 class CueSheet:

@@ -1,7 +1,8 @@
 """턴 상태기계 — 네트워크도 LLM도 모른다. 불변식 2개가 전부다.
 
 ① `*_SPEAKING` 상태에서는 어느 로봇의 마이크도 열리지 않는다.
-   게이트 개방은 `LISTENING` 진입 시점 단 한 곳이다.
+   게이트 개방은 `LISTENING` 진입 시점 단 한 곳이다. **`IDLE` 에서도 닫혀 있다** —
+   `abort()` 가 양쪽을 닫는다(2026-09-24, 아래 `abort` 주석).
 ② `speak()` 는 직전 `on_speaking_ended()` 를 받기 전에 다시 부를 수 없다.
 
 ①이 자기목소리 루프를 **음향이 아니라 구조로** 막는다. 도슨트 목소리는 사회자
@@ -121,11 +122,20 @@ class TurnMachine:
         return self._to_listening(listener)
 
     def abort(self) -> list[Command]:
-        """즉시 중단. 마이크는 열지 않는다 — 사람이 다시 시작시킨다."""
+        """즉시 중단. **양쪽 마이크를 닫는다** — 사람이 다시 시작시킨다.
+
+        ~~마이크는 열지 않는다~~ 만으로는 모자랐다. LISTENING 에서 멈추면 열려 있던
+        리스너 마이크가 IDLE 내내 그대로 남아, 사회자 STT 가 전시장 소음을 계속
+        올렸다(감독 로그에 IDLE 전사 221건 — `'아'`·`'omeome…'` 등). 감독이 버리긴
+        하지만 STT 서버가 헛돌고 로그가 진짜 신호를 덮는다. 닫는 쪽이 불변식 ①과도
+        맞다 — 마이크가 열리는 상태는 LISTENING 하나뿐이다.
+        """
         self.state = State.IDLE
         self.speaking_role = None
         self.cue_id = None
         return [
+            Command(to="mc", type="mic", fields={"open": False}),
+            Command(to="docent", type="mic", fields={"open": False}),
             Command(to="mc", type="abort"),
             Command(to="docent", type="abort"),
         ]

@@ -108,7 +108,8 @@ def test_분량이_수준을_따라_커진다():
 def test_max_tokens_는_상한_글자에서_계산된다():
     # 잘리면 TTS 가 끊긴 문장을 읽는다 — 분량 미달보다 나쁘다. 넉넉히 잡는다.
     lv = load_levels()
-    assert lv["전문가"].max_tokens == 400 * 2 + 64
+    # 전문가 관람객 답 상한 180자(2026-09-24, 해설 분량 400자에서 질문 답 분량으로 재정의)
+    assert lv["전문가"].max_tokens == 180 * 2 + 64
 
 
 def test_기본_수준은_일반이다(monkeypatch):

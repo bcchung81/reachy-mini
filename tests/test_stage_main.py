@@ -184,13 +184,14 @@ def test_상대_턴까지_이어_쓴_생성문은_그_앞에서_자른다(기록
     assert generate("docent", "지시", []) == "설명을 마칩니다."
 
 
-def test_도슨트_생성문은_수준_상한_5문장에서_자르고_경고한다(기록LLM):
-    """일반 수준은 4~5문장 / 180~280자(`data/levels.yaml`). 수는 리터럴로 박는다."""
-    기록LLM.답 = ["하나.", "둘.", "셋.", "넷.", "다섯.", "여섯.", "일곱."]
+def test_도슨트_생성문은_수준_상한_3문장에서_자르고_경고한다(기록LLM):
+    """일반 수준 관람객 답은 2~3문장 / 70~140자(`data/levels.yaml`, 2026-09-24 재정의).
+    수는 리터럴로 박는다."""
+    기록LLM.답 = ["하나요.", "둘이요.", "셋이요.", "넷이요.", "다섯이요."]
     경고: list[str] = []
     generate = stage_main.build_generate(_레벨, warn=경고.append)
-    assert generate("docent", "지시", []) == "하나.둘.셋.넷.다섯."
-    assert any("5문장/280자" in w for w in 경고), 경고
+    assert generate("docent", "지시", []) == "하나요.둘이요.셋이요."
+    assert any("3문장/140자" in w for w in 경고), 경고
 
 
 def test_사회자_생성문은_고정_상한_3문장에서_자른다(기록LLM):
@@ -216,11 +217,11 @@ def test_분량_상한_경고는_원래와_잘린_길이와_잘린_뒷부분을_
     날 수 있다 — 모델은 450자를 썼는데 첫 문장만 남아 "너무 짧다(150자)" 가 찍힌다.
     상한 경고에 원래→잘린 길이와 잘린 뒷부분이 없으면 로그만 보고는 두 경고를
     잇지 못한다(Task 2 리뷰). 길이·뒷부분은 리터럴로 본다."""
-    기록LLM.답 = ["하나.", "둘.", "셋.", "넷.", "다섯.", "여섯.", "일곱."]
+    기록LLM.답 = ["하나요.", "둘이요.", "셋이요.", "넷이요.", "다섯이요."]
     경고: list[str] = []
     generate = stage_main.build_generate(_레벨, warn=경고.append)
     generate("docent", "지시", [])
-    assert any("18자→12자" in w and "여섯.일곱." in w for w in 경고), 경고
+    assert any("21자→12자" in w and "넷이요.다섯이요." in w for w in 경고), 경고
 
 
 def test_분량_상한_경고는_잘린_뒷부분의_끝까지_보여_준다(기록LLM):
@@ -782,7 +783,7 @@ def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_
         stage_main.main()
 
     assert list(seen["level_min_chars"].items()) == [
-        ("초등", 70), ("중고등", 120), ("일반", 180), ("전문가", 260),
+        ("초등", 50), ("중고등", 60), ("일반", 70), ("전문가", 90),
     ]
     assert seen["generate"]("docent", "지시", []) == "초등:docent:지시"
     seen["on_level_change"]("전문가")
@@ -899,3 +900,15 @@ def test_대시보드_주소가_비어_있으면_모든_망이_아니라_노트�
 
     assert seen["host"] == "127.0.0.1"
     assert "⚠ REACHY_DASHBOARD_HOST 가 비어 있다" in capsys.readouterr().out
+
+
+def test_생성문에_글말_어미가_섞이면_고치지_않고_경고한다(기록LLM):
+    """계획 §4 — 고정 대본은 데이터 테스트가 지키지만 생성물은 프롬프트뿐이다. 고쳐 쓰면
+    사실이 바뀔 수 있고 자르면 답이 끊긴다 — 소리 내는 데까지만 한다."""
+    기록LLM.답 = ["전파는 발견이다.", "그래서 재밌어요."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("docent", "지시", []) == "전파는 발견이다.그래서 재밌어요."
+    assert [w for w in 경고 if "글말" in w] == [
+        "[docent] 생성문에 글말 어미가 섞였다(그대로 쓴다) — '전파는 발견이다.'"
+    ], 경고

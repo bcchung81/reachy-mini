@@ -19,12 +19,12 @@ def test_수준의_분량이_프롬프트에_들어간다():
     `stage/prompts.py::_amount_for` 의 min/max 를 **뒤집어**
     "7~5문장으로, 400~260자 사이로" 라는 말이 안 되는 지시를 내보내도
     잡히지 않았다(전체 리뷰). 전문가 수준의 수치는 리터럴로 박는다
-    (`data/levels.yaml` 전문가: 5~7문장 / 260~400자)."""
+    (`data/levels.yaml` 전문가 관람객 답: 2~3문장 / 90~180자, 2026-09-24 재정의)."""
     lv = load_levels()["전문가"]
     p = build_system_prompt("docent", lv)
-    assert "5~7문장으로" in p, p
-    assert "260~400자 사이로" in p, p
-    assert "7~5문장" not in p and "400~260자" not in p, p
+    assert "2~3문장으로" in p, p
+    assert "90~180자 사이로" in p, p
+    assert "3~2문장" not in p and "180~90자" not in p, p
 
 
 def test_공통_규약은_두_역할_모두에_있다():
@@ -64,9 +64,12 @@ def test_시스템_프롬프트에_분량_규정이_있다():
     assert f"{lv.max_chars}~{lv.min_chars}자" not in p, p
     # 2) 하한을 동사로 명시하는 문장 — 수치 범위만으로는 "N문장 이내" 로
     #    오독될 수 있어 이 문구가 그것을 막는다(원래 테스트의 관심사).
-    assert "채워" in p, p
     assert "이상" in p, p
     assert "한 문장" in p and "아니다" in p, p
+    # 3) 관람객 답의 모양과 "채우려고 지어내지 않는다"(2026-09-24). ~~"채워서 말한다"~~ 는
+    #    해설 생성 시절 문구라 질문 답에 근거 밖 내용을 메울 압력을 줬다.
+    assert "바로 답" in p, p
+    assert "채우려고" in p and "지어내지 않는다" in p, p
 
 
 def test_사회자_분량은_수준과_무관하게_고정된_수치를_쓴다():
@@ -93,14 +96,14 @@ def test_사회자_분량은_수준과_무관하게_고정된_수치를_쓴다()
         assert f"{lv.min_chars}~{lv.max_chars}자 사이로 말한다" not in p, p
 
 
-def test_사회자_프롬프트에는_해설_문구가_없다():
-    """"채워서"/"해설이 아니다" 는 도슨트용이다 — 사회자에게 붙이면 자기
+def test_사회자_프롬프트에는_도슨트_분량_문구가_없다():
+    """"한 문장짜리 답은 대답이 아니다" 는 도슨트용이다 — 사회자에게 붙이면 자기
     페르소나("해설은 네 몫이 아니다")와 모순되는 거짓 지시가 된다."""
     lv = load_levels()["일반"]
     mc_p = build_system_prompt("mc", lv)
     docent_p = build_system_prompt("docent", lv)
-    assert "해설이 아니다" not in mc_p, mc_p
-    assert "해설이 아니다" in docent_p
+    assert "대답이 아니다" not in mc_p, mc_p
+    assert "대답이 아니다" in docent_p
 
 
 def test_페르소나_파일이_없으면_거절한다(tmp_path, monkeypatch):
@@ -160,3 +163,20 @@ def test_모든_역할과_수준의_프롬프트가_기관_정식_명칭을_지�
             assert "한국방송통신전파진흥원" in p, (role, name)
     for name in ("초등", "중고등"):
         assert "한국방송통신전파진흥원" in load_levels()[name].sources, name
+
+
+def test_모든_역할과_수준의_프롬프트가_구어체를_지시한다():
+    """계획 `2026-09-22-podcast-turns-qa.md` §4 — 생성되는 관람객 답만 구어체 규약이 없어
+    '~이다' 로 끝나는 글말이 섞였다. 공통 규약에 넣어 두 역할·네 수준에 다 간다."""
+    for name, lv in load_levels().items():
+        for role in ("mc", "docent"):
+            p = build_system_prompt(role, lv)
+            assert "글말" in p and "'~요'" in p, (role, name)
+
+
+def test_도슨트_페르소나는_관람객_질문에_답하는_역할이다():
+    """해설은 고정 대본이다 — ~~"지시를 받으면 해설을 말한다"~~ 는 옛 역할이었다."""
+    p = build_system_prompt("docent", load_levels()["일반"])
+    assert "관람객 질문에 답할 때뿐" in p, p
+    assert "모른다고" in p, p
+    assert "지시문을 따라 읽지 말고" not in p, p

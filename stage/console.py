@@ -47,6 +47,11 @@ def run_console(director: Director, read=input, out=print, block=block_forever, 
             return
         if cmd in ("q", "quit"):
             return
+        if cmd and cmd != "?":
+            # **운영자 조작을 로그에 남긴다**(2026-09-24). 치는 글자는 표준입력이라
+            # `start` 의 tee 로그(`start-director.log`)에 안 남는다 — 그래서 "IDLE 에서
+            # 들린 말 221건" 이 `a` 뒤에 생긴 것인지 로그만으로 가를 수 없었다.
+            out(f"[운영] 콘솔 {cmd}")
         try:
             dispatch(director, cmd, out, camera=camera)
         except Exception as exc:  # noqa: BLE001

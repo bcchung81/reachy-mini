@@ -239,6 +239,11 @@ class DashboardServer:
         except (ValueError, KeyError, TypeError):
             self._warn(f"대시보드 명령이 규약에 안 맞는다 — 버린다: {str(raw)[:80]!r}")
             return
+        # **운영자 조작을 터미널 로그에도 남긴다**(2026-09-24). 페이지는 허브의 `command`
+        # 이벤트로 보지만 `start-director.log` 에는 아무것도 안 남아, 문제 보고를 받고
+        # 로그를 읽을 때 "누가 언제 멈췄나" 를 재구성할 수 없었다. 콘솔(`run_console`)과
+        # 같은 모양의 한 줄이다.
+        self._warn(f"[운영] 대시보드 {cmd}")
         lines: list[str] = []
         ok = True
         try:

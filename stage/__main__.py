@@ -37,7 +37,7 @@ from typing import Callable  # noqa: E402
 
 from stage.director import SPEAKER_LABEL  # noqa: E402
 from stage.prompts import _MC_MAX_CHARS, _MC_MAX_SENTENCES  # noqa: E402
-from stage.speech_text import cap_length, strip_speaker_labels  # noqa: E402
+from stage.speech_text import cap_length, strip_speaker_labels, written_endings  # noqa: E402
 
 
 def history_for(role: str, history: list[dict]) -> list[dict]:
@@ -188,6 +188,13 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
                 f"넘어 문장 경계에서 잘랐다({len(before)}자→{len(text)}자) — "
                 f"잘린 뒷부분 {_clip(dropped)!r}"
             )
+        # **글말이 섞이면 알린다 — 고치거나 자르지는 않는다**(계획 §4). 고정 대본은 데이터
+        # 테스트가 지키지만 생성물은 프롬프트(`_COMMON`)밖에 없다. 여기서 문장을 고쳐 쓰면
+        # 사실이 바뀔 수 있고, 자르면 답이 끊긴다 — 소리 내는 데까지만 한다. 잦으면 프롬프트
+        # 문제다. 판정은 데이터 테스트와 같은 함수다(`speech_text.written_endings`).
+        written = written_endings(text)
+        if written:
+            warn(f"[{role}] 생성문에 글말 어미가 섞였다(그대로 쓴다) — {_clip(written[0])!r}")
         return text
 
     return generate
@@ -260,8 +267,11 @@ def announce_level(lv, explicit: bool) -> None:
     "출처 판정을 두 번 하지 않는다" 로 마저 없앤다.
     """
     src = "환경변수" if explicit else "기본값"
+    # 분량은 **관람객 질문 답**의 것이다(`data/levels.yaml` 머리말) — 해설은 고정 대본이라
+    # 수준이 바꾸는 것은 대본의 설명 난이도와 이 답 분량뿐이다. 라벨을 안 붙이면 로그를
+    # 읽는 사람이 해설 분량으로 오해한다.
     print(
-        f"관람객 수준: {lv.name} ({src}) — "
+        f"관람객 수준: {lv.name} ({src}) — 질문 답 "
         f"{lv.min_sentences}~{lv.max_sentences}문장 / {lv.min_chars}~{lv.max_chars}자",
         flush=True,
     )
