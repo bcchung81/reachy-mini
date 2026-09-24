@@ -2916,3 +2916,45 @@ def test_관람객_질문_경로의_대사도_감정을_싣는다():
     reask = [f for r, t, f in h.sent if t == "say"][-1]
     # 재질문은 관람객에게 말을 걸어 보라는 **권유**다(2026-09-24 어휘 확장, come1 손짓).
     assert reask["cue_id"] == "c1:reask" and reask["emotion"] == "권유", reask
+
+
+def test_질문이_다른_섹션에_대한_것이면_그_근거와_금지_규칙도_싣는다():
+    """관람객은 앞에서 들은 것을 되묻는다 — 지금 섹션 브리프만 주면 소형 모델이 일반 지식으로
+    채운다(2026-09-24, `stage/retrieval.py`)."""
+    옛큐 = Cue(
+        "c1", "무선전신", "오프닝", "옛", "partner", mc_after="받아치기 다음",
+        briefs={"일반": {"mc_brief": "m", "docent_brief": "마르코니가 무선전신을 실용화했다.",
+                         "guard": "'캐나다'라고 하지 않는다."}},
+        points=(Turn("", {"일반": "마르코니가 무선전신을 실용화했어요. 대서양을 건넜죠."}),),
+    )
+    지금큐 = Cue(
+        "c2", "해상통신", "오프닝 둘", "옛", "partner", mc_after="받아치기 다음",
+        briefs={"일반": {"mc_brief": "m", "docent_brief": "선박은 조난 신호를 자동으로 보낸다."}},
+        points=(Turn("", {"일반": "배는 조난 신호를 자동으로 보내요. 규칙이 그렇게 바뀌었죠."}),),
+    )
+    h = Harness(sheet=CueSheet([옛큐, 지금큐]))
+    h.d.goto("c2")
+    h.ended("mc", "c2"); h.ended("docent", "c2:docent"); h.ended("mc", "c2:after")
+    h.d.on_heard("아까 마르코니가 누구라고 했죠?")
+    brief = h.gen_calls[-1][0]
+    assert "선박은 조난 신호를" in brief                     # 지금 섹션 근거는 그대로
+    assert "마르코니가 무선전신을 실용화했다" in brief       # 되물은 섹션 근거
+    assert "'캐나다'라고 하지 않는다" in brief                # 그 섹션의 정정도 함께
+    assert any("'c1' 섹션과 더 가깝다" in w for w in h.warnings), h.warnings
+
+
+def test_공연이_침묵으로_끝나면_마이크를_닫고_첫_큐로_되감는다():
+    """예전에는 커서가 마지막 큐에 머물러 다음 관람객에게 `s` 를 누르면 마무리 인사가 다시
+    나왔고, 리스너 마이크가 공연 뒤에도 열려 있었다(2026-09-24)."""
+    h = Harness()
+    _마지막_큐_듣기까지(h)
+    h.clear()
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.d.state is State.IDLE
+    assert h.mics() == [("mc", False), ("docent", False)]
+    assert h.d.snapshot()["cue_id"] == "c1"
+    assert any("공연이 끝났다" in w for w in h.warnings), h.warnings
+    h.clear()
+    h.d.start()                                           # 다음 관람객 — 첫 큐부터
+    assert h.says() == [("mc", "사회자 첫 대사")]

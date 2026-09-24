@@ -37,7 +37,7 @@ from typing import Callable  # noqa: E402
 
 from stage.director import SPEAKER_LABEL  # noqa: E402
 from stage.prompts import _MC_MAX_CHARS, _MC_MAX_SENTENCES  # noqa: E402
-from stage.speech_text import cap_length, strip_speaker_labels, written_endings  # noqa: E402
+from stage.speech_text import cap_length, speakable, strip_speaker_labels, written_endings  # noqa: E402
 
 
 def history_for(role: str, history: list[dict]) -> list[dict]:
@@ -188,6 +188,12 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
                 f"넘어 문장 경계에서 잘랐다({len(before)}자→{len(text)}자) — "
                 f"잘린 뒷부분 {_clip(dropped)!r}"
             )
+        # **글에서만 쓰는 표기를 말로 바꾼다**(2026-09-24) — "2~3초"·"30%"·괄호·별표. TTS 가 기호
+        # 이름을 읽거나 괄호에서 끊는다. 이력에도 바꾼 문장이 들어가야 다음 생성이 기호를 흉내 내지
+        # 않는다(이름표 정리와 같은 이유). 바꾼 것은 한 줄로 남긴다 — 잦으면 프롬프트 문제다.
+        text, spoken = speakable(text)
+        if spoken:
+            warn(f"[{role}] 생성문의 글 표기를 말로 바꿨다({', '.join(spoken)})")
         # **글말이 섞이면 알린다 — 고치거나 자르지는 않는다**(계획 §4). 고정 대본은 데이터
         # 테스트가 지키지만 생성물은 프롬프트(`_COMMON`)밖에 없다. 여기서 문장을 고쳐 쓰면
         # 사실이 바뀔 수 있고, 자르면 답이 끊긴다 — 소리 내는 데까지만 한다. 잦으면 프롬프트

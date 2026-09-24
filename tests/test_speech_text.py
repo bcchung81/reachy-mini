@@ -142,3 +142,33 @@ def test_글말_어미로_끝나는_문장만_골라낸다(text, expected):
     from stage.speech_text import written_endings
 
     assert written_endings(text) == expected
+
+
+# ── 소리로 낼 수 있는 표기로(2026-09-24) — 생성된 관람객 답에만 쓴다 ─────────────
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("달은 왕복 2~3초라요.", "달은 왕복 2에서 3초라요."),
+    ("약 30%가 넘어요.", "약 30퍼센트가 넘어요."),
+    ("송신/수신을 같이 해요.", "송신, 수신을 같이 해요."),
+    ("방송·통신 진흥이에요.", "방송, 통신 진흥이에요."),
+    ("초단파(VHF)를 써요.", "초단파 VHF를 써요."),          # 괄호를 쉼표로 바꾸면 조사가 떨어진다
+    ("**중요한** 건 이거예요 😀.", "중요한 건 이거예요."),
+])
+def test_글에서만_쓰는_표기를_말로_바꾼다(text, expected):
+    from stage.speech_text import speakable
+
+    out, changes = speakable(text)
+    assert out == expected
+    assert changes, "바꿨는데 바꾼 것을 알리지 않았다"
+
+
+@pytest.mark.parametrize("text", [
+    "1901년에 3,500킬로미터 떨어진 곳이에요.",   # 숫자는 풀어 쓰지 않는다 — 잘못 풀면 사실이 바뀐다
+    "주파수는 121.5메가헤르츠예요.",
+    "그렇습니다. 맞아요!",
+])
+def test_말로_읽히는_문장은_건드리지_않는다(text):
+    from stage.speech_text import speakable
+
+    assert speakable(text) == (text, [])

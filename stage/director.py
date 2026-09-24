@@ -31,6 +31,7 @@ from stage.cues import (
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.protocol import ROLES
+from stage.retrieval import CueIndex
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
 # 타임아웃은 **일찍 터지면 안 되므로** 가장 느린 쪽보다 더 보수적으로 잡는다.
@@ -261,6 +262,9 @@ class Director:
 
         self._machine = TurnMachine()
         self.history: list[dict] = []
+        # 관람객 질문 답의 근거를 큐시트 전체로 넓히는 색인(`stage/retrieval.py`). 큐시트는 기동 뒤
+        # 안 바뀌므로 여기서 한 번 만든다 — 수준별 색인은 처음 묻는 수준에서 게으르게 만든다.
+        self._index = CueIndex(self._sheet.cues())
 
         self._deadline: float | None = None
         # 관람객 질문을 기다리는 기한. **`_deadline` 과 절대 섞지 않는다.**
@@ -832,6 +836,17 @@ class Director:
         if nxt is None:
             if not quiet_if_last:
                 self._warn("마지막 큐다 — 더 진행할 곳이 없다")
+                return
+            # **침묵으로 공연이 끝났다 — 닫고 되감는다**(2026-09-24). 예전에는 아무것도 안 해서
+            # 커서가 마지막 큐에 머물렀다: 다음 관람객 그룹에 운영자가 `s` 를 누르면 마무리 인사가
+            # 다시 나왔고(첫 큐로 가려면 `g 01-intro` 를 알아야 했다), 리스너 마이크는 공연이 끝난
+            # 뒤에도 열려 전시장 소음을 STT 로 올렸다. 중단과 같은 몸(`_abort_locked`)으로 마이크를
+            # 닫고 IDLE 로 간 뒤 커서를 처음으로 돌린다. 공연마다 한 번뿐이라 한 줄 남긴다 —
+            # 운영자가 로그에서 "한 바퀴 끝났다" 를 보는 자리다("마지막" 이라는 낱말은 안 쓴다:
+            # 그것은 요청을 못 들어준 경고의 표지다).
+            self._abort_locked()
+            self._sheet.reset()
+            self._warn("공연이 끝났다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)")
             return
         self._begin_cue(nxt)
 
@@ -1613,6 +1628,21 @@ class Director:
         guard = cue.guard_for(self._level_name)
         if guard:
             parts.append(guard)
+        # **질문이 다른 섹션에 대한 것이면 그 근거도 싣는다**(2026-09-24). 관람객은 앞에서 들은
+        # 것을 되묻는다 — 지금 섹션 브리프만 주면 소형 모델이 일반 지식으로 채운다. 지금 섹션보다
+        # 확실히 가까운 섹션 **하나만** 붙인다(`CueIndex.related`) — 엉뚱한 근거는 없는 것보다 나쁘다.
+        # 그 섹션의 금지 규칙도 함께 간다("'캐나다'라고 하지 않는다" 같은 정정이 그쪽에 있다).
+        other = self._index.related(question, self._level_name, cue.id)
+        if other is not None:
+            _, other_brief = other.brief_for(self._level_name)
+            parts.append(
+                f"질문과 관련된 다른 섹션('{other.title}')에서 확인된 내용: "
+                f"{other_brief.replace('**', '')}"
+            )
+            other_guard = other.guard_for(self._level_name)
+            if other_guard:
+                parts.append(other_guard)
+            self._warn(f"[{cue.id}:qa] 질문이 '{other.id}' 섹션과 더 가깝다 — 그 근거도 싣는다")
         parts.append(
             "질문에 먼저 답한다. 위 내용과 앞선 해설에 없는 사실·수치는 지어내지 않는다. "
             "모르면 모른다고 말하고 이 섹션 이야기로 돌린다."

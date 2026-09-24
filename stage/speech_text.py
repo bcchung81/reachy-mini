@@ -93,6 +93,56 @@ def written_endings(text: str) -> list[str]:
     return out
 
 
+# ── 소리로 낼 수 있는 표기로 (2026-09-24) ─────────────────────────────────
+#
+# 생성된 관람객 답에는 글에서만 쓰는 표기가 섞여 나온다 — "2~3초", "30%", "송신/수신",
+# "(VHF)", 별표. TTS 는 이것을 기호 이름으로 읽거나 괄호에서 끊어 읽는다. 한국어 TTS 를
+# 운영하는 커뮤니티 프로젝트도 합성 **앞에** 정규화 단계를 둔다(범위 `~`·퍼센트·기호→쉼표,
+# 마크다운 제거 — docs/lessons.md 「합성 전 정규화」). 고정 대본은 사람이 검수한 문장이라
+# 런타임에 고치지 않고 데이터 테스트가 같은 표기를 막는다 — 이 함수는 **생성물**에만 쓴다.
+_RANGE = re.compile(r"(\d)\s*[~〜～]\s*(\d)")            # 2~3초 → 2에서 3초
+_PERCENT = re.compile(r"(\d)\s*%")                      # 30% → 30퍼센트
+_HANGUL_SLASH = re.compile(r"([가-힣])\s*/\s*([가-힣])")  # 송신/수신 → 송신, 수신
+_HANGUL_DOT = re.compile(r"([가-힣])\s*·\s*([가-힣])")   # 방송·통신 → 방송, 통신
+_PARENS = re.compile(r"\s*[(（]([^()（）]*)[)）]")         # 초단파(VHF)를 → 초단파 VHF를
+_MARKUP = re.compile(r"[*#`_]+")
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
+
+
+def speakable(text: str) -> tuple[str, list[str]]:
+    """글에서만 쓰는 표기를 말로 바꾼다. (결과, 바꾼 것들의 짧은 설명).
+
+    **뜻을 바꾸지 않는 치환만** 한다 — 숫자를 한글로 풀어 쓰지 않는다(TTS 가 숫자는 읽는다.
+    잘못 풀면 사실이 바뀐다). 바꾼 것을 돌려주는 이유: 호출부가 경고 한 줄로 남긴다 —
+    조용히 고치면 "프롬프트가 글말 기호를 계속 낸다" 는 신호가 사라진다.
+    """
+    changes: list[str] = []
+    s = text
+
+    def sub(pattern, repl, label):
+        nonlocal s
+        new, n = pattern.subn(repl, s)
+        if n:
+            changes.append(f"{label}×{n}")
+            s = new
+
+    sub(_RANGE, r"\1에서 \2", "범위~")
+    sub(_PERCENT, r"\1퍼센트", "%")
+    sub(_HANGUL_SLASH, r"\1, \2", "/")
+    sub(_HANGUL_DOT, r"\1, \2", "·")
+    # 괄호는 벗기고 내용만 띄어 남긴다 — 쉼표로 바꾸면 뒤에 붙은 조사가 떨어진다("VHF,를").
+    sub(_PARENS, r" \1", "괄호")
+    sub(_MARKUP, "", "마크다운")
+    sub(_EMOJI, "", "이모지")
+    if changes:
+        # 지운 자리에 남은 " ." · ", ." · ",," · 앞머리 쉼표를 다듬는다.
+        s = re.sub(r"\s+([.?!…,])", r"\1", s)
+        s = re.sub(r",([.?!…])", r"\1", s)
+        s = re.sub(r"(,\s*){2,}", ", ", s)
+        s = re.sub(r"\s{2,}", " ", s).strip(" ,")
+    return s, changes
+
+
 def cap_length(text: str, max_sentences: int, max_chars: int) -> tuple[str, bool]:
     """문장 경계에서 분량 상한을 건다. (결과, 잘랐는지).
 
