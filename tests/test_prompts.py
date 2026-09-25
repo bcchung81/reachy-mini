@@ -27,10 +27,10 @@ def test_수준의_분량이_프롬프트에_들어간다():
     assert "3~2문장" not in p and "180~90자" not in p, p
 
 
-def test_공통_규약은_두_역할_모두에_있다():
+def test_공통_규약은_세_역할_모두에_있다():
     # TTS 가 읽는다 — 목록 기호·이모지가 나오면 그 기호를 소리 내 읽는다(리뷰 B5).
     lv = load_levels()["일반"]
-    for role in ("mc", "docent"):
+    for role in ("mc", "docent", "solo"):
         p = build_system_prompt(role, lv)
         assert "음성" in p and "마크다운" in p
 
@@ -180,3 +180,17 @@ def test_도슨트_페르소나는_관람객_질문에_답하는_역할이다():
     assert "관람객 질문에 답할 때뿐" in p, p
     assert "모른다고" in p, p
     assert "지시문을 따라 읽지 말고" not in p, p
+
+
+def test_단독_사회자는_혼자_답하는_페르소나와_두_갈래_분량을_받는다():
+    """단독(2026-09-25)의 사회자는 전시 질문에도 인사에도 답한다. 해설하지 않는 사회자 페르소나(mc)로는
+    전시 질문에 답할 수 없고, 도슨트 분량 문구("한 문장짜리 답은 대답이 아니다")를 주면 "안녕하세요" 에도
+    분량을 채우려 든다. 전문가 수치는 리터럴(`data/levels.yaml` 2~3문장 / 90~180자)."""
+    lv = load_levels()["전문가"]
+    p = build_system_prompt("solo", lv)
+    assert "도슨트 없이 혼자" in p and "도슨트에게 넘기지 않는다" in p
+    assert "2~3문장, 90~180자 사이로 답한다" in p, p
+    assert "인사나 가벼운 말에는 한두 문장으로 짧게" in p
+    assert "한 문장짜리 답은 대답이 아니다" not in p
+    assert "위치·길" in p                                  # 확인할 수 없는 안내를 하지 않는다
+    assert p != build_system_prompt("mc", lv) and p != build_system_prompt("docent", lv)

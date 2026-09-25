@@ -150,6 +150,8 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     limits = {
         "docent": (level.max_sentences, level.max_chars),
         "mc": (_MC_MAX_SENTENCES, _MC_MAX_CHARS),
+        # 단독의 사회자는 전시 질문에 도슨트만큼 답한다 — 상한도 수준의 것(`prompts._amount_for`).
+        "solo": (level.max_sentences, level.max_chars),
     }
     lock = threading.Lock()
 

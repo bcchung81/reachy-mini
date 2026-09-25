@@ -2206,11 +2206,12 @@ def test_지금_수준이_수준_목록에_없으면_기동에서_막는다():
         )
 
 
-# ── (G) 운영 모드(팟캐스트/단독, `m <모드>`)와 로봇 능력 알림(`caps`) ─────────
+# ── (G) 운영 모드(팟캐스트/단독, `m <모드>`) ─────────────────────────────────
 #
-# 설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2. 1단계에는
-# 단독을 켤 로봇이 없다 — 지금 로봇 앱은 hello 에 `caps` 를 안 보내므로 단독은 늘
-# 거절된다. 아래 테스트는 4단계 앱이 보낼 `caps=["solo"]` 를 직접 넣어 본다.
+# 설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2, 구현은 2026-09-25 결정
+# (`docs/superpowers/plans/2026-09-25-immediate-start-end-solo.md`): **감독이 대화를 맡는다.**
+# ~~단독은 사회자 앱이 caps 에 "solo" 를 알려야 켜진다(4단계 앱)~~ — 로봇은 팟캐스트와 똑같이
+# say·mic 만 받으므로 앱 재배포가 필요 없다. 조건은 사회자가 붙어 있고 대기모드가 아닌 것.
 #
 # 경고 문구는 페이지 로그에 그대로 뜨는 계약이라 전부 리터럴로 본다(함정 ⑤).
 
@@ -2227,6 +2228,14 @@ def _모드(h, name):
     assert not t.is_alive(), f"set_mode({name!r}) 가 돌아오지 않는다 — 락 재진입 교착"
 
 
+def _단독(h, *, docent=True, caps=("emotion", "react", "gaze")):
+    """사회자(와 도슨트)가 붙은 채 단독으로 들어간다. 옛 앱처럼 caps 에 "solo" 는 없다."""
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "1.9.0", caps=list(caps))
+    if docent:
+        h.d.on_connect("docent"); h.d.on_hello("docent", None, "1.9.0", caps=list(caps))
+    _모드(h, "solo")
+
+
 def test_모드는_팟캐스트로_시작하고_고를_수_있는_것은_둘이다():
     h = Harness()
     assert h.d.snapshot()["mode"] == "podcast"
@@ -2234,46 +2243,52 @@ def test_모드는_팟캐스트로_시작하고_고를_수_있는_것은_둘이�
     assert h.d.mode_names() == ["podcast", "solo"]
 
 
-def test_사회자가_단독을_알리지_않으면_단독을_거절한다():
+def test_사회자_앱이_단독을_몰라도_단독을_켠다():
+    """감독이 대화를 맡으므로 앱 기능이 필요 없다 — 지금 배포된 앱(caps 에 solo 없음) 그대로 된다."""
     h = Harness()
     h.d.on_connect("mc"); h.d.on_hello("mc", None, "1.9.0")        # caps 없음(지금 앱)
+    assert h.d.snapshot()["solo_available"] is True
     _모드(h, "solo")
-    assert h.d.snapshot()["mode"] == "podcast"
-    assert h.d.snapshot()["solo_available"] is False
-    assert "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다(로봇 앱 업데이트 뒤에 켜진다)" in h.warnings
+    assert h.d.snapshot()["mode"] == "solo"
 
 
 def test_사회자가_없으면_단독을_거절한다():
     h = Harness()
-    h.d.on_connect("docent"); h.d.on_hello("docent", None, "1.9.0", caps=["solo"])
+    h.d.on_connect("docent"); h.d.on_hello("docent", None, "1.9.0")
     _모드(h, "solo")
     assert h.d.snapshot()["mode"] == "podcast"
     assert "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다" in h.warnings
 
 
-def test_사회자가_단독을_알리면_전환하고_말하던_것을_멈춘다():
+def test_사회자가_대기모드면_단독을_거절한다():
     h = Harness()
-    for r in ("mc", "docent"):
-        h.d.on_connect(r)
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc"); h.d.on_connect("docent")
+    h.d.toggle_standby("mc")
+    assert h.d.snapshot()["solo_available"] is False
+    _모드(h, "solo")
+    assert h.d.snapshot()["mode"] == "podcast"
+    assert "단독 모드를 켤 수 없다 — 사회자 로봇이 대기모드다(z mc 로 깨운 뒤)" in h.warnings
+
+
+def test_단독으로_바꾸면_말하던_것을_멈추고_사회자_마이크를_연다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_connect("docent")
     h.d.start()                                             # 사회자가 말하는 중
-    assert h.d.snapshot()["state"] == "mc_speaking"
-    assert h.d.snapshot()["solo_available"] is True
+    h.clear()
     _모드(h, "solo")
     s = h.d.snapshot()
-    assert (s["mode"], s["state"]) == ("solo", "idle")
-    assert h.d.mode == "solo"
+    assert (s["mode"], s["state"], s["question_wait_s"]) == ("solo", "listening", None)
+    assert ("mc", "abort") in h.types()
+    assert h.mics()[-1] == ("mc", True)                     # 멈춘 뒤 마지막으로 사회자 마이크가 열린다
     assert "모드를 podcast → solo 로 바꿨다" in h.warnings
-    assert ("mc", "abort") in [(r, t) for r, t, _ in h.sent]
 
 
 def test_단독에서는_진행_명령을_거절한다():
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
-    _모드(h, "solo")
+    _단독(h, docent=False)
     h.d.start(); h.d.next(); h.d.goto("c2")
     s = h.d.snapshot()
-    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "listening", 0)
     assert "단독 모드에서는 팟캐스트 진행(시작)을 하지 않는다 — 먼저 m podcast" in h.warnings
     assert "단독 모드에서는 팟캐스트 진행(다음)을 하지 않는다 — 먼저 m podcast" in h.warnings
     assert "단독 모드에서는 팟캐스트 진행(이동)을 하지 않는다 — 먼저 m podcast" in h.warnings
@@ -2282,35 +2297,37 @@ def test_단독에서는_진행_명령을_거절한다():
 def test_단독에서는_이전_큐로도_되돌리지_않는다():
     """둘째 큐에서 바꾼다 — 첫 큐면 가드가 없어도 "첫 큐다" 로 커서가 안 움직여 통과한다."""
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     h.d.start(); h.d.abort(); h.d.next(); h.d.abort()
     assert h.d.snapshot()["cue_index"] == 1                 # 전제: 되돌릴 곳이 있다
     _모드(h, "solo")
     h.clear()
     h.d.previous()
     s = h.d.snapshot()
-    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 1)
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "listening", 1)
     assert h.says() == []
     assert "단독 모드에서는 팟캐스트 진행(이전)을 하지 않는다 — 먼저 m podcast" in h.warnings
 
 
-def test_단독에서도_중단은_된다():
-    """단독에서 막는 것은 팟캐스트 **진행**뿐이다 — `a` 는 된다(설계 §1-2). 중단까지 막으면
-    4단계에서 단독으로 답하는 사회자를 멈출 길이 없다."""
+def test_단독에서_중단하면_답을_멈추고_다시_듣는다():
+    """단독에는 시작할 큐가 없다 — 중단 뒤 마이크를 닫은 채 두면 되살릴 길이 모드 왕복뿐이다."""
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
-    _모드(h, "solo")
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    assert h.d.state is State.MC_SPEAKING                   # 확인 멘트 중
     h.clear()
     h.warnings.clear()
     h.d.abort()
     assert ("mc", "abort") in h.types()
-    assert h.warnings == []                                 # 단독 거절 경고가 없다
+    assert h.mics()[-1] == ("mc", True)
+    assert h.d.state is State.LISTENING
+    assert h.warnings == ["단독 — 말을 멈추고 다시 듣는다(완전히 멈추려면 m podcast)"]
 
 
 def test_단독에서도_관람객_수준은_바꿀_수_있다():
     """`l` 도 단독에서 된다(설계 §1-2). 처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③)."""
     h = _수준_감독()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     _모드(h, "solo")
     h.d.set_level("초등")
     s = h.d.snapshot()
@@ -2325,12 +2342,13 @@ def test_모르는_모드와_같은_모드는_경고만():
     assert "이미 podcast 모드다 — 바꿀 것이 없다" in h.warnings
 
 
-def test_단독에서_팟캐스트로_돌아오면_다시_진행할_수_있다():
+def test_단독에서_팟캐스트로_돌아오면_마이크를_닫고_다시_진행할_수_있다():
     h = Harness()
-    for r in ("mc", "docent"):
-        h.d.on_connect(r)
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
-    _모드(h, "solo"); _모드(h, "podcast")
+    _단독(h)
+    h.clear()
+    _모드(h, "podcast")
+    assert h.mics()[-1] == ("docent", False) and ("mc", False) in h.mics()
+    assert h.d.state is State.IDLE
     h.d.start()
     assert (h.d.snapshot()["mode"], h.d.snapshot()["state"]) == ("podcast", "mc_speaking")
     assert "모드를 solo → podcast 로 바꿨다" in h.warnings
@@ -2338,22 +2356,18 @@ def test_단독에서_팟캐스트로_돌아오면_다시_진행할_수_있다()
 
 def test_사회자가_끊기면_단독_가능이_꺼진다():
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "1.9.0")
     assert h.d.snapshot()["solo_available"] is True
     h.d.on_disconnect("mc")
     assert h.d.snapshot()["solo_available"] is False
 
 
 def test_단독_가능은_사회자가_등록된_뒤에야_켜진다():
-    """서버는 hello(`on_hello`)를 등록(`on_connect`)보다 **먼저** 부른다 — 그 사이, 그리고
-    UnitMismatch 없이도 등록이 안 된 사회자는 능력만 알렸지 붙은 것이 아니다. 스냅샷의
-    `solo_available` 은 `set_mode("solo")` 의 거절 조건과 같은 식이어야 한다: 버튼이
-    켜졌는데 누르면 "붙어 있지 않다" 로 거절되면 페이지와 감독이 어긋난다.
-
-    끊김(`on_disconnect`)은 능력도 지우므로 끊김만으로는 "붙어 있는가" 조건을 못 가른다
-    — 등록 전의 창에서 본다."""
+    """서버는 hello(`on_hello`)를 등록(`on_connect`)보다 **먼저** 부른다 — 그 사이의 사회자는 붙은
+    것이 아니다. 스냅샷의 `solo_available` 은 `set_mode("solo")` 의 거절 조건과 같은 식이어야 한다:
+    버튼이 켜졌는데 누르면 "붙어 있지 않다" 로 거절되면 페이지와 감독이 어긋난다."""
     h = Harness()
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_hello("mc", None, "1.9.0")
     assert h.d.snapshot()["solo_available"] is False
     _모드(h, "solo")
     assert "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다" in h.warnings
@@ -2361,69 +2375,299 @@ def test_단독_가능은_사회자가_등록된_뒤에야_켜진다():
     assert h.d.snapshot()["solo_available"] is True
 
 
-def test_끊긴_뒤_다시_붙은_사회자는_새_hello_의_caps_만_쓴다():
-    """끊길 때 지우지 않으면 옛 앱의 능력이 남는다 — 단독을 아는 앱이 나가고 모르는 앱이
-    붙어도 단독 버튼이 켜진 채다. 서버는 hello(`on_hello`)를 **등록(`on_connect`) 전에**
-    부르므로 여기서도 그 순서로 붙인다."""
+# ~~caps 테스트 넷은 `solo_available` 로 봤다~~ — 단독이 caps 를 안 보게 되어(2026-09-25) 그 관찰로는
+# 공허하게 통과한다. 능력 기억은 무대 연출(`STAGE_CAPS`)이 여전히 쓰므로 기억 자체를 본다.
+
+
+def test_끊긴_뒤_다시_붙은_로봇은_새_hello_의_caps_만_쓴다():
+    """끊길 때 지우지 않으면 옛 앱의 능력이 남는다 — 연출을 아는 앱이 나가고 모르는 앱이 붙어도
+    감독이 시선·반응을 보낸다. 서버는 hello 를 **등록 전에** 부르므로 여기서도 그 순서로 붙인다."""
     h = Harness()
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"]); h.d.on_connect("mc")
-    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_hello("mc", None, "2.0.0", caps=["react"]); h.d.on_connect("mc")
+    assert h.d._caps["mc"] == {"react"}
     h.d.on_disconnect("mc")
     h.d.on_connect("mc")                                    # hello 없이 등록만 — caps 가 비어야 한다
-    assert h.d.snapshot()["solo_available"] is False
+    assert h.d._caps.get("mc", set()) == set()
     h.d.on_hello("mc", None, "1.9.0")                       # 옛 앱으로 다시 hello
-    assert h.d.snapshot()["solo_available"] is False
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
-    assert h.d.snapshot()["solo_available"] is True
+    assert h.d._caps["mc"] == set()
 
 
 def test_caps_없는_hello_는_앞서_알린_능력을_갈아치운다():
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
-    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["react"])
     h.d.on_hello("mc", None, "1.9.0")                       # 같은 자리에 옛 앱이 다시 인사
-    assert h.d.snapshot()["solo_available"] is False
+    assert h.d._caps["mc"] == set()
 
 
 @pytest.mark.parametrize("unit_id", ["AAA", None], ids=["unit_id_맞음", "unit_id_없음_시뮬"])
 def test_unit_id_검증을_지나는_갈래는_모두_caps_를_기억한다(unit_id):
     """`on_hello` 는 기대값이 있을 때 `unit_id` 가 없으면(시뮬) 경고하고 **일찍 돌아간다.**
-    caps 를 그 반환 뒤에 두면 시뮬 사회자는 단독을 영영 못 켠다."""
+    caps 를 그 반환 뒤에 두면 시뮬 로봇은 연출 능력을 영영 못 알린다."""
     h = Harness(expect_units={"mc": "AAA"})
     h.d.on_connect("mc")
-    h.d.on_hello("mc", unit_id, "2.0.0", caps=["solo"])
-    assert h.d.snapshot()["solo_available"] is True
+    h.d.on_hello("mc", unit_id, "2.0.0", caps=["react"])
+    assert h.d._caps["mc"] == {"react"}
 
 
 def test_뒤바뀐_로봇의_caps_는_기억하지_않는다():
     """`UnitMismatch` 로 거절된 로봇은 붙은 적이 없다(서버가 그 연결만 닫는다) — 자리에
     남은 것은 먼저 붙은 맞는 로봇이다. 거절된 쪽의 caps 로 덮으면 남은 로봇의 능력이 사라진다."""
     h = Harness(expect_units={"mc": "AAA"})
-    h.d.on_connect("mc"); h.d.on_hello("mc", "AAA", "2.0.0", caps=["solo"])
+    h.d.on_connect("mc"); h.d.on_hello("mc", "AAA", "2.0.0", caps=["react"])
     with pytest.raises(UnitMismatch):
         h.d.on_hello("mc", "BBB", "1.9.0", caps=[])
-    assert h.d.snapshot()["solo_available"] is True
+    assert h.d._caps["mc"] == {"react"}
 
 
 def test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다():
-    """`tick`·`on_heard` 에는 단독 가드가 없다 — 전환이 IDLE 로 멈추고 둘 다 LISTENING
-    에서만 진행하기 때문이다(`Director.set_mode` 주석). 그 근거를 여기서 못박는다."""
+    """단독은 곧바로 LISTENING 이다 — 팟캐스트 질문 창의 침묵 기한이 남으면 `tick` 이 큐를 시작하고,
+    "다음" 을 진행 신호로 먹으면 관람객 말 한마디로 팟캐스트가 돈다. 둘 다 막혀야 한다."""
     h = Harness()
-    for r in ("mc", "docent"):
-        h.d.on_connect(r)
-    h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc"); h.d.on_connect("docent")
     h.d.start()
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")                          # 받아치기 없는 큐 → 듣기(침묵 기한 8초)
     assert h.d.state is State.LISTENING
     _모드(h, "solo")
     h.clear()
-    h.clock.t += 8.0
+    h.clock.t += 100.0
     h.d.tick()
     h.d.on_heard("다음")
     s = h.d.snapshot()
-    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "idle", 0)
+    assert (s["mode"], s["state"], s["cue_index"]) == ("solo", "listening", 0)
     assert h.says() == []
+    assert "단독 모드에는 넘길 큐가 없다 — '다음' 으로 보지 않고 버린다: '다음'" in h.warnings
+
+
+# ── 단독 대화 흐름(감독이 대화를 맡는다, 2026-09-25) ─────────────────────────
+
+
+def _단독_시트():
+    """근거 검색을 볼 3큐 시트 — '마르코니' 는 c2 에만 있다."""
+    def 큐(cid, title, brief, guard=""):
+        일반 = {"mc_brief": "m", "docent_brief": brief}
+        if guard:
+            일반["guard"] = guard
+        return Cue(cid, title, f"{title} 오프닝", "지시", "partner",
+                   briefs={"일반": 일반}, points=(Turn("", {"일반": f"{title} 설명"}),))
+    return CueSheet([
+        큐("c1", "개요", "전파체험관은 전파의 원리를 체험하는 곳이다."),
+        큐("c2", "발견", "마르코니가 1901년에 대서양 횡단 무선전신을 성공시켰다.",
+          guard="'캐나다'라고 하지 않는다"),
+        큐("c3", "해상", "타이타닉은 1912년에 조난 신호를 보냈다."),
+    ])
+
+
+def test_단독에서_들은_말에_확인_멘트_뒤_사회자가_생성_답을_하고_다시_듣는다():
+    from stage.cues import SOLO_ACK_EMOTIONS, SOLO_ACK_LINES
+    h = Harness(generate=lambda role, brief, hist: "마르코니는 무선전신을 실용화한 사람이에요.")
+    _단독(h)
+    h.clear()
+    h.d.on_heard("마르코니가 누구예요?")
+    assert h.says() == [("mc", SOLO_ACK_LINES[0])]
+    ack = [f for _, t, f in h.sent if t == "say"][0]
+    assert (ack["cue_id"], ack["emotion"]) == ("solo:ack", SOLO_ACK_EMOTIONS[0])
+    assert h.gen_roles == ["solo"]                          # 단독 페르소나로 만든다
+    h.clear()
+    h.ended("mc", "solo:ack")
+    assert h.says() == [("mc", "마르코니는 무선전신을 실용화한 사람이에요.")]
+    qa = [f for _, t, f in h.sent if t == "say"][0]
+    assert (qa["cue_id"], qa["emotion"]) == ("solo:qa", "설명")
+    assert h.d.history[-1] == {"role": "assistant", "content": "사회자: 마르코니는 무선전신을 실용화한 사람이에요."}
+    h.clear()
+    h.ended("mc", "solo:qa")
+    assert h.mics() == [("mc", True)]
+    assert (h.d.state, h.d.snapshot()["question_wait_s"]) == (State.LISTENING, None)
+    h.clock.t += 100.0
+    h.d.tick()
+    assert h.says() == []                                   # 침묵 자동 진행이 없다
+
+
+def test_단독_확인_멘트는_돌아가며_쓴다():
+    from stage.cues import SOLO_ACK_LINES
+    h = Harness(generate=lambda role, brief, hist: "네, 반가워요. 궁금한 전시 이야기가 있으면 물어봐 주세요.")
+    _단독(h)
+    got = []
+    for _ in range(len(SOLO_ACK_LINES)):
+        h.clear()
+        h.d.on_heard("안녕하세요 반가워요")
+        got.append(h.says()[0][1])
+        h.ended("mc", "solo:ack"); h.ended("mc", "solo:qa")
+    assert got == list(SOLO_ACK_LINES)
+
+
+def test_단독_답은_큐시트_전체에서_가까운_섹션을_근거로_싣는다():
+    """단독에는 "지금 섹션" 이 없다 — 커서는 c1 인데 질문은 c2 이야기다. 그 섹션의 금지 규칙도 함께 간다."""
+    h = Harness(sheet=_단독_시트())
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    brief = h.gen_calls[-1][0]
+    assert "마르코니가 1901년에 대서양 횡단 무선전신을 성공시켰다." in brief
+    assert "'캐나다'라고 하지 않는다" in brief
+    assert "전파의 원리" not in brief                        # 커서의 섹션(c1)을 끼우지 않는다
+    # 색인이 인사말에도 섹션을 거는 한계(`tests/test_stage_retrieval.py`)를 지시문이 막는다.
+    assert "전시에 대한 질문일 때만 쓴다" in brief
+    assert "[solo:qa] 'c2' 섹션을 근거로 싣는다" in h.warnings
+
+
+def test_단독에서_인사는_근거_없이_짧게_답하라고_한다():
+    """엉뚱한 섹션을 근거로 붙이면 "안녕하세요" 에 전시 해설이 나온다."""
+    h = Harness(sheet=_단독_시트())
+    _단독(h)
+    h.d.on_heard("안녕하세요 반가워요")
+    brief = h.gen_calls[-1][0]
+    assert "관련된 전시 섹션을 찾지 못했다" in brief
+    assert "확인된 내용:" not in brief
+
+
+def test_단독에서도_잡음은_질문이_아니다():
+    h = Harness()
+    _단독(h)
+    h.clear()
+    h.d.on_heard("아")
+    assert h.says() == [] and h.gen_calls == []
+    assert h.d.state is State.LISTENING
+
+
+def test_단독에서_도슨트는_사회자를_보고_끄덕인다():
+    """깨어 있되 조용히(결정 2026-09-25) — 시선과 끄덕임만. 확인 멘트는 짧아 반응을 걸지 않는다."""
+    answer = "마르코니는 무선전신을 실용화한 사람이에요. 1901년에 대서양을 건넜어요."
+    h = Harness(generate=lambda role, brief, hist: answer)
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    h.ended("mc", "solo:ack")
+    assert ("docent", "gaze", {"target": "partner"}) in h.sent
+    h.started("mc", "solo:qa")
+    h.clear()
+    h.clock.t += len(answer) / CHARS_PER_SEC * 0.4
+    h.d.tick()
+    assert [(r, t, f) for r, t, f in h.sent if t == "react"] == [("docent", "react", {"emotion": "끄덕"})]
+    assert [r for r, t, _ in h.sent if t == "say"] == []    # 도슨트는 말하지 않는다
+
+
+def test_단독_답이_짧아도_인사_한_줄은_경고하지_않는다():
+    h = Harness(generate=lambda role, brief, hist: "안녕하세요, 반가워요.")
+    _단독(h)
+    h.d.on_heard("안녕하세요 반가워요")
+    h.warnings.clear()
+    h.ended("mc", "solo:ack")
+    assert not any("너무 짧다" in w for w in h.warnings), h.warnings
+
+
+def test_단독_답_생성이_실패하면_다시_말해_달라고_한다():
+    from stage.director import SOLO_FALLBACK
+
+    def 터진다(role, brief, hist):
+        raise RuntimeError("추론 서버 없음")
+
+    h = Harness(generate=터진다)
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    h.clear()
+    h.ended("mc", "solo:ack")
+    assert h.says() == [("mc", SOLO_FALLBACK)]
+    assert any("[solo:qa] LLM 생성 실패" in w for w in h.warnings), h.warnings
+
+
+def test_단독_중_사회자가_끊기면_팟캐스트로_돌아간다():
+    h = Harness()
+    _단독(h)
+    h.d.on_disconnect("mc")
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"]) == ("podcast", "idle")
+    assert "[mc] 이 끊겼다 — 단독 모드를 끝내고 팟캐스트로 돌아간다(다시 붙으면 m solo)" in h.warnings
+    assert not any("1인 모드" in w for w in h.warnings), h.warnings
+
+
+def test_단독_중_도슨트가_끊겨도_단독은_그대로다():
+    h = Harness()
+    _단독(h)
+    h.d.on_disconnect("docent")
+    s = h.d.snapshot()
+    assert (s["mode"], s["state"]) == ("solo", "listening")
+    assert "[docent] 이 끊겼다 — 단독 모드는 사회자 혼자 그대로 간다" in h.warnings
+    assert not any("1인 모드" in w for w in h.warnings), h.warnings
+
+
+def test_단독에서는_사회자를_대기모드로_두지_않는다():
+    h = Harness()
+    _단독(h)
+    h.d.toggle_standby("mc")
+    assert h.d.snapshot()["standby"] == []
+    assert h.d.state is State.LISTENING
+    assert "단독 모드에서는 사회자를 대기모드로 두지 않는다 — 먼저 m podcast" in h.warnings
+
+
+def test_단독에서_도슨트를_재워도_사회자는_계속_듣는다():
+    h = Harness()
+    _단독(h)
+    h.clear()
+    h.d.toggle_standby("docent")
+    assert h.d.snapshot()["standby"] == ["docent"]
+    assert h.d.state is State.LISTENING
+    assert h.mics()[-1] == ("mc", True)
+
+
+def test_단독에서_발화_기한이_터져도_팟캐스트_큐를_시작하지_않는다():
+    """기한 복구는 `_arm_question_deadline` 을 부른다 — 단독에서 기한을 걸면 침묵 뒤 `tick` 이 팟캐스트
+    다음 큐를 시작한다."""
+    h = Harness()
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    h.clock.t += 100.0
+    h.d.tick()                                              # 확인 멘트의 종료 보고가 안 온다 → 복구
+    assert h.d.state is State.LISTENING
+    assert h.d.snapshot()["question_wait_s"] is None
+    h.clear()
+    h.clock.t += 100.0
+    h.d.tick()
+    assert h.says() == []
+
+
+def _느린_생성():
+    gate = threading.Event()
+
+    def slow(role, brief, history):
+        gate.wait(3.0)
+        return "늦게 나온 답"
+
+    return gate, slow
+
+
+def test_기다리던_팟캐스트_답은_단독으로_바꾼_뒤에_나가지_않는다():
+    """단독은 곧바로 LISTENING 이다 — 팟캐스트 질문 답을 기다리던 핸드오프가 깨어나 상태만 보면
+    단독 사회자 앞에서 도슨트 답이 나간다. 세대 검사로 버려야 한다."""
+    gate, slow = _느린_생성()
+    h = Harness(generate=slow)
+    h.d.on_connect("mc"); h.d.on_connect("docent")
+    _질문한다(h)
+    handoff = threading.Thread(target=h.ended, args=("mc", "c1:ack"), daemon=True)
+    handoff.start()
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
+    _모드(h, "solo")
+    h.clear()
+    gate.set()
+    handoff.join(timeout=5.0)
+    assert not handoff.is_alive()
+    assert h.says() == [], h.says()
+    assert "[c1:qa] 기다리는 사이에 다음 턴으로 넘어갔다 — 이 대사는 버린다" in h.warnings
+
+
+def test_단독_답을_기다리는_중에_중단하면_그_답은_버린다():
+    gate, slow = _느린_생성()
+    h = Harness(generate=slow)
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    handoff = threading.Thread(target=h.ended, args=("mc", "solo:ack"), daemon=True)
+    handoff.start()
+    assert _wait_state(h, State.LISTENING), "핸드오프가 대기 구간에 들어가지 않았다"
+    h.d.abort()
+    h.clear()
+    gate.set()
+    handoff.join(timeout=5.0)
+    assert not handoff.is_alive()
+    assert h.says() == [], h.says()
+    assert h.d.state is State.LISTENING
 
 
 # ── 대기모드 (Task 4) ──────────────────────────────────────────────
@@ -3136,7 +3380,7 @@ def test_거부된_역할이_있으면_공연_시작은_커서를_건드리지_�
 def test_단독으로_바꾸면_공연은_끝난_것으로_보고_커서는_그대로_둔다():
     """돌아와서 [공연 시작] 이면 첫 큐부터, 이어서 하려면 `r` — 운영자가 이어 갈 자리를 잃지 않는다."""
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     h.d.start_show(); h.d.abort(); h.d.next()
     _모드(h, "solo")
     s = h.d.snapshot()
@@ -3145,7 +3389,7 @@ def test_단독으로_바꾸면_공연은_끝난_것으로_보고_커서는_그�
 
 def test_단독에서는_공연_시작도_종료도_거절한다():
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     _모드(h, "solo")
     h.clear()
     h.d.start_show(); h.d.end_show()

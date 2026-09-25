@@ -69,6 +69,24 @@ class CueIndex:
         q = _grams(question)
         return [sum(idf.get(g, 0.0) for g in q & d) for d in docs]
 
+    def _threshold(self) -> float:
+        return MIN_RARE_GRAMS * math.log(len(self._cues)) if len(self._cues) > 1 else math.inf
+
+    def best(self, question: str, level: str) -> Cue | None:
+        """큐시트 **전체**에서 질문에 가장 가까운 섹션 하나 — 문턱을 못 넘으면 None.
+
+        단독 모드(2026-09-25)의 근거다. 거기에는 "지금 섹션" 이 없다 — 사회자가 혼자 관람객 말을 받으므로
+        무엇을 물을지 모른다. 인사·잡담은 문턱을 못 넘어 None 이 되고, 그때 감독은 근거 없이 짧게 답하라고
+        한다(엉뚱한 섹션을 붙이면 "안녕하세요" 에 전시 해설이 나온다). 동점이면 앞 섹션이다(결정적).
+        """
+        scores = self.scores(question, level)
+        if not scores:
+            return None
+        i = max(range(len(scores)), key=scores.__getitem__)
+        if scores[i] < self._threshold():
+            return None
+        return self._cues[i]
+
     def related(self, question: str, level: str, current_id: str) -> Cue | None:
         """지금 섹션보다 질문에 **확실히 더 가까운** 다른 섹션 하나. 없으면 None."""
         scores = self.scores(question, level)
@@ -80,7 +98,6 @@ class CueIndex:
                 continue
             if s > best_score:
                 best, best_score = c, s
-        threshold = MIN_RARE_GRAMS * math.log(len(self._cues)) if len(self._cues) > 1 else math.inf
-        if best is None or best_score < threshold or best_score <= cur_score:
+        if best is None or best_score < self._threshold() or best_score <= cur_score:
             return None
         return best

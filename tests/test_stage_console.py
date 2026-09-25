@@ -341,17 +341,17 @@ def test_도움말에_m_이_있다():
 
 @pytest.mark.parametrize(
     "cmd, 무엇",
-    [("n", "다음"), ("p", "이전"), ("r", "시작"), ("g c2", "이동")],
-    ids=["n", "p", "r", "g"],
+    [("n", "다음"), ("p", "이전"), ("r", "시작"), ("g c2", "이동"), ("s", "시작"), ("e", "종료")],
+    ids=["n", "p", "r", "g", "s", "e"],
 )
 def test_단독에서_거절될_진행_명령은_먼저_멈추지도_않는다(cmd, 무엇):
-    """진짜 감독으로 본다. 단독에서 `n`·`p`·`r`·`g` 는 감독이 거절하는데, 콘솔이 그 앞에서
-    `abort()` 를 보내면 거절될 명령이 말하던 것을 끊는다 — 4단계에서는 사회자의 단독
-    답변이 그것이다. `g` 는 **아는 큐**(c2)로 본다: 모르는 큐는 원래도 멈추지 않는다."""
+    """진짜 감독으로 본다. 단독에서 `n`·`p`·`r`·`g`·`s`·`e` 는 감독이 거절하는데, 콘솔이 그 앞에서
+    `abort()` 를 보내면 거절될 명령이 말하던 것을 끊는다 — 사회자의 단독 답변이 그것이다.
+    `g` 는 **아는 큐**(c2)로 본다: 모르는 큐는 원래도 멈추지 않는다."""
     import stage.console as console
 
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     h.d.set_mode("solo")
     assert h.d.mode == "solo"                  # 전제: 단독으로 바뀌었다
     h.sent.clear()
@@ -361,21 +361,23 @@ def test_단독에서_거절될_진행_명령은_먼저_멈추지도_않는다(c
     assert h.warnings == [f"단독 모드에서는 팟캐스트 진행({무엇})을 하지 않는다 — 먼저 m podcast"]
 
 
-def test_단독에서도_a_는_멈춘다():
-    """거절될 명령만 멈추지 않는 것이지 중단 자체가 막힌 것이 아니다(설계 §1-2)."""
+def test_단독에서도_a_는_멈추고_사회자가_다시_듣는다():
+    """거절될 명령만 멈추지 않는 것이지 중단 자체가 막힌 것이 아니다(설계 §1-2). 단독의 중단은
+    "지금 답을 멈추고 다시 듣는다" 다(2026-09-25) — 단독에는 다시 시작할 큐가 없다."""
     import stage.console as console
 
     h = Harness()
-    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.on_connect("mc")
     h.d.set_mode("solo")
     h.sent.clear()
     h.warnings.clear()
     console.dispatch(h.d, "a", out=h.out.append)
-    # 중단은 양쪽 마이크를 닫고 멈춘다(2026-09-24, `TurnMachine.abort`).
+    # 중단은 양쪽 마이크를 닫고 멈춘다(2026-09-24, `TurnMachine.abort`) — 그 뒤 사회자 마이크를 다시 연다.
     assert [(r, t) for r, t, _ in h.sent] == [
-        ("mc", "mic"), ("docent", "mic"), ("mc", "abort"), ("docent", "abort"),
+        ("mc", "mic"), ("docent", "mic"), ("mc", "abort"), ("docent", "abort"), ("mc", "mic"),
     ]
-    assert h.warnings == []
+    assert h.sent[-1][2] == {"open": True}
+    assert h.warnings == ["단독 — 말을 멈추고 다시 듣는다(완전히 멈추려면 m podcast)"]
 
 
 def test_l_은_말을_멈추지_않고_이_큐의_남은_설명부터_새_수준이다():

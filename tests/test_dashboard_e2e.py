@@ -183,11 +183,11 @@ def test_대시보드의_공연_토글이_진짜_감독의_show_running_을_오�
         assert (snap["show_running"], snap["cue_id"], snap["state"]) == (False, "c1", "idle")
 
 
-def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진짜_감독의_모드를_바꾼다():
+def test_사회자가_붙으면_대시보드의_m_solo_가_진짜_감독을_단독으로_바꾸고_사회자_마이크를_연다():
     """운영 모드의 페이지 계약 — `hello.modes`, `snapshot.mode`/`solo_available`, 명령
-    `m solo`, 그리고 페이지 로그의 전환 경고. 로봇 hello 의 `caps` 가 서버 → 감독 →
-    스냅샷까지 한 줄로 닿는지를 진짜 서버·감독으로 본다(지금 로봇 앱은 `caps` 를 안
-    보낸다 — 4단계 앱을 흉내 낸 가짜 사회자다)."""
+    `m solo`, 그리고 페이지 로그의 전환 경고. ~~4단계 앱을 흉내 낸 가짜 사회자(caps solo)~~ —
+    2026-09-25 부터 감독이 대화를 맡으므로 **지금 앱 그대로**(caps 없음) 단독이 켜진다. 사회자 로봇은
+    중단 뒤 마이크 열기를 실제로 받는다(단독은 곧바로 듣는다)."""
     hub = DashboardHub()
     warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
     server = StageServer(
@@ -210,8 +210,7 @@ def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진�
         dport = dash.socket.getsockname()[1]
 
         robot = 정리.enter_context(connect(f"ws://127.0.0.1:{rport}", open_timeout=3))
-        robot.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None,
-                               "version": "2.0.0", "caps": ["solo"]}))
+        robot.send(json.dumps({"type": "hello", "role": "mc", "unit_id": None, "version": "1.9.0"}))
         # 동기화 점 — 등록(`on_connect`)의 락 안에서 오는 마이크 재동기화.
         assert json.loads(robot.recv(timeout=3)) == {"type": "mic", "open": False}
 
@@ -228,9 +227,10 @@ def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진�
         assert w["text"] == "모드를 podcast → solo 로 바꿨다"
         # 경고는 감독이 모드를 바꾼 **뒤** 락 안에서 실린다 — 그 뒤 첫 스냅샷은 단독이다.
         snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
-        assert (snap["mode"], snap["state"]) == ("solo", "idle")
-        # 전환은 말하던 것을 멈춘다 — 사회자 로봇이 중단 지시를 실제로 받는다.
+        assert (snap["mode"], snap["state"]) == ("solo", "listening")
+        # 전환은 말하던 것을 멈추고 사회자 마이크를 연다 — 사회자 로봇이 두 지시를 순서대로 받는다.
         assert _recv_until(robot, lambda m: m["type"] == "abort") == {"type": "abort"}
+        assert _recv_until(robot, lambda m: m["type"] == "mic") == {"type": "mic", "open": True}
 
 
 def test_시청자가_붙으면_camera_on이_로봇에_닿고_떠나면_camera_off가_닿는다():

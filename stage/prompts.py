@@ -9,7 +9,9 @@ import pathlib
 
 from stage.levels import Level
 
-ROLES = ("mc", "docent")
+# `solo` 는 단독 모드(2026-09-25)의 사회자다 — 로봇은 사회자 그대로지만 도슨트 없이 혼자 답하므로
+# 페르소나와 분량이 다르다(해설하지 않는 사회자 페르소나로는 전시 질문에 답할 수 없다).
+ROLES = ("mc", "docent", "solo")
 
 # TTS 가 읽는다 — 목록 기호·이모지가 나오면 그 기호를 소리 내 읽는다(리뷰 B5).
 # 이 규칙이 있는 프롬프트 **본문 자체**가 마크다운을 쓰면 자기모순이다 — 모델이
@@ -88,6 +90,15 @@ def _amount_for(role: str, level: Level) -> str:
         return (
             f"{_MC_MIN_SENTENCES}~{_MC_MAX_SENTENCES}문장으로, "
             f"{_MC_MIN_CHARS}~{_MC_MAX_CHARS}자 사이로 짧게 반응한다."
+        )
+    if role == "solo":
+        # 단독의 사회자는 전시 질문에도 인사에도 답한다. 도슨트 문구("한 문장짜리 답은 대답이 아니다")를
+        # 그대로 주면 "안녕하세요" 에도 분량을 채우려 들어 근거 밖 말이 붙는다 — 갈래를 나눠 준다.
+        return (
+            f"전시에 대한 질문에는 {level.min_sentences}~{level.max_sentences}문장, "
+            f"{level.min_chars}~{level.max_chars}자 사이로 답한다. 첫 문장에서 질문에 바로 답하고 "
+            "이어서 이유나 예를 덧붙인다. 인사나 가벼운 말에는 한두 문장으로 짧게 답한다. "
+            "분량을 채우려고 근거에 없는 내용을 지어내지 않는다."
         )
     # **도슨트가 생성하는 것은 관람객 질문 답뿐이다**(2026-09-24). ~~"N자 이상을 채워서
     # 말한다. 한 문장짜리 답은 해설이 아니다"~~ 는 해설을 생성하던 시절 문구다. 질문 답에

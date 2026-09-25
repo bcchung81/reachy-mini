@@ -60,3 +60,31 @@ def test_문턱은_큐_수에_따라_흔들리지_않는다():
     two = CueIndex((cue("a", "마르코니가 무선전신을 실용화했어요."), cue("b", "배는 조난 신호를 보내요.")))
     assert two.related("마르코니가 누구예요?", "일반", "b").id == "a"
     assert two.related("그건 왜 그런가요?", "일반", "b") is None
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("마르코니가 누구예요?", "02-history"),
+    ("타이타닉은 왜 가라앉았어요?", "07-maritime"),
+    ("테레민은 어떻게 소리가 나요?", "18-science"),
+    ("모스 부호는 누가 만들었어요?", "04-morse"),
+])
+def test_단독은_큐시트_전체에서_가장_가까운_섹션을_찾는다(idx, question, expected):
+    """단독(2026-09-25)에는 "지금 섹션" 이 없다 — 전체에서 하나를 고른다."""
+    assert idx.best(question, "일반").id == expected
+
+
+@pytest.mark.parametrize("question", ["반가워요", "그건 왜 그런가요?", "왜요?", "좋아요", "또 뭐 있어요?"])
+def test_단독에서_흔한_말에는_섹션을_붙이지_않는다(idx, question):
+    """엉뚱한 섹션을 근거로 주면 가벼운 말에 전시 해설이 나온다."""
+    assert idx.best(question, "일반") is None
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("안녕하세요", "01-intro"), ("고마워요", "01-intro"), ("감사합니다", "15-emf"),
+])
+def test_단독에서_인사말은_사회자_대사_때문에_섹션에_걸린다(idx, question, expected):
+    """**알려진 한계를 못박는다**(실측 2026-09-25). 색인이 사회자 대사("안녕하세요, 여러분!"·"감사드립니다")도
+    보므로 인사가 섹션에 걸린다. 내용 필드만 색인하면 인사는 빠지지만 진짜 질문을 놓쳐서(전자파·모스) 그대로
+    둔다 — 인사에 해설을 얹지 않는 일은 지시문의 "전시에 대한 질문일 때만 쓴다" 가 맡는다
+    (`Director._solo_brief`). 값이 바뀌면 큐시트가 바뀐 것이니 이 한계를 다시 잰다."""
+    assert idx.best(question, "일반").id == expected

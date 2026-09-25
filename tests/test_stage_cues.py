@@ -624,9 +624,9 @@ def test_위치_지시어는_고정_안내_문구에도_없다():
     """두 로봇은 고정돼 있고 관람객이 움직인다(리뷰 B4). 데이터만 훑던 가드를
     **런타임에 붙이는 문자열**까지 넓힌다 — 생성된 받아치기 끝에 매번 따라붙는
     문장이라 큐시트 대사와 똑같은 무게를 진다."""
-    from stage.cues import ADVANCE_HINT, QA_ACK_LINES, QUESTION_PROMPTS
+    from stage.cues import ADVANCE_HINT, QA_ACK_LINES, QUESTION_PROMPTS, SOLO_ACK_LINES
 
-    for line in (*QUESTION_PROMPTS, ADVANCE_HINT, *QA_ACK_LINES):
+    for line in (*QUESTION_PROMPTS, ADVANCE_HINT, *QA_ACK_LINES, *SOLO_ACK_LINES):
         for w in _DEIXIS:
             assert w not in line, f"{line!r} 에 위치 지시어 {w!r}"
 
@@ -1057,8 +1057,20 @@ def test_짧거나_영문이_섞인_진짜_질문은_통과한다(text):
 def test_관람객_경로_고정_대사의_감정이_어휘_안에_있다():
     """확인 멘트는 문장과 감정이 **자리끼리** 짝이다 — 길이가 어긋나면 엉뚱한 감정이 붙는다."""
     assert len(cues_mod.QA_ACK_EMOTIONS) == len(cues_mod.QA_ACK_LINES)
-    for e in (*cues_mod.QA_ACK_EMOTIONS, cues_mod.QUESTION_PROMPT_EMOTION, cues_mod.QA_ANSWER_EMOTION):
+    assert len(cues_mod.SOLO_ACK_EMOTIONS) == len(cues_mod.SOLO_ACK_LINES)
+    for e in (*cues_mod.QA_ACK_EMOTIONS, cues_mod.QUESTION_PROMPT_EMOTION, cues_mod.QA_ANSWER_EMOTION,
+              *cues_mod.SOLO_ACK_EMOTIONS, cues_mod.SOLO_LISTENER_REACT):
         assert e in cues_mod.EMOTIONS, e
+
+
+def test_단독_확인_멘트는_도슨트를_부르지_않고_구어체다():
+    """단독(2026-09-25)에는 도슨트가 답하지 않는다 — 팟캐스트 멘트("도슨트, 답해 줄래요?")를 섞으면 대답
+    없는 부름이 된다. 인사에도 붙으므로 질문을 전제하지 않는다("좋은 질문이네요" 금지)."""
+    from stage.speech_text import written_endings
+
+    for line in cues_mod.SOLO_ACK_LINES:
+        assert "도슨트" not in line and "질문" not in line, line
+        assert written_endings(line) == [], line
 
 
 def _감정_태그들(c):

@@ -303,8 +303,9 @@
          서버) 이 컨테이너 자체를 숨긴다 — 던지지 않는다(계약: never throw). -->
     <span id="mode" class="mode-group" hidden></span>
     <!-- 단독을 못 켜는 이유 안내 — 사회자가 안 붙었으면 "단독: 사회자 로봇 연결 후", 붙었는데
-         앱이 단독을 모르면 "단독: 로봇 앱 업데이트 후". snapshot.solo_available 이 거짓이고
-         지금 모드가 solo 가 아닐 때만 채워진다. -->
+         대기모드면 "단독: 사회자 대기모드 해제 후". snapshot.solo_available 이 거짓이고
+         지금 모드가 solo 가 아닐 때만 채워진다. ~~"로봇 앱 업데이트 후"~~ — 2026-09-25 단독을 감독이
+         맡으면서 앱 기능이 필요 없어졌다. -->
     <span id="mode-note" class="mode-note" hidden></span>
     <span id="cue-label" class="cue-label">CUE — / —</span>
     <span id="cue-topic" class="cue-topic"></span>
@@ -1020,8 +1021,8 @@ function renderModeState(s) {
     btn.classList.remove("applied");
     if (name === s.mode) btn.classList.add("applied");
   });
-  // 단독 버튼은 사회자 로봇 앱이 caps 로 단독을 알리지 않았거나(구버전 앱) 사회자가
-  // 붙어 있지 않으면 잠근다(계약: solo_available). 이미 단독 모드라면(잠깐이라도
+  // 단독 버튼은 사회자가 붙어 있지 않거나 대기모드면 잠근다(계약: solo_available).
+  // ~~사회자 앱이 caps 로 단독을 알리지 않았으면~~ — 2026-09-25 감독이 대화를 맡아 앱과 무관하다. 이미 단독 모드라면(잠깐이라도
   // solo_available 이 흔들려도) 잠그지 않는다 — 잠그면 팟캐스트로 되돌아갈 버튼까지
   // 막히는 게 아니라 단독 버튼 자체가 "지금 상태"를 보여주는 자리라, 눌러도 감독이
   // 어차피 "이미 solo 모드다"로 무시하지만 disabled 로 만들면 지금 모드가 무엇인지
@@ -1029,11 +1030,11 @@ function renderModeState(s) {
   var soloLocked = !s.solo_available && s.mode !== "solo";
   if (modeButtons.solo) modeButtons.solo.disabled = soloLocked;
   if (soloLocked) {
-    // 잠긴 이유가 둘이다(감독의 거절 경고도 둘) — 사회자 로봇이 안 붙었거나, 붙었는데 그 앱이
-    // 단독을 모른다(caps). 하나로 뭉개면 사회자가 끊긴 것을 "앱 업데이트" 문제로 오인해 엉뚱한
-    // 곳을 본다(최종 리뷰 M4). connected 가 없는 구버전 서버면 "사회자 연결" 쪽으로 읽힌다.
+    // 잠긴 이유가 둘이다(감독의 거절 경고도 둘) — 사회자 로봇이 안 붙었거나, 붙었는데 대기모드다.
+    // 하나로 뭉개면 사회자가 끊긴 것을 대기모드 문제로 오인해 엉뚱한 곳을 본다(최종 리뷰 M4).
+    // connected 가 없는 구버전 서버면 "사회자 연결" 쪽으로 읽힌다.
     var mcConnected = Array.isArray(s.connected) && s.connected.indexOf("mc") !== -1;
-    note.textContent = mcConnected ? "단독: 로봇 앱 업데이트 후" : "단독: 사회자 로봇 연결 후";
+    note.textContent = mcConnected ? "단독: 사회자 대기모드 해제 후" : "단독: 사회자 로봇 연결 후";
     note.hidden = false;
   } else {
     note.textContent = "";

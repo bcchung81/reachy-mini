@@ -23,6 +23,9 @@ from stage.cues import (
     QA_ANSWER_EMOTION,
     QUESTION_PROMPT_EMOTION,
     QUESTION_PROMPTS,
+    SOLO_ACK_EMOTIONS,
+    SOLO_ACK_LINES,
+    SOLO_LISTENER_REACT,
     Cue,
     CueSheet,
     Point,
@@ -139,7 +142,22 @@ MIN_CHARS = 40
 # 이력에 남길 화자 접두. 이력은 **하나**이고 접두로 화자를 가른다(설계 §5.2).
 # `_who()` 가 돌려주는 "실제로 말한 로봇" 이 아니라 **역할**로 적는다 — 1인 모드
 # 에서 사회자 한 대가 양쪽을 읽어도 이력에는 "도슨트:" 가 남아야 대화가 이어진다.
-SPEAKER_LABEL = {"mc": "사회자", "docent": "도슨트"}
+SPEAKER_LABEL = {"mc": "사회자", "docent": "도슨트", "solo": "사회자"}
+# ↑ `solo` 는 **생성 역할**이다(단독 모드의 페르소나, `stage/prompts.py`) — 말하는 것은 사회자 로봇이라
+# 이력에도 "사회자:" 로 남는다. 그래야 단독 생성이 자기 앞선 답(사회자 줄)을 제 말로 본다
+# (`stage/__main__.py::history_for`).
+
+# ── 단독 모드(사회자 혼자 답한다, 2026-09-25) ─────────────────────────────
+# 발화 id. 큐 id 와 겹치지 않는 고정 이름이다 — `on_speaking_ended` 가 이것으로 단독 갈래를 가른다.
+SOLO_ACK_ID = "solo:ack"
+SOLO_QA_ID = "solo:qa"
+# 단독 답을 못 만들었을 때 사회자가 하는 말. 팟캐스트 사과문(`QA_FALLBACK`)은 "다음으로 넘어가 볼까요?"
+# 로 끝나는데 단독에는 넘어갈 곳이 없다 — 다시 말해 달라고 청한다.
+SOLO_FALLBACK = "죄송해요, 지금은 답을 찾지 못했어요. 다시 한번 말씀해 주실래요?"
+FB_SOLO = "단독 답 사과문"
+# 단독 답의 "너무 짧다" 하한. 인사에는 "안녕하세요, 반가워요." 한 줄이 맞는 답이라 도슨트 하한이나
+# 사회자 받아치기 하한(40자)을 걸면 매번 헛경보다 — 한두 낱말로 끝난 답만 잡는다.
+SOLO_MIN_CHARS = 10
 
 # 폴백이 **무엇인지** 로그에 적는 이름. ~~사다리 2단(예비)과 3단(큐시트),
 # 도슨트 지시문 폴백(`FB_BRIEF`)~~ 은 2026-09-23 고정 대본 전환으로 사라졌다 —
@@ -157,13 +175,14 @@ _GENERATED_FALLBACKS: frozenset[str] = frozenset()
 # 운영 모드(설계 `docs/superpowers/specs/2026-09-21-launch-and-modes-design.md` §1-2).
 # **순서가 곧 페이지 버튼 순서다**(`mode_names` → 대시보드 hello `modes`). 처음 값은
 # 언제나 첫째(팟캐스트)다 — 지금 운영 흐름(운영자가 시작을 누를 때까지 대기)을 그대로
-# 둔다. 스펙의 `REACHY_MODE`(처음 모드를 환경변수로)는 1단계에서 뺐다: 단독을 켤 로봇이
-# 아직 없어(`caps` 를 보내는 앱이 4단계) 켜 봐야 거절될 값이다.
+# 둔다. 스펙의 `REACHY_MODE`(처음 모드를 환경변수로)는 1단계에서 뺐다 — 단독은 사회자가
+# 붙은 뒤에야 켤 수 있어 기동 때 정할 수 없다.
 #
 #   podcast — 큐시트를 따라 사회자·도슨트가 주고받는다(지금까지의 전부).
-#   solo    — 사회자 한 대가 관람객 질문에 답한다. 감독은 진행하지 않는다(`s`·`n`·`p`·
-#             `r`·`g` 거절). 1단계에는 로봇에게 알리는 일도 없다 — 4단계에서 `mode`
-#             지시가 붙는다(`set_mode` 의 주석 자리).
+#   solo    — 사회자 한 대가 관람객 말에 답한다(2026-09-25 구현, **감독이 대화를 맡는다**:
+#             사회자 마이크 → 잡음 거르기 → 확인 멘트 → 생성 답 → 다시 듣기). 팟캐스트 진행은
+#             하지 않는다(`s`·`e`·`n`·`p`·`r`·`g` 거절). ~~4단계에서 로봇에게 `mode` 지시를
+#             보내 앱이 단독 루프로 전환~~ — 로봇은 say·mic 만 받으므로 앱 재배포가 필요 없다.
 MODES = ("podcast", "solo")
 
 
@@ -186,6 +205,11 @@ class _Pending(NamedTuple):
     # 지금은 쓰는 곳이 없지만(해설이 고정 대본이 되면서 짧은 답을 기다릴 일이
     # 없어졌다) 관람객 질문 답에 수준별 하한을 따로 걸 자리로 남겨 둔다.
     min_chars: int | None = None
+    # **말할 로봇의 대본 역할.** 없으면 `role` 과 같다. 단독 답은 생성 역할(`solo`, 페르소나)과 말하는
+    # 역할(`mc`)이 다르다 — 둘을 한 칸에 두면 상태기계가 모르는 역할("solo")로 말하려다 TurnError 가 난다.
+    speaker: str | None = None
+    # 듣는 로봇의 반응(`_speak` 의 `react`). 단독에서 도슨트가 끄덕인다(`SOLO_LISTENER_REACT`).
+    react: str = ""
 
 
 class UnitMismatch(RuntimeError):
@@ -386,9 +410,9 @@ class Director:
         # 비상정지라 이어서 "이 큐 다시" 로 돌아온다. 상태기계(IDLE/발화/듣기)로는 이 구분이 안 된다:
         # 중단 뒤도, 공연 전도, 공연 끝도 전부 IDLE 이다.
         self._show_running = False
-        # 역할 → 그 로봇 앱이 hello 로 알린 능력(`caps`, 예: {"solo"}). **끊기면 지운다**
-        # (`on_disconnect`) — 안 지우면 단독을 아는 앱이 나가고 모르는 앱이 다시 붙어도
-        # 옛 능력이 남아 단독이 켜진다. 지금 로봇 앱은 `caps` 를 안 보내 늘 빈 집합이다.
+        # 역할 → 그 로봇 앱이 hello 로 알린 능력(`caps`, 예: {"react", "gaze"}). **끊기면 지운다**
+        # (`on_disconnect`) — 안 지우면 연출을 아는 앱이 나가고 모르는 앱이 다시 붙어도
+        # 옛 능력이 남아 감독이 그 앱이 모르는 시선·반응을 보낸다(앱은 경고하고 버린다).
         self._caps: dict[str, set[str]] = {}
         # 대기모드에 들어간 역할. 새 상태기계를 만들지 않는다 — `solo_role` 이 이 값을
         # 보므로, **재배정만**은 그 로봇이 "끊겼다" 와 같은 모양으로 진행에서 빠진다.
@@ -471,10 +495,18 @@ class Director:
             # 능력은 **그 연결의** 것이다 — 다시 붙는 앱은 새 hello 로 다시 알린다.
             self._caps.pop(role, None)
             self._standby.discard(role)
-            # 4단계: 단독 모드(`self._mode == "solo"`)에서 사회자가 끊기면 어떻게 할지 정한다.
-            # 지금은 모드가 solo 로 남고(`solo_available` 만 꺼진다) 아래 경고가 "1인 모드로
-            # 내려간다 — 도슨트가 양쪽 대사를 읽는다" 라고 찍히는데, 단독에는 읽을 대사가
-            # 없어 오해를 부른다. 1단계에서는 단독에 들어갈 로봇이 없어 닿지 않는 자리다.
+            # **단독 중 사회자가 끊기면 팟캐스트로 되돌린다**(2026-09-25). 단독은 사회자 한 대가 답하는
+            # 모드라 남은 도슨트로는 이어 갈 수 없다 — 모드만 solo 로 남기면 아무도 안 듣는데 진행 명령은
+            # 전부 거절되는 막다른 골목이다. 멈추고 알린다. 다시 붙으면 운영자가 `m solo`.
+            if self._mode == "solo" and role == "mc":
+                self._leave_solo_locked()
+                self._warn("[mc] 이 끊겼다 — 단독 모드를 끝내고 팟캐스트로 돌아간다(다시 붙으면 m solo)")
+                return
+            if self._mode == "solo":
+                # 도슨트가 끊겼다 — 단독은 사회자 혼자라 그대로 간다. 아래 "1인 모드로 내려간다 — 양쪽
+                # 대사를 읽는다" 는 단독에는 읽을 대사가 없어 오해를 부른다.
+                self._warn(f"[{role}] 이 끊겼다 — 단독 모드는 사회자 혼자 그대로 간다")
+                return
             if self.solo_role is not None:
                 self._warn(
                     f"[{role}] 이 끊겼다 — 1인 모드로 내려간다. "
@@ -503,8 +535,9 @@ class Director:
     ) -> None:
         """역할 자기신고. 두 대가 뒤바뀐 채 시연을 시작하는 것을 여기서 막는다.
 
-        `caps` 는 그 로봇 앱이 할 줄 아는 것(선택 필드, 예: `["solo"]`). 없으면 빈 목록 —
-        지금 로봇 앱은 보내지 않는다(4단계 앱이 보낸다). 형식 검사는 서버가 한다.
+        `caps` 는 그 로봇 앱이 할 줄 아는 것(선택 필드, 예: `["emotion", "react", "gaze"]`). 없으면
+        빈 목록 — 무대 연출(`STAGE_CAPS`)을 모르는 옛 앱이다. ~~`["solo"]`(4단계 앱)~~ 은 2026-09-25
+        단독을 감독이 맡으면서 쓰지 않는다. 형식 검사는 서버가 한다.
         """
         with self._lock:
             expected = self._expect_units.get(role)
@@ -559,6 +592,15 @@ class Director:
                 if reason is not None:
                     self._warn(f"관람객 질문으로 보지 않는다({reason}): {text!r}")
                     return
+            if self._mode == "solo":
+                # **단독 — 감독이 대화를 맡는다**(2026-09-25). 넘길 큐가 없으니 "다음" 은 진행 신호가
+                # 아니다. LLM 에 넘기면 "무엇이 궁금하세요?" 같은 빈 답이 나오고, 조용히 버리면 관람객은
+                # 왜 반응이 없는지 모른다 — 버리되 운영자가 보게 남긴다. 마이크는 열린 채다.
+                if is_advance(text):
+                    self._warn(f"단독 모드에는 넘길 큐가 없다 — '다음' 으로 보지 않고 버린다: {text!r}")
+                    return
+                self._solo_answer(text)
+                return
             # 관람객이 입을 열었다 — 침묵이 아니다. 아래 두 갈래는 대개 곧바로
             # 발화로 넘어가고 `tick()` 의 침묵 갈래는 LISTENING 일 때만 보지만,
             # **LISTENING 에 그대로 머무는 갈래가 실제로 있다**: 마지막 큐에서
@@ -659,7 +701,19 @@ class Director:
             # 끝난 뒤에도 다시 도슨트 몫을 트리거해 자기 대사를 무한 반복하는
             # 버그가 났었다.
             cue = self._sheet.current()
-            if cue_id == cue.id and self._points:
+            if cue_id == SOLO_QA_ID:
+                # **단독 답이 끝났다 — 다시 듣는다.** `cmds` 가 사회자 마이크를 연다. 침묵 기한은 없다 —
+                # 단독에는 넘길 큐가 없다(`_arm_question_deadline` 을 부르지 않는다). 팟캐스트처럼 다시
+                # 묻는 말(`:reask`)도 없다 — 사회자가 방금 답했고, 관람객은 이어서 말하면 된다.
+                self._emit(cmds)
+                return
+            elif cue_id == SOLO_ACK_ID:
+                # 단독 확인 멘트가 끝났다 — 그동안 만든 답을 **사회자가** 말한다(생성 역할은 `solo`).
+                pending = _Pending(
+                    "solo", "solo", SOLO_QA_ID, SOLO_FALLBACK, FB_SOLO, SOLO_QA_ID,
+                    min_chars=SOLO_MIN_CHARS, speaker="mc", react=SOLO_LISTENER_REACT,
+                )
+            elif cue_id == cue.id and self._points:
                 # **오프닝이 끝났다 — 0턴 설명을 그대로 말한다.**
                 # 기다릴 것이 없다(생성하지 않는다). 해설은 검수한 고정 대본이고,
                 # 공연마다 다시 쓰면 조사 파일로 검증한 사실이 매번 새로 쓰인다
@@ -802,8 +856,8 @@ class Director:
             self._emit(
                 cmds
                 + self._speak(
-                    pending.role, pending.cue_id, text,
-                    gaze="audience", emotion=QA_ANSWER_EMOTION,
+                    pending.speaker or pending.role, pending.cue_id, text,
+                    gaze="audience", emotion=QA_ANSWER_EMOTION, react=pending.react,
                 )
             )
 
@@ -1029,6 +1083,12 @@ class Director:
     def _arm_question_deadline(self) -> None:
         """질문 창을 연다 — 연 시각을 남기고, 자동 진행이 켜져 있으면 기한을 건다.
         **`self._lock` 을 쥔 채** 부른다. 기한을 거는 자리는 이 함수 하나다."""
+        if self._mode == "solo":
+            # 단독에는 넘길 큐가 없다 — 침묵 자동 진행을 걸면 `tick` 이 팟캐스트 큐를 시작한다
+            # (발화 기한 복구 경로가 여기를 부른다).
+            self._question_opened_at = None
+            self._question_deadline = None
+            return
         self._question_opened_at = self._now()
         self._question_deadline = (
             None if self._question_wait_s is None else self._question_opened_at + self._question_wait_s
@@ -1099,10 +1159,12 @@ class Director:
         운영자 화면(대시보드 로그)과 터미널에 같은 줄이 가야 "누가 언제 모드를 바꿨나" 를
         로그로 따라간다. 문구는 페이지와의 계약이라 여기 한 곳에만 둔다(콘솔은 넘기기만).
 
-        **단독은 사회자가 붙어 있고 그 앱이 `caps` 에 "solo" 를 알렸을 때만** 받는다.
-        단독은 사회자 한 대가 관람객에게 답하는 모드라, 그 앱이 모르는 채로 감독만
-        단독이 되면 진행은 멈췄는데 아무도 답하지 않는 정적이 된다 — 1단계의 지금
-        로봇 앱은 `caps` 를 보내지 않으므로 단독은 늘 여기서 거절된다.
+        ~~단독은 사회자 앱이 `caps` 에 "solo" 를 알렸을 때만 받는다~~ — 2026-09-25 부터 **감독이 대화를
+        맡는다**(결정: 로봇 재배포 없음). 사회자 로봇은 팟캐스트와 똑같이 `say`·`mic` 만 받으므로 앱이 단독을
+        알 필요가 없다. 조건은 사회자가 붙어 있고 대기모드가 아닌 것 하나다(`_solo_refusal_locked`).
+
+        단독으로 들어가면 말하던 것을 멈추고 **사회자 마이크를 연다**(침묵 자동 진행 없음). 그 뒤는
+        `on_heard` → `_solo_answer` → 확인 멘트 → 생성 답 → 다시 듣기다. 나오면 멈추고 마이크를 닫는다.
         """
         with self._lock:
             if name not in MODES:
@@ -1125,19 +1187,26 @@ class Director:
             # (`__init__` 의 `self._lock` 주석). 락을 놓고 부르면 그 틈에 다른 스레드가
             # 새 큐를 시작해, 모드는 단독인데 팟캐스트 발화가 흐르는 채로 남을 수 있다.
             #
-            # 멈추면 IDLE 이다. 그래서 단독에서는 관람객의 "다음"(`on_heard`)도 침묵 자동
-            # 진행(`tick`)도 따로 막지 않는다 — 둘 다 LISTENING 에서만 진행하는데, 진행
-            # 명령(`start`·`next`·`previous`·`goto`)이 가드에 막혀 단독에서는 LISTENING 이
-            # 될 길이 없다. 늦게 온 `speaking_ended` 는 멈춘 발화의 것이라 유령으로
-            # 버려지고, 생성을 기다리던 핸드오프는 깨어나 IDLE 을 보고 물러난다.
-            # (`test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다`)
+            # ~~멈추면 IDLE 이라 단독에서는 "다음"·침묵 자동 진행을 따로 막지 않는다~~ — 2026-09-25 단독이
+            # 곧바로 LISTENING 이 되면서 그 근거가 없어졌다. 지금은 셋이 막는다: 질문 창 기한을 여기서
+            # 지우고, `_arm_question_deadline` 이 단독에서는 기한을 걸지 않고, `on_heard` 의 단독 갈래가
+            # "다음" 을 진행 신호로 보지 않는다. 늦게 온 `speaking_ended` 는 멈춘 발화의 것이라 유령으로
+            # 버려진다(`test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다`).
             self._abort_locked()
             # 단독으로 들어가면 팟캐스트 공연은 끝난 것이다 — 돌아와서 [공연 시작] 을 누르면 첫 큐부터다
             # (이어서 하려면 `r`). 커서는 되감지 않는다: 운영자가 이어 갈 자리를 잃지 않게.
             self._show_running = False
+            # **기다리던 생성을 전부 끊는다.** 멈추면 IDLE 이라 대개 깨어난 핸드오프가 물러나지만, 단독은
+            # 곧바로 LISTENING 이 된다 — 팟캐스트 질문 답을 기다리던 핸드오프가 깨어나 LISTENING 과 같은
+            # 세대를 보면 **단독 사회자 앞에서 도슨트 답이 나간다.** 세대를 올려 세대 검사로 버리게 한다.
+            self._bump_slot("docent")
+            self._bump_slot("solo")
+            self._question_deadline = None
+            self._question_opened_at = None
             old, self._mode = self._mode, name
-            # 4단계: 여기서 로봇에게 mode 를 보낸다(앱이 단독 루프로 전환)
             self._warn(f"모드를 {old} → {name} 로 바꿨다")
+            if name == "solo":
+                self._solo_listen_locked()
 
     def toggle_standby(self, role: str) -> None:
         """대기모드 on/off — 콘솔·대시보드 `z <역할>`.
@@ -1175,6 +1244,10 @@ class Director:
                 self._warn(f"[{role}] 이 붙어 있지 않다 — 대기모드를 바꾸지 않는다")
                 return
             entering = role not in self._standby
+            if entering and self._mode == "solo" and role == "mc":
+                # 단독에서 사회자를 재우면 아무도 안 듣는데 진행 명령은 전부 거절되는 막다른 골목이다.
+                self._warn("단독 모드에서는 사회자를 대기모드로 두지 않는다 — 먼저 m podcast")
+                return
             if entering:
                 active_after = (self._connected - self._standby) - {role}
                 if not active_after:
@@ -1189,6 +1262,10 @@ class Director:
                 self._standby.discard(role)
             self._warn(f"[{role}] 대기모드 {'진입' if entering else '해제'}")
             self._emit([Command(to=role, type="standby", fields={"on": entering})])
+            if self._mode == "solo":
+                # 전환은 멈추고 시작한다(위) — 단독은 멈추면 다시 들어야 한다(`abort` 와 같은 규칙).
+                self._bump_slot("solo")
+                self._solo_listen_locked()
 
     def _solo_refusal_locked(self) -> str | None:
         """지금 단독을 켤 수 **없는** 이유(경고 문구 그대로). 켤 수 있으면 None.
@@ -1200,11 +1277,10 @@ class Director:
         """
         if "mc" not in self._connected:
             return "단독 모드를 켤 수 없다 — 사회자 로봇이 붙어 있지 않다"
-        if "solo" not in self._caps.get("mc", ()):
-            return (
-                "단독 모드를 켤 수 없다 — 사회자 로봇 앱이 단독 모드를 아직 모른다"
-                "(로봇 앱 업데이트 뒤에 켜진다)"
-            )
+        # ~~사회자 앱이 caps 에 "solo" 를 알려야 한다~~ — 2026-09-25 감독이 대화를 맡으면서 앱 기능이
+        # 필요 없어졌다(로봇은 say·mic 만 받는다).
+        if "mc" in self._standby:
+            return "단독 모드를 켤 수 없다 — 사회자 로봇이 대기모드다(z mc 로 깨운 뒤)"
         return None
 
     def _refused_in_solo(self, what: str) -> bool:
@@ -1344,8 +1420,19 @@ class Director:
                 self._next_locked(quiet_if_last=True)
 
     def abort(self) -> None:
+        """즉시 중단(`a`). 팟캐스트에서는 지금 큐에 머문다(이어서 `r`).
+
+        **단독에서는 "지금 답을 멈추고 다시 듣는다"** 다(2026-09-25) — 단독에는 시작할 큐가 없어(진행 명령은
+        전부 거절) 마이크를 닫은 채 두면 되살릴 길이 `m podcast` → `m solo` 뿐이다. 기다리던 답 생성은
+        세대를 올려 버린다 — 곧바로 LISTENING 이 되므로 깨어난 핸드오프가 상태 검사만으로는 못 물러난다.
+        완전히 멈추려면 `m podcast`.
+        """
         with self._lock:
             self._abort_locked()
+            if self._mode == "solo":
+                self._bump_slot("solo")
+                self._solo_listen_locked()
+                self._warn("단독 — 말을 멈추고 다시 듣는다(완전히 멈추려면 m podcast)")
 
     def _abort_locked(self) -> None:
         """중단의 본체. **`self._lock` 을 쥔 채** 부른다.
@@ -1359,6 +1446,69 @@ class Director:
         self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────
+    def _solo_listen_locked(self) -> None:
+        """단독 — 사회자 마이크를 열고 듣는다. **`self._lock` 을 쥔 채**, 멈춘 뒤(IDLE)에 부른다.
+
+        상태기계의 `force_listening` 을 쓴다 — 이름은 타임아웃 복구지만 하는 일은 "LISTENING 으로 가고
+        이 로봇 마이크를 연다" 하나다. 침묵 기한은 걸지 않는다(단독에는 넘길 큐가 없다).
+        """
+        self._question_deadline = None
+        self._question_opened_at = None
+        self._emit(self._machine.force_listening("mc"))
+
+    def _leave_solo_locked(self) -> None:
+        """단독을 끝내고 팟캐스트로 — 멈추고, 기다리던 단독 답을 버린다. **`self._lock` 을 쥔 채** 부른다."""
+        self._abort_locked()
+        self._bump_slot("solo")
+        self._mode = "podcast"
+
+    def _solo_brief(self, question: str) -> str:
+        """단독 답의 지시문 — 큐시트 **전체**에서 가장 가까운 섹션 하나를 근거로 싣는다.
+
+        팟캐스트 질문 답(`_answer`)은 "지금 섹션" 을 기본 근거로 두지만 단독에는 지금 섹션이 없다. 가까운
+        섹션이 없으면(인사·잡담) 근거를 싣지 않고 그렇게 말해 준다 — 없는 근거를 "확인된 내용" 으로 주면
+        모델이 그것을 답에 섞는다. 금지 규칙(guard)도 그 섹션 것을 함께 싣는다(`_answer` 와 같은 이유).
+        """
+        parts = [f"관람객이 '{question}' 라고 말했다. 사회자로서 혼자 답한다."]
+        cue = self._index.best(question, self._level_name)
+        if cue is not None:
+            # **"전시에 대한 질문일 때만 쓴다" 를 붙인다.** 색인은 사회자 대사도 보므로 인사말이 섹션에 걸린다
+            # (실측: "고마워요"·"안녕하세요" → 개요, "감사합니다" → 전자파, "재미있어요" → 모스). 내용 필드만
+            # 색인하면 인사는 빠지지만 진짜 질문을 놓친다("전자파는 몸에 해로워요?" 가 문턱 아래로, "모스 부호는
+            # 누가…" 가 엉뚱한 섹션으로) — 재현율을 지키고, 인사에 해설을 얹지 않는 일은 지시문이 맡는다.
+            # 근거는 전부 검수한 브리프라 섞여도 사실이 틀리지는 않는다.
+            _, brief = cue.brief_for(self._level_name)
+            parts.append(
+                f"관람객 말과 가장 가까운 전시 섹션('{cue.title}')에서 확인된 내용(전시에 대한 질문일 때만 "
+                f"쓴다): {brief.replace('**', '')}"
+            )
+            guard = cue.guard_for(self._level_name)
+            if guard:
+                parts.append(guard)
+            self._warn(f"[{SOLO_QA_ID}] '{cue.id}' 섹션을 근거로 싣는다")
+        else:
+            parts.append(
+                "관련된 전시 섹션을 찾지 못했다. 인사나 가벼운 말이면 짧고 친근하게 답한다. "
+                "전시에 대한 질문이면 확인된 내용이 없으니 모른다고 솔직하게 말한다."
+            )
+        parts.append("위 내용과 앞선 대화에 없는 사실·수치는 지어내지 않는다.")
+        return "\n\n".join(parts)
+
+    def _solo_answer(self, question: str) -> None:
+        """단독 — 들은 말에 사회자가 답한다. **`self._lock` 을 쥔 채** 부른다(`on_heard`).
+
+        팟캐스트 질문 답(`_answer`)과 같은 수법이다: 생성을 스레드로 띄우고 그동안 고정 확인 멘트를 말한다
+        (지연 은닉). 멘트가 끝나면 `on_speaking_ended` 의 단독 갈래가 답을 **사회자로** 말하게 한다.
+        말하는 동안 마이크는 닫혀 있다(불변식 ①) — 관람객이 끼어들면 운영자가 `a` 로 멈춘다.
+        """
+        self._remember(f"관람객: {question}")
+        self._spawn_generate("solo", "solo", self._solo_brief(question), SOLO_FALLBACK, SOLO_QA_ID)
+        i = self._ack_i % len(SOLO_ACK_LINES)
+        self._ack_i += 1
+        ack = SOLO_ACK_LINES[i]
+        self._remember(f"사회자: {ack}")
+        self._emit(self._speak("mc", SOLO_ACK_ID, ack, gaze="audience", emotion=SOLO_ACK_EMOTIONS[i]))
+
     def _say_answer(self, cue: Cue, i: int, cmds: list) -> None:
         """턴 i 의 도슨트 설명을 **그대로** 말한다. `self._lock` 을 쥔 채 부른다.
 

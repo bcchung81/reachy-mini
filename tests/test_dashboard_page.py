@@ -220,15 +220,15 @@ def test_단독에서는_키보드_단축키도_진행_명령을_보내지_않�
     assert 'latestSnapshot.mode === "solo"' in body
 
 
-def test_단독_불가_안내는_사회자_없음과_앱_미지원을_가른다():
+def test_단독_불가_안내는_사회자_없음과_대기모드를_가른다():
     """최종 리뷰 M4: `solo_available` 이 거짓인 이유는 둘이다(감독의 거절 경고도 둘) — 사회자
-    로봇이 안 붙었거나, 붙었는데 그 앱이 단독을 모른다. 안내가 늘 "로봇 앱 업데이트 후" 면
-    사회자가 끊긴 것을 앱 문제로 오인해 엉뚱한 곳을 본다. 가르는 기준은 snapshot.connected
+    로봇이 안 붙었거나, 붙었는데 대기모드다(~~그 앱이 단독을 모른다~~ — 2026-09-25 감독이 대화를
+    맡아 앱과 무관하다). 한 문구로 뭉개면 사회자가 끊긴 것을 대기모드 문제로 오인한다. 가르는 기준은 snapshot.connected
     에 "mc" 가 있느냐다 — 리터럴은 renderModeState 본문 안에서 본다. 두 문구를 따로 찾으면
     갈래가 뒤바뀌어도(사회자가 있는데 "연결 후") 통과한다 — 삼항식을 통째로 본다."""
     body = _media_block(_src(), "function renderModeState(s)")
     assert 'var mcConnected = Array.isArray(s.connected) && s.connected.indexOf("mc") !== -1;' in body
-    assert ('note.textContent = mcConnected ? "단독: 로봇 앱 업데이트 후" : "단독: 사회자 로봇 연결 후";'
+    assert ('note.textContent = mcConnected ? "단독: 사회자 대기모드 해제 후" : "단독: 사회자 로봇 연결 후";'
             in body)
 
 

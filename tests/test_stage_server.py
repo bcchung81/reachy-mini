@@ -601,24 +601,26 @@ def _hello_caps(ws, role, caps):
     assert m["type"] == "mic", f"접속 직후 mic 재동기화가 아니라 {m} 가 왔다"
 
 
-def test_사회자가_hello_에_단독을_알리면_감독이_단독_가능으로_본다(server):
+def test_hello_의_caps_가_감독에_닿는다(server):
+    """~~단독 가능(`solo_available`)으로 봤다~~ — 2026-09-25 단독이 caps 를 안 보게 되어 그 관찰은 공허하다.
+    caps 는 무대 연출(`STAGE_CAPS`: emotion·react·gaze)이 여전히 쓴다 — 감독이 기억한 것을 본다."""
     with connect(url_of(server)) as mc:
-        _hello_caps(mc, "mc", ["solo"])
-        assert server.director.snapshot()["solo_available"] is True
+        _hello_caps(mc, "mc", ["react"])
+        assert server.director._caps["mc"] == {"react"}
 
 
 @pytest.mark.parametrize(
     "caps, 보인_값",
-    [("solo", "'solo'"), (["solo", 1], "['solo', 1]")],
+    [("react", "'react'"), (["react", 1], "['react', 1]")],
     ids=["문자열", "문자열_아닌_원소"],
 )
 def test_caps_가_문자열_목록이_아니면_경고하고_없는_것으로_본다(server, caps, 보인_값):
     """규약 위반은 그 필드만 버린다 — 연결은 산다(`_str_field` 와 같은 원칙). 문자열을
-    그대로 넘기면 `set("solo")` 가 {'s','o','l'} 이 되어 **조용히** 단독이 안 켜진다."""
+    그대로 넘기면 `set("react")` 가 {'r','e','a','c','t'} 가 되어 **조용히** 반응이 안 나간다."""
     with connect(url_of(server)) as mc:
         _hello_caps(mc, "mc", caps)
         assert f"[mc] hello 의 caps 가 문자열 목록이 아니다 — 무시한다: {보인_값}" in server.warnings
-        assert server.director.snapshot()["solo_available"] is False
+        assert server.director._caps["mc"] == set()
         assert server.director.snapshot()["connected"] == ["mc"]   # 연결은 살아 붙어 있다
 
 

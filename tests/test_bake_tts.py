@@ -70,7 +70,7 @@ def test_굽기_본문은_로봇의_본문_함수_결과와_같다():
 
 
 def test_고정_대사는_큐시트와_감독_고정_멘트를_모두_덮는다():
-    from stage.cues import QA_ACK_LINES, QUESTION_PROMPTS, load_cues
+    from stage.cues import QA_ACK_LINES, QUESTION_PROMPTS, SOLO_ACK_LINES, load_cues
 
     lines = bake.fixed_lines()
     texts = {l.text for l in lines}
@@ -79,6 +79,7 @@ def test_고정_대사는_큐시트와_감독_고정_멘트를_모두_덮는다(
         for t in c.points:
             assert all(a in texts for a in t.answers.values())
     assert set(QA_ACK_LINES) <= texts and set(QUESTION_PROMPTS) <= texts
+    assert set(SOLO_ACK_LINES) <= texts            # 단독 확인 멘트(2026-09-25)도 캐시 적중이어야 지연이 없다
     assert all(l.level for l in lines if l.role == "docent")
     assert all(l.level is None for l in lines if l.role == "mc")
 

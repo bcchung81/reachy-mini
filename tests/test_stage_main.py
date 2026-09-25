@@ -954,3 +954,32 @@ def test_기동_환경변수의_침묵_대기_시간이_감독에_닿는다(monk
     with pytest.raises(_멈춤):
         stage_main.main()
     assert got == ["15"]
+
+
+def test_단독_생성은_사회자_줄을_제_말로_본다(기록LLM):
+    """단독(2026-09-25)은 사회자 로봇이 말한다 — 이력에 "사회자:" 로 남은 앞선 답·확인 멘트가 제 말(assistant)
+    이어야 한다. 남의 말로 보면 모델이 제 답을 "사회자: …" 모양으로 흉내 낸다(이름표 사고, mc:42)."""
+    generate = stage_main.build_generate(_레벨)
+    이력 = [
+        {"role": "user", "content": "관람객: 안녕하세요"},
+        {"role": "assistant", "content": "사회자: 네, 잘 들었어요."},
+        {"role": "assistant", "content": "사회자: 안녕하세요, 반가워요."},
+        {"role": "user", "content": "관람객: 마르코니가 누구예요?"},
+    ]
+    assert generate("solo", "지시", 이력) == "답"
+    assert 기록LLM.본것 == [(
+        "관람객: 마르코니가 누구예요?\n\n지시",
+        [
+            {"role": "user", "content": "관람객: 안녕하세요"},
+            {"role": "assistant", "content": "네, 잘 들었어요.\n안녕하세요, 반가워요."},
+        ],
+    )]
+
+
+def test_단독_생성문은_수준_상한에서_자른다(기록LLM):
+    """단독의 사회자는 전시 질문에 도슨트만큼 답한다 — 상한도 수준의 것(일반 3문장/140자, 리터럴)."""
+    기록LLM.답 = ["하나요.", "둘이요.", "셋이요.", "넷이요."]
+    경고: list[str] = []
+    generate = stage_main.build_generate(_레벨, warn=경고.append)
+    assert generate("solo", "지시", []) == "하나요.둘이요.셋이요."
+    assert any("[solo]" in w and "3문장/140자" in w for w in 경고), 경고

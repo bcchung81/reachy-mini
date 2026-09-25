@@ -45,6 +45,8 @@ from stage.cues import (  # noqa: E402
     QA_ACK_LINES,
     QUESTION_PROMPT_EMOTION,
     QUESTION_PROMPTS,
+    SOLO_ACK_EMOTIONS,
+    SOLO_ACK_LINES,
     load_cues,
 )
 from tts_cache_proxy import INDEX_NAME, cache_key, default_cache_dir, is_cacheable  # noqa: E402
@@ -87,6 +89,9 @@ def fixed_lines(cues=None) -> list[Line]:
         out.append(Line("mc", text, "질문 확인 멘트", None, emo))
     for text in QUESTION_PROMPTS:
         out.append(Line("mc", text, "재질문", None, QUESTION_PROMPT_EMOTION))
+    # 단독 모드의 확인 멘트(2026-09-25) — 사회자 목소리. 답은 생성이라 굽지 않는다.
+    for text, emo in zip(SOLO_ACK_LINES, SOLO_ACK_EMOTIONS):
+        out.append(Line("mc", text, "단독 확인 멘트", None, emo))
     return out
 
 
