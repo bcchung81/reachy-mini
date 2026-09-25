@@ -20,7 +20,7 @@ from stage.cues import Cue
 
 _STYLE = """
   :root { color-scheme: light; }
-  body { margin: 0; background: #F5F6F8; color: #1B1F24;
+  body { margin: 0; background: #F5F6F8; color: #1B1F24; word-break: keep-all; overflow-wrap: anywhere;
          font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.7; }
   main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
   header { border-bottom: 2px solid #1B1F24; margin-bottom: 20px; padding-bottom: 12px; }
@@ -36,9 +36,12 @@ _STYLE = """
             padding: 16px 18px; margin: 0 0 14px; break-inside: avoid; }
   h2 { font-size: 19px; margin: 0 0 10px; }
   h2 .num { color: #0B63B6; margin-right: 8px; font-variant-numeric: tabular-nums; }
-  p.line { margin: 6px 0; }
-  .who { display: inline-block; min-width: 3.4em; font-weight: 700; font-size: 13px; margin-right: 6px;
+  /* 이름표 옆에 글을 붙이고 둘째 줄부터도 그 자리에서 시작한다(걸친 들여쓰기) — 긴 설명이 이름표 밑으로 파고들면
+     누가 한 말인지 한눈에 안 들어온다. 한국어는 낱말 중간에서 줄을 바꾸지 않는다(keep-all). */
+  p.line { margin: 6px 0; display: flex; gap: 8px; align-items: baseline; }
+  .who { flex: 0 0 auto; min-width: 3.4em; font-weight: 700; font-size: 13px;
          padding: 1px 8px; border-radius: 999px; text-align: center; }
+  .say { flex: 1; min-width: 0; }
   .mc .who { background: #E3F4F8; color: #0A6F84; }
   .docent .who { background: #FFF1DE; color: #9A5B00; }
   footer { color: #56606B; font-size: 13px; margin-top: 24px; }
@@ -53,7 +56,7 @@ _STYLE = """
 def _line(who_class: str, who: str, text: str) -> str:
     return (
         f'<p class="line {who_class}"><span class="who">{html.escape(who)}</span>'
-        f"{html.escape(text)}</p>"
+        f'<span class="say">{html.escape(text)}</span></p>'
     )
 
 
