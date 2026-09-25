@@ -160,6 +160,14 @@ FB_SOLO = "단독 답 사과문"
 # 사회자 받아치기 하한(40자)을 걸면 매번 헛경보다 — 한두 낱말로 끝난 답만 잡는다.
 SOLO_MIN_CHARS = 10
 
+# **질문 답의 참고 사실 수준**(2026-09-25 실측). 이보다 쉬운 수준(초등·중고등)의 브리프는 단순화를 위해 **사실 자체**를
+# 빼 둔 자리가 있다 — 초등 02-history 는 "인명·연도·거리는 말하지 않는다" 라 마르코니가 무엇을 했는지가 브리프에 없다.
+# 아이가 "마르코니가 누구예요?" 라고 **직접** 물으면 모델은 모른다고 할 수밖에 없었다(실측 2/2 회피). 그 수준의 질문
+# 답에는 이 수준 브리프를 "참고 사실" 로 덧붙이고, 그 수준의 금지 규칙은 그대로 둔다 — 이름·연도는 말하지 않되 무엇을
+# 했는지는 답한다(실측 2/2 "전파를 생활 속에서 실제로 쓸 수 있게 만든 분"). 참고 사실의 정정 규칙("'캐나다'라고 하지
+# 않는다")도 함께 싣는다.
+QA_REFERENCE_LEVEL = "일반"
+
 # 폴백이 **무엇인지** 로그에 적는 이름. ~~사다리 2단(예비)과 3단(큐시트),
 # 도슨트 지시문 폴백(`FB_BRIEF`)~~ 은 2026-09-23 고정 대본 전환으로 사라졌다 —
 # 해설이 생성물이 아니게 되면서 폴백을 탈 자리 자체가 없어졌다. 이름을 남겨 두는
@@ -1492,14 +1500,13 @@ class Director:
         parts = [f"관람객이 '{question}' 라고 말했다. 사회자로서 혼자 답한다."]
         # 가까운 섹션 **둘까지**(`CueIndex.nearest` — 하나만 주면 엉뚱한 섹션이 잦았다, 실측 21/28 → 26/28).
         near = self._index.nearest(question, self._level_name)
+        used_ref = False
         for cue in near:
-            _, brief = cue.brief_for(self._level_name)
-            parts.append(
-                f"관람객 말과 가까운 전시 섹션('{cue.title}')에서 확인된 내용: {brief.replace('**', '')}"
-            )
-            guard = cue.guard_for(self._level_name)
-            if guard:
-                parts.append(guard)
+            got, ref = self._grounding(cue, f"관람객 말과 가까운 전시 섹션('{cue.title}')에서 확인된 내용")
+            parts += got
+            used_ref = used_ref or ref
+        if used_ref:
+            parts.append(self._reference_rule())
         if near:
             # **질문이면 근거로 바로 답하고, 가벼운 말이면 근거를 꺼내지 않는다 — 둘 다 적는다.** 색인은 사회자
             # 대사도 보므로 인사말이 섹션에 걸린다(실측: "안녕하세요"·"고마워요" → 개요, "감사합니다" → 전자파).
@@ -1911,6 +1918,48 @@ class Director:
                 f"[{label}] 생성 결과가 너무 짧다({len(text)}자, 하한 {limit}자) — 그대로 쓴다"
             )
 
+    def _reference_level(self) -> str | None:
+        """지금 수준의 질문 답에 참고 사실로 덧붙일 수준 — 지금 수준이 `QA_REFERENCE_LEVEL` 보다 쉬울 때만.
+
+        순서는 수준 목록(levels.yaml, 쉬운 것 → 어려운 것)이 정한다. 목록에 참고 수준이 없으면(테스트의 한 수준짜리
+        감독 등) None — 덧붙이지 않는다.
+        """
+        names = list(self._level_min_chars)
+        if QA_REFERENCE_LEVEL not in names or self._level_name not in names:
+            return None
+        if names.index(self._level_name) >= names.index(QA_REFERENCE_LEVEL):
+            return None
+        return QA_REFERENCE_LEVEL
+
+    def _grounding(self, cue: Cue, heading: str) -> tuple[list[str], bool]:
+        """섹션 하나의 근거 — (지시문 조각들, 참고 사실을 덧붙였는가). `heading` 은 "이 섹션에서 확인된 내용" 같은 머리.
+
+        `_answer`(팟캐스트 질문 답)와 `_solo_brief`(단독 답)가 같이 쓴다 — 두 벌로 두면 참고 사실·금지 규칙이 한쪽에만
+        붙는다. `**` 를 걷는 이유는 `_answer` 주석(모델이 서식을 흉내 내 별표가 TTS 로 샌다).
+        """
+        _, brief = cue.brief_for(self._level_name)
+        parts = [f"{heading}: {brief.replace('**', '')}"]
+        guard = cue.guard_for(self._level_name)
+        if guard:
+            parts.append(guard)
+        ref = self._reference_level()
+        if ref is None:
+            return parts, False
+        _, ref_brief = cue.brief_for(ref)
+        if not ref_brief or ref_brief == brief:
+            return parts, False
+        parts.append(f"질문에 답하는 데 필요하면 쓸 수 있는 참고 사실(어른 관람객용 자료): {ref_brief.replace('**', '')}")
+        ref_guard = cue.guard_for(ref)
+        if ref_guard:
+            parts.append(ref_guard)
+        return parts, True
+
+    def _reference_rule(self) -> str:
+        return (
+            f"참고 사실은 질문에 답하는 데 필요한 만큼만 쓰고, 위 금지 규칙을 지키며 {self._level_name} 관람객에게 "
+            "맞는 쉬운 말로 바꿔 말한다."
+        )
+
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
         self._remember(f"관람객: {question}")
@@ -1928,29 +1977,23 @@ class Director:
         # `**` 를 걷는 이유: 브리프에는 사람이 읽으라고 넣은 강조가 있는데, 그대로
         # 실으면 모델이 서식을 흉내 내 별표가 TTS 로 새어 나간다(`stage/prompts.py`
         # 머리말의 리뷰 Minor 5 와 같은 경로).
-        _, docent_brief = cue.brief_for(self._level_name)
-        parts = [
-            f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. 도슨트로서 답한다.",
-            f"이 섹션에서 확인된 내용: {docent_brief.replace('**', '')}",
-        ]
-        guard = cue.guard_for(self._level_name)
-        if guard:
-            parts.append(guard)
+        parts = [f"관람객이 '{question}' 라고 물었다. 지금 섹션은 '{cue.title}' 이다. 도슨트로서 답한다."]
+        here, used_ref = self._grounding(cue, "이 섹션에서 확인된 내용")
+        parts += here
         # **질문이 다른 섹션에 대한 것이면 그 근거도 싣는다**(2026-09-24). 관람객은 앞에서 들은
         # 것을 되묻는다 — 지금 섹션 브리프만 주면 소형 모델이 일반 지식으로 채운다. 지금 섹션보다
         # 확실히 가까운 섹션 **하나만** 붙인다(`CueIndex.related`) — 엉뚱한 근거는 없는 것보다 나쁘다.
         # 그 섹션의 금지 규칙도 함께 간다("'캐나다'라고 하지 않는다" 같은 정정이 그쪽에 있다).
         other = self._index.related(question, self._level_name, cue.id)
         if other is not None:
-            _, other_brief = other.brief_for(self._level_name)
-            parts.append(
-                f"질문과 관련된 다른 섹션('{other.title}')에서 확인된 내용: "
-                f"{other_brief.replace('**', '')}"
+            there, other_ref = self._grounding(
+                other, f"질문과 관련된 다른 섹션('{other.title}')에서 확인된 내용"
             )
-            other_guard = other.guard_for(self._level_name)
-            if other_guard:
-                parts.append(other_guard)
+            parts += there
+            used_ref = used_ref or other_ref
             self._warn(f"[{cue.id}:qa] 질문이 '{other.id}' 섹션과 더 가깝다 — 그 근거도 싣는다")
+        if used_ref:
+            parts.append(self._reference_rule())
         parts.append(
             "질문에 먼저 답한다. 위 내용과 앞선 해설에 없는 사실·수치는 지어내지 않는다. "
             "모르면 모른다고 말하고 이 섹션 이야기로 돌린다."

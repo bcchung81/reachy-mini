@@ -3557,3 +3557,67 @@ def test_생성_입력은_띄우는_순간의_이력_사본이다(monkeypatch):
     for run in 미룬:
         run()
     assert 본_이력[0][-1] == {"role": "user", "content": "관람객: 왜요?"}, 본_이력
+
+
+# ── 2026-09-25: 쉬운 수준의 질문 답에 참고 사실 ──────────────────────────────
+
+
+def _참고_시트():
+    def 브리프(lv):
+        base = {"mc_brief": "m"}
+        if lv == "초등":
+            return {**base, "docent_brief": "전파는 원래 있었고 사람이 찾아냈다는 것만.",
+                    "guard": "인명·연도·거리는 말하지 않는다."}
+        return {**base, "docent_brief": f"{lv}: 마르코니가 1901년에 대서양 건너로 신호를 보냈다.",
+                "guard": "'캐나다'라고 하지 않는다."}
+    lvs = ("초등", "중고등", "일반", "전문가")
+    # 둘째 큐는 검색 문턱 때문에 둔다 — 한 큐짜리 시트는 문턱이 무한대라 단독 근거가 늘 빈다(`CueIndex._threshold`).
+    return CueSheet([
+        Cue("c1", "발견 역사", "마르코니 이야기를 해 볼까요?", "옛", "partner",
+            briefs={lv: 브리프(lv) for lv in lvs},
+            points=(Turn("", {lv: f"{lv} 설명" for lv in lvs}),)),
+        Cue("c2", "크로마키", "파란 배경 이야기예요.", "옛", "partner",
+            briefs={lv: {"mc_brief": "m", "docent_brief": "파란 배경을 지운다."} for lv in lvs},
+            points=(Turn("", {lv: "배경 설명" for lv in lvs}),)),
+    ])
+
+
+def _참고_감독(level):
+    return Harness(sheet=_참고_시트(), level_name=level, levels=dict(_수준_하한),
+                   on_level_change=lambda name: None)
+
+
+def test_초등_질문_답에는_일반_브리프를_참고_사실로_덧붙이고_두_금지_규칙을_함께_싣는다():
+    """실측: 초등 브리프는 단순화로 사실 자체를 뺐다 — "마르코니가 누구예요?" 에 2/2 회피. 참고 사실을 주면 이름·연도
+    금지는 지키면서 무엇을 했는지 답했다(2/2)."""
+    h = _참고_감독("초등")
+    h.d.start()
+    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요?")
+    brief = h.gen_calls[-1][0]
+    assert "이 섹션에서 확인된 내용: 전파는 원래 있었고 사람이 찾아냈다는 것만." in brief
+    assert "인명·연도·거리는 말하지 않는다." in brief                                   # 그 수준의 금지 규칙
+    assert "참고 사실(어른 관람객용 자료): 일반: 마르코니가 1901년에 대서양 건너로 신호를 보냈다." in brief
+    assert "'캐나다'라고 하지 않는다." in brief                                          # 참고 사실의 정정 규칙
+    assert "위 금지 규칙을 지키며 초등 관람객에게 맞는 쉬운 말로 바꿔 말한다." in brief
+
+
+@pytest.mark.parametrize("level", ["일반", "전문가"])
+def test_일반_이상_수준은_참고_사실을_덧붙이지_않는다(level):
+    h = _참고_감독(level)
+    h.d.start()
+    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    h.d.on_heard("마르코니가 누구예요?")
+    brief = h.gen_calls[-1][0]
+    assert "참고 사실" not in brief
+    assert f"이 섹션에서 확인된 내용: {level}: 마르코니가" in brief
+
+
+def test_단독_답에도_쉬운_수준이면_참고_사실을_덧붙인다():
+    h = _참고_감독("중고등")
+    h.d.on_connect("mc")
+    _모드(h, "solo")
+    h.d.on_heard("마르코니가 누구예요?")
+    brief = h.gen_calls[-1][0]
+    assert "참고 사실(어른 관람객용 자료): 일반: 마르코니가" in brief
+    assert "위 금지 규칙을 지키며 중고등 관람객에게 맞는 쉬운 말로 바꿔 말한다." in brief
