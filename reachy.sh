@@ -18,6 +18,7 @@
 #   ./reachy.sh logs [줄수]            마지막 세션 로그 + **실시간 이어보기** (--no-follow 로 끔)
 #   ./reachy.sh stop                   띄운 것 전부 종료 (감독·대시보드 포함, 고아까지 쓸어낸다)
 #   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
+#   ./reachy.sh bake [--check|--level 일반|--limit N|--force|--prune]   고정 대사를 TTS 캐시에 굽기(4수준 약 38분, 바뀐 문장만 다시)
 #   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
 #
 # `start` 는 시연 한 벌이고 나머지는 **부품**이다(1대 개발·실기 운영에 쓴다). `start` 는
@@ -57,6 +58,7 @@ APP_LOG="$LOG_DIR/app.log"      # 앱(대화) 출력 — 세션 구분자와 함
 START_DIRECTOR_LOG="$LOG_DIR/start-director.log"
 SIM_PID_FILE="$LOG_DIR/sim.pid"
 TTS_PID_FILE="$LOG_DIR/tts.pid"
+TTS_PROXY_PID_FILE="$LOG_DIR/tts-proxy.pid"   # TTS 결과 캐시 프록시(tts_cache_proxy.py)
 SCENE="minimal"
 
 c_ok=$'\033[32m'; c_bad=$'\033[31m'; c_warn=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
@@ -124,6 +126,12 @@ run_sim() {
 TTS_BACKEND="${TTS_BACKEND:-qwen}"
 TTS_PORT="${TTS_QWEN_PORT:-8099}"
 TTS_ASSETS="${TTS_ASSETS:-$HOME/.local/share/reachy-mini-tts}"
+# **TTS 결과 캐시**(2026-09-25, 계획 docs/superpowers/plans/2026-09-25-tts-result-cache.md).
+# 로봇이 부르는 주소(:$TTS_PORT)에는 캐시 프록시가 서고, CrispASR 는 안쪽 포트에 **loopback 으로만**
+# 뜬다 — 프록시 말고는 부를 일이 없다. 로봇 설정·앱은 그대로다(주소가 안 바뀐다).
+# 캐시는 TTS 자산 옆(저장소 밖) — `./reachy.sh bake` 가 고정 대사를 여기에 굽는다.
+TTS_UPSTREAM_PORT="${TTS_QWEN_UPSTREAM_PORT:-8098}"
+TTS_CACHE_DIR="${TTS_CACHE_DIR:-$TTS_ASSETS/cache}"
 CRISPASR="${CRISPASR_BIN:-$TTS_ASSETS/crispasr-bin/crispasr}"
 # CustomVoice 를 쓴다 — 화자 이름으로 음색이 고정된다(VoiceDesign 은 매 요청 달라짐).
 #
@@ -194,6 +202,7 @@ status() {
     resolve_tts_voice
     if up "http://localhost:$TTS_PORT/health"; then
       say_ok "TTS  Qwen3(:$TTS_PORT) 화자 $TTS_VOICE"
+      tts_cache_status
     else
       say_bad "TTS  Qwen3(:$TTS_PORT)"
       # 안 떠 있으면 바이너리가 실행 가능한지까지 봐준다. dylib 문제는 조용히
@@ -274,7 +283,9 @@ show_logs() {  # [줄수] [--no-follow]
   if [ ! -f "$APP_LOG" ] && [ ! -f "$START_DIRECTOR_LOG" ]; then
     echo "   ${c_dim}앱 로그가 없다 — 아직 ./reachy.sh demo 도 start 도 돌린 적이 없다${c_off}"
   fi
-  for f in "$LOG_DIR/tts.log" "$LOG_DIR/sim.log" \
+  # tts-proxy.log — TTS 결과 캐시 프록시. "고정 대사인데 캐시 키가 다르다"(로봇 설정이 굽기와 달라져
+  # 구운 소리가 조용히 안 쓰인다)가 여기에 WARNING 으로 남는다.
+  for f in "$LOG_DIR/tts.log" "$LOG_DIR/tts-proxy.log" "$LOG_DIR/sim.log" \
            "$LOG_DIR/start-daemon-mc.log" "$LOG_DIR/start-daemon-docent.log"; do
     [ -f "$f" ] || continue
     say_step "$(basename "$f") 끝부분"
@@ -298,12 +309,14 @@ show_logs() {  # [줄수] [--no-follow]
 
 stop_all() {
   say_step "종료"
+  kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"
   kill_pidfile "$TTS_PID_FILE" "TTS 서버"
   kill_pidfile "$SIM_PID_FILE" "시뮬 데몬"
   "$LLAMACTL" stop
   # llamactl 이 관리하지 않는 것 + 고아. 시뮬 데몬을 PID 파일로만 잡으면
   # 손으로 띄운 것이 살아남는다(실측: `stop` 후에도 :8000 이 응답했다).
   sweep "crispasr --server"            "CrispASR"
+  sweep "tts_cache_proxy.py"           "TTS 캐시 프록시"
   sweep "stt_server.py"                "STT 서버"
   sweep "reachy_mini.daemon.app.main"  "시뮬 데몬"
   # 아래 둘은 `demo`/`sim` 이 띄우는 것이 아니라 **따로 붙어 사는 것들**이라
@@ -350,6 +363,7 @@ cleanup_partial() {
   [ "$STARTED_TTS" = "1" ] || return 0
   echo
   echo "   ${c_dim}기동이 끝나지 않아 이 실행이 띄운 TTS 서버를 정리한다${c_off}"
+  kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"
   kill_pidfile "$TTS_PID_FILE" "TTS 서버"
   STARTED_TTS=0
 }
@@ -430,6 +444,7 @@ start_tts() {
     if up "http://localhost:$TTS_PORT/health"; then
       already_up_binds_right "TTS" "$TTS_PORT" || return 1
       echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+      tts_proxy_marker_check
     elif [ ! -x "$CRISPASR" ] || [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_CODEC" ]; then
       # 자산이 없다고 시연을 막지 않는다 — say 로 물러나 계속 진행한다
       say_bad "TTS 자산을 찾을 수 없다: $TTS_ASSETS"
@@ -444,19 +459,70 @@ start_tts() {
       echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
       TTS_BACKEND=say
     else
-      echo "   기동 중 ($TTS_BACKEND_NAME, 화자 $TTS_VOICE)... 로그: $LOG_DIR/tts.log"
-      nohup "$CRISPASR" --server --host "$BIND_HOST" --port "$TTS_PORT" --backend "$TTS_BACKEND_NAME" \
-        -m "$TTS_MODEL" --codec-model "$TTS_CODEC" --voice "$TTS_VOICE" \
-        > "$LOG_DIR/tts.log" 2>&1 &
-      echo $! > "$TTS_PID_FILE"
-      STARTED_TTS=1   # 기동 실패 시 trap 이 이것만 보고 정리한다
-      if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
-        say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
-        echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
-        TTS_BACKEND=say
+      # CrispASR 는 **안쪽 포트에 loopback 으로만** — 로봇은 프록시(:$TTS_PORT)를 부른다.
+      # 안쪽이 이미 살아 있으면(프록시만 죽었던 경우) 그대로 쓴다.
+      if ! up "http://127.0.0.1:$TTS_UPSTREAM_PORT/health"; then
+        echo "   기동 중 ($TTS_BACKEND_NAME, 화자 $TTS_VOICE, 안쪽 :$TTS_UPSTREAM_PORT)... 로그: $LOG_DIR/tts.log"
+        start_crispasr 127.0.0.1 "$TTS_UPSTREAM_PORT"
+        STARTED_TTS=1   # 기동 실패 시 trap 이 이것만 보고 정리한다
+        if ! wait_for "http://127.0.0.1:$TTS_UPSTREAM_PORT/health" "TTS" 90; then
+          say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
+          echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+          TTS_BACKEND=say
+          return 0
+        fi
+      fi
+      if ! start_tts_proxy; then
+        # **캐시만 꺼진 원래 구성으로 물러난다 — 소리 내서.** 프록시가 못 뜬다고 시연을 막지
+        # 않는다: CrispASR 를 예전처럼 로봇이 부르는 주소에 직접 띄운다(구운 대사가 안 쓰일 뿐).
+        say_bad "TTS 캐시 프록시가 뜨지 않았다 — tail -20 $LOG_DIR/tts-proxy.log"
+        echo "   ${c_dim}→ 캐시 없이 CrispASR 를 :$TTS_PORT 에 직접 띄운다(예전 구성)${c_off}"
+        kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"
+        kill_pidfile "$TTS_PID_FILE" "TTS 서버"
+        start_crispasr "$BIND_HOST" "$TTS_PORT"
+        if ! wait_for "http://localhost:$TTS_PORT/health" "TTS" 90; then
+          say_bad "TTS 서버 기동 실패 — tail -30 $LOG_DIR/tts.log"
+          echo "   ${c_dim}→ 유나(say) 목소리로 계속 진행한다${c_off}"
+          TTS_BACKEND=say
+        fi
       fi
     fi
   fi
+}
+
+# CrispASR 서버 하나를 띄운다(PID 는 $TTS_PID_FILE). 호스트·포트만 다르다 — 보통은 안쪽
+# loopback, 프록시 폴백 때만 로봇이 부르는 주소.
+start_crispasr() {
+  nohup "$CRISPASR" --server --host "$1" --port "$2" --backend "$TTS_BACKEND_NAME" \
+    -m "$TTS_MODEL" --codec-model "$TTS_CODEC" --voice "$TTS_VOICE" \
+    > "$LOG_DIR/tts.log" 2>&1 &
+  echo $! > "$TTS_PID_FILE"
+}
+
+# 캐시 프록시를 로봇이 부르는 주소에 띄운다. /health 는 안쪽이 살아 있을 때만 200 이라
+# 기다림이 곧 "프록시 + CrispASR 둘 다 선다" 의 확인이다.
+start_tts_proxy() {
+  echo "   캐시 프록시 :$TTS_PORT → 안쪽 :$TTS_UPSTREAM_PORT ${c_dim}(캐시 $TTS_CACHE_DIR · 로그 $LOG_DIR/tts-proxy.log)${c_off}"
+  nohup "$PY" -u tts_cache_proxy.py --host "$BIND_HOST" --port "$TTS_PORT" \
+    --upstream "http://127.0.0.1:$TTS_UPSTREAM_PORT" --cache-dir "$TTS_CACHE_DIR" \
+    > "$LOG_DIR/tts-proxy.log" 2>&1 &
+  echo $! > "$TTS_PROXY_PID_FILE"
+  wait_for "http://localhost:$TTS_PORT/health" "TTS 캐시 프록시" 20
+}
+
+# :$TTS_PORT 가 이미 떠 있을 때 — 프록시인가, 예전처럼 CrispASR 가 직접 떠 있나.
+# 직접이면 시연은 되지만 구운 대사가 **조용히** 안 쓰인다. 그래서 말한다.
+tts_proxy_marker_check() {
+  if curl -s -m 3 "http://localhost:$TTS_PORT/health" 2>/dev/null | grep -q '"proxy"'; then
+    tts_cache_status
+  else
+    say_warn "TTS(:$TTS_PORT) 가 캐시 프록시 없이 떠 있다(예전 구성) — 구운 대사가 안 쓰인다. ./reachy.sh stop 후 다시 띄운다"
+  fi
+}
+
+# 캐시 적중 현황 한 줄 — 합성 없이 센다. 비었으면 bake 를 권한다(`scripts/bake_tts.py --check`).
+tts_cache_status() {
+  "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR" 2>&1 | sed 's/^/   /'
 }
 
 # ── serve — 실기(Wireless) 구성 ─────────────────────────────────
@@ -938,6 +1004,37 @@ robot_forget_started() {  # host — ROBOT_APPS_STARTED 에서 뺀다(연관 배
 robot_warmup() {
   say_step "예열${REACHY_PROMPT:+ — $REACHY_PROMPT}"
   "$PY" scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다${c_off}"
+  # 구운 고정 대사가 얼마나 있는지 — 비어 있으면 해설이 공연마다 실시간 합성으로 나간다.
+  # 기동을 막지는 않는다(결정: 굽기는 별도 명령, start 는 알리기만).
+  [ "$TTS_BACKEND" = "qwen" ] && tts_cache_status
+  return 0
+}
+
+# ── bake — 고정 대사를 TTS 캐시에 굽는다 ─────────────────────────
+# CrispASR(안쪽 :$TTS_UPSTREAM_PORT)에 **직접** 합성을 요청해 캐시 폴더에 쓴다. 프록시는 폴더를 요청마다
+# 보므로 다시 띄울 필요가 없다. 서버가 없으면 loopback 으로 띄운다(끝나도 남겨 둔다 — `start` 가 재사용).
+run_bake() {
+  local a
+  for a in "$@"; do
+    if [ "$a" = "--check" ]; then
+      exec "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR"
+    fi
+  done
+  trap 'cleanup_partial; exit 130' INT TERM
+  start_tts || exit 1
+  STARTED_TTS=0
+  if [ "$TTS_BACKEND" != "qwen" ]; then
+    say_bad "Qwen3-TTS 가 없다 — 굽지 못한다(위 로그 참고)"
+    exit 1
+  fi
+  if ! up "http://127.0.0.1:$TTS_UPSTREAM_PORT/health"; then
+    say_bad "안쪽 CrispASR(:$TTS_UPSTREAM_PORT)가 없다 — TTS 가 예전 구성(:$TTS_PORT 직결)으로 떠 있다. ./reachy.sh stop 후 다시"
+    exit 1
+  fi
+  say_step "굽기 — 고정 대사 → $TTS_CACHE_DIR"
+  export TTS_BACKEND
+  exec "$PY" scripts/bake_tts.py --upstream "http://127.0.0.1:$TTS_UPSTREAM_PORT" \
+    --cache-dir "$TTS_CACHE_DIR" "$@"
 }
 
 robot_up() {
@@ -1489,6 +1586,7 @@ case "$cmd" in
   warmup)
     export TTS_BACKEND
     exec "$PY" scripts/warmup.py "$@" ;;
+  bake)  run_bake "$@" ;;
   measure)
     export TTS_BACKEND
     sub="${1:-}"; [ $# -gt 0 ] && shift

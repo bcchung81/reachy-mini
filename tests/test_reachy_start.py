@@ -775,3 +775,95 @@ def test_문서의_실기_주소_예시는_사회자_4_도슨트_5다():
         assert "192.168.0.4" in text and "192.168.0.5" in text, name
     offline = (ROOT / "docs/two-robot-offline-test.md").read_text(encoding="utf-8")
     assert "\n./reachy.sh start --robot\n" in offline
+
+
+# ── TTS 결과 캐시 프록시 배선(2026-09-25) ───────────────────────────────────
+#
+# CrispASR 는 안쪽 포트에 loopback 으로만, 로봇이 부르는 주소(:8099)에는 캐시 프록시가 선다.
+# 진짜 서버를 띄우지 않도록 nohup·대기·헬스체크를 가짜로 바꾸고 **무엇을 어디에 띄우려 했는지**를 본다.
+
+_TTS_FAKES = r'''
+TTS_PID_FILE="$LOG_DIR/tts.pid"; TTS_PROXY_PID_FILE="$LOG_DIR/tts-proxy.pid"
+CRISPASR="$LOG_DIR/crispasr"; TTS_MODEL="$LOG_DIR/m.gguf"; TTS_CODEC="$LOG_DIR/c.gguf"
+touch "$CRISPASR" "$TTS_MODEL" "$TTS_CODEC"; chmod +x "$CRISPASR"
+TTS_BACKEND=qwen
+resolve_tts_voice() { TTS_VOICE=serena; }
+ensure_crispasr()   { return 0; }
+start_crispasr()    { echo "crispasr $1 $2" >> "$CALLS"; }
+nohup()             { echo "nohup $*" >> "$CALLS"; }
+kill_pidfile()      { echo "kill $2" >> "$CALLS"; }
+tts_cache_status()  { echo "cache_status" >> "$CALLS"; }
+'''
+
+
+def test_TTS_는_안쪽_loopback_CrispASR_와_바깥_캐시_프록시로_뜬다(tmp_path):
+    r = _source(_TTS_FAKES + r'''
+up()       { return 1; }                       # 아무것도 안 떠 있다
+wait_for() { echo "wait $1" >> "$CALLS"; return 0; }
+BIND_HOST=0.0.0.0
+start_tts; echo "backend=$TTS_BACKEND"
+''', tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert calls[0] == "crispasr 127.0.0.1 8098", calls        # 안쪽은 loopback 만
+    assert calls[1] == "wait http://127.0.0.1:8098/health"
+    proxy = [c for c in calls if c.startswith("nohup ")]
+    assert len(proxy) == 1 and "tts_cache_proxy.py --host 0.0.0.0 --port 8099" in proxy[0], proxy
+    assert "--upstream http://127.0.0.1:8098" in proxy[0]
+    # 가짜 nohup 은 `&` 로 백그라운드에서 돌아 기록 순서가 대기와 엇갈릴 수 있다 — 선후는 안 본다.
+    assert "wait http://localhost:8099/health" in calls
+    assert calls.index("wait http://localhost:8099/health") > calls.index("wait http://127.0.0.1:8098/health")
+    assert "backend=qwen" in r.stdout
+
+
+def test_프록시가_못_뜨면_소리_내고_CrispASR_를_예전처럼_직접_띄운다(tmp_path):
+    r = _source(_TTS_FAKES + r'''
+up()       { return 1; }
+wait_for() { echo "wait $1" >> "$CALLS"; case "$1" in *8099*) [ -f "$LOG_DIR/second" ] && return 0; touch "$LOG_DIR/second"; return 1 ;; esac; return 0; }
+BIND_HOST=0.0.0.0
+start_tts; echo "backend=$TTS_BACKEND"
+''', tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert "kill TTS 캐시 프록시" in calls and "kill TTS 서버" in calls
+    assert calls.index("crispasr 0.0.0.0 8099") > calls.index("kill TTS 서버")   # 직결로 물러난다
+    assert "캐시 프록시가 뜨지 않았다" in r.stdout
+    assert "backend=qwen" in r.stdout                                            # 시연은 계속
+
+
+def test_예전_구성으로_떠_있는_TTS_는_캐시_없이_돈다고_경고한다(tmp_path):
+    r = _source(_TTS_FAKES + r'''
+up()                    { return 0; }
+already_up_binds_right() { return 0; }
+curl()                  { echo '{"status": "ok"}'; }
+start_tts
+''', tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "캐시 프록시 없이 떠 있다" in r.stdout
+    assert "cache_status" not in _calls(tmp_path)
+
+
+def test_프록시로_떠_있으면_캐시_현황을_보여_준다(tmp_path):
+    r = _source(_TTS_FAKES + r'''
+up()                    { return 0; }
+already_up_binds_right() { return 0; }
+curl()                  { echo '{"status": "ok", "proxy": "tts-cache"}'; }
+start_tts
+''', tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "캐시 프록시 없이" not in r.stdout
+    assert _calls(tmp_path) == ["cache_status"]
+
+
+def test_stop_은_캐시_프록시도_내린다(tmp_path):
+    r = _source(r'''
+TTS_PROXY_PID_FILE="$LOG_DIR/tts-proxy.pid"
+kill_pidfile() { echo "kill $2" >> "$CALLS"; }
+sweep()        { echo "sweep $1" >> "$CALLS"; }
+LLAMACTL=true
+stop_all >/dev/null
+''', tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert "kill TTS 캐시 프록시" in calls
+    assert "sweep tts_cache_proxy.py" in calls
