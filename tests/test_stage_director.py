@@ -3621,3 +3621,19 @@ def test_단독_답에도_쉬운_수준이면_참고_사실을_덧붙인다():
     brief = h.gen_calls[-1][0]
     assert "참고 사실(어른 관람객용 자료): 일반: 마르코니가" in brief
     assert "위 금지 규칙을 지키며 중고등 관람객에게 맞는 쉬운 말로 바꿔 말한다." in brief
+
+
+def test_방금_멈춘_발화의_늦은_종료_보고는_유령이_아니라_정상으로_적는다():
+    """실기 스택 재검증(2026-09-25): `a`·`e` 마다 "유령 … 버린다" 경고가 찍혀 진짜 유령이 묻혔다. 버리는 것은 같다."""
+    h = Harness()
+    h.d.start()
+    seq = h.seq_of("c1")
+    h.d.abort()
+    h.warnings.clear()
+    h.d.on_speaking_ended("mc", "c1", seq)
+    assert h.warnings == [
+        "[mc] 멈춘 발화의 늦은 speaking_ended('c1', seq=%d) — 버린다(정상: 중단 뒤에 오는 보고다)" % seq
+    ]
+    assert h.d.state is State.IDLE                               # 버렸다 — 다음 턴을 깨우지 않는다
+    h.d.on_speaking_ended("docent", "c1:docent", 999)           # 정체 모를 보고는 여전히 유령
+    assert "유령 speaking_ended" in h.warnings[-1]

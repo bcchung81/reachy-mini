@@ -427,6 +427,8 @@ class Director:
         # 비상정지라 이어서 "이 큐 다시" 로 돌아온다. 상태기계(IDLE/발화/듣기)로는 이 구분이 안 된다:
         # 중단 뒤도, 공연 전도, 공연 끝도 전부 IDLE 이다.
         self._show_running = False
+        # 마지막으로 멈춘 발화 (역할, 큐 id, seq) — 그 발화의 늦은 보고를 "유령" 이 아닌 정상으로 적는다(`_warn_ghost`).
+        self._last_aborted: tuple[str, str | None, int] | None = None
         # 역할 → 그 로봇 앱이 hello 로 알린 능력(`caps`, 예: {"react", "gaze"}). **끊기면 지운다**
         # (`on_disconnect`) — 안 지우면 연출을 아는 앱이 나가고 모르는 앱이 다시 붙어도
         # 옛 능력이 남아 감독이 그 앱이 모르는 시선·반응을 보낸다(앱은 경고하고 버린다).
@@ -661,7 +663,16 @@ class Director:
                 self._react_at = self._now() + plan[3]
 
     def _warn_ghost(self, kind: str, role: str, cue_id: str, seq: int | None) -> None:
-        """유령 보고를 **소리 내서** 버린다 — 두 종류의 경고문이 따로 놀지 않게 한 곳에."""
+        """유령 보고를 **소리 내서** 버린다 — 두 종류의 경고문이 따로 놀지 않게 한 곳에.
+
+        **방금 멈춘 발화의 늦은 보고는 정상이라고 적는다**(2026-09-25 실기 스택 재검증). 운영자가 `a`·`e`·모드 전환으로
+        멈출 때마다 로봇이 그 발화의 `speaking_ended` 를 뒤늦게 보내, 대시보드 로그에 "유령 … 버린다" 경고가 매번
+        찍혔다 — 정상 동작이 경고 수를 올리면 진짜 유령(타임아웃 뒤의 진짜 보고 등)이 그 안에 묻힌다. 버리는 것은 같다
+        (리뷰 A2 — 그 보고가 다음 턴을 깨우면 두 로봇이 동시에 말한다). 문구만 가른다.
+        """
+        if (role, cue_id, seq) == self._last_aborted:
+            self._warn(f"[{role}] 멈춘 발화의 늦은 {kind}({cue_id!r}, seq={seq}) — 버린다(정상: 중단 뒤에 오는 보고다)")
+            return
         self._warn(
             f"[{role}] 유령 {kind}({cue_id!r}, seq={seq}) — 지금 말하는 것은 "
             f"{self._machine.speaking_role}/{self._machine.cue_id!r}/seq={self._machine.seq} 다. 버린다"
@@ -1527,6 +1538,9 @@ class Director:
         self._deadline = None
         self._react_plan = None
         self._react_at = None
+        # 멈추는 발화를 기억한다 — 그 발화의 늦은 보고는 유령이 아니라 정상이다(`_warn_ghost`).
+        if self._machine.speaking_role is not None:
+            self._last_aborted = (self._machine.speaking_role, self._machine.cue_id, self._machine.seq)
         self._emit(self._machine.abort())
 
     # ── 내부 ──────────────────────────────────────────────────────

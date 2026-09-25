@@ -220,7 +220,8 @@ def test_r_로_다시_시작한_뒤_중단된_발화의_늦은_종료_보고는_
     n_before = len(h.says())
     h.d.on_speaking_ended("mc", "c1", old_seq)     # 중단된 발화의 늦은 보고
     assert len(h.says()) == n_before, "유령 종료로 도슨트가 시작됐다"
-    assert any("유령" in w for w in h.warnings)
+    # 버리되 로그에는 남는다 — 방금 멈춘 발화의 보고라 "유령" 이 아닌 정상으로 적힌다(2026-09-25).
+    assert any("멈춘 발화의 늦은 speaking_ended" in w for w in h.warnings), h.warnings
     h.ended("mc", "c1")                              # 진짜 보고
     assert h.says()[-1][0] == "docent"
 

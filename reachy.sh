@@ -1302,7 +1302,7 @@ start_director() {  # bind port dashboard_url target
   say_step "무대감독 + 대시보드 — 이 터미널이 콘솔이다"
   start_open_dashboard "$3"
   echo "   ${c_ok}로봇이 붙으면 아래에 '붙었다' 가 뜬다. 그 뒤 s(또는 대시보드의 시작)로 시작한다.${c_off}"
-  echo "   ${c_dim}s 시작 · n 다음 · p 이전 · a 비상정지 · r 재시작 · q 종료(이 실행이 띄운 것도 함께 내린다)${c_off}"
+  echo "   ${c_dim}s 공연 시작 · e 공연 종료(첫 큐로) · n 다음 · p 이전 · a 비상정지 · r 이 큐 다시 · q 무대감독 끄기(이 실행이 띄운 것도 함께 내린다)${c_off}"
   echo "   ${c_dim}감독 출력은 $START_DIRECTOR_LOG 에도 남는다 (./reachy.sh logs)${c_off}"
   echo
   # 무한정 쌓이지 않게 — 2MB 넘으면 한 세대만 남기고 넘긴다(app.log 와 같다)
