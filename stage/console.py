@@ -13,6 +13,7 @@ HELP = """
   a  즉시 중단   |  ?  도움말        |  q  종료
   g <큐id>  그 큐로 이동
   l <수준>  관람객 수준 바꾸기(다음 큐부터)
+  w <초|끄기>  질문 창 침묵 대기 시간(3~60초, 지금 창에도 적용)
   m <모드>  운영 모드 바꾸기(podcast/solo)
   z <mc|docent>  대기모드 켜고 끄기
   c <mc|docent>  카메라 스트림 켜고 끄기
@@ -122,6 +123,10 @@ def dispatch(director: Director, cmd: str, out, camera=None) -> None:
         # 문구는 `Director.set_level` 한 곳에만 둔다(`g` 와 같은 이유). 대시보드가
         # 명령을 `.lower()` 해도 한글 수준 이름은 그대로다.
         director.set_level(cmd[2:].strip())
+    elif cmd.startswith("w "):
+        # 질문 창의 침묵 대기 시간(3~60초 또는 끄기). 먼저 멈추지 않는다 — 진행을 바꾸는 명령이 아니라
+        # 기다리는 길이만 바꾼다. 검증·경고 문구는 `Director.set_question_wait` 한 곳에만 둔다.
+        director.set_question_wait(cmd[2:].strip())
     elif cmd.startswith("m "):
         # 운영 모드(podcast/solo). **여기서 먼저 멈추지 않는다** — 말하던 것을 멈추는 일은
         # 전환이 받아들여졌을 때만 감독이 락 안에서 한다. 여기서 `abort()` 하면 거절될

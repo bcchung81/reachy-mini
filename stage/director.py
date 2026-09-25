@@ -83,6 +83,13 @@ GENERATE_GRACE_S = 8.0
 # 그건 회복이 안 된다(사람이 무안해서 다시 입을 열지 않는다). 길면 정적이
 # 흐를 뿐이고 운영자가 콘솔 `n` 으로 즉시 넘긴다.
 QUESTION_WAIT_S = 8.0
+# **운영자가 시연 중에 바꾼다**(2026-09-25, 콘솔·대시보드 `w <초|끄기>`). 단체마다 질문이 나오는
+# 속도가 달라서 8초 고정이 맞지 않았다. 범위를 둔다 — 3초 미만이면 관람객이 입을 떼기 전에 넘어가고
+# (회복이 안 되는 쪽), 60초를 넘으면 정적이 길어진다. `끄기`(None)는 자동 진행을 멈추고 운영자가
+# `n` 으로 넘긴다 — 질문이 많은 단체용. 기동 때 값은 `REACHY_QUESTION_WAIT_S`(`stage/__main__.py`).
+QUESTION_WAIT_MIN_S = 3
+QUESTION_WAIT_MAX_S = 60
+_QUESTION_WAIT_OFF = ("끄기", "off", "0", "없음")
 
 # 듣는 쪽 반응(`react`)을 상대 발화의 어디쯤에서 낼지 — 추정 길이(`len/CHARS_PER_SEC`)
 # 에 대한 비율. 말이 시작되자마자 놀라면 내용을 듣기 전에 반응하는 꼴이고, 끝에 붙이면
@@ -277,6 +284,11 @@ class Director:
         # 사람이 로봇이 먹통이 된 줄 안다 — 게다가 진짜 타임아웃 복구가
         # 관람객 침묵에 밀려 안 돈다.
         self._question_deadline: float | None = None
+        # 침묵 대기 시간(초, None 이면 자동 진행 끔)과 지금 질문 창이 열린 시각. 창이 열린 시각을
+        # 따로 두는 이유: 운영자가 **도는 중에** 대기 시간을 바꾸면 이미 지난 시간을 빼고 새 값으로
+        # 이어 세야 한다(결정 2026-09-25) — 기한만 들고 있으면 언제 열렸는지 모른다.
+        self._question_wait_s: float | None = QUESTION_WAIT_S
+        self._question_opened_at: float | None = None
         # 방금 보낸 `say` 에 준 시간 예산. `speaking_started` 가 오면 그 시점을
         # 기준으로 데드라인을 다시 건다 — `__init__` 아래 on_speaking_started
         # 참고.
@@ -549,6 +561,9 @@ class Director:
             # 상태를 안 바꾼다. 그때 기한이 살아 있으면 8초 뒤 같은 경고가
             # 한 번 더 찍힌다 — 상태 검사에만 기대면 이런 자리가 조용히 는다.
             self._question_deadline = None
+            # 창이 닫혔다 — 연 시각도 지운다. 남겨 두면 그 뒤(질문 답 생성 대기처럼 상태가 LISTENING 인
+            # 틈)에 대기 시간을 바꿀 때 옛 창의 시각으로 기한이 걸려 섹션이 건너뛰어진다.
+            self._question_opened_at = None
             if is_advance(text):
                 # 관람객이 넘겨 달라고 **말했다** — 마지막 큐라 못 넘기면 알려준다.
                 self._next_locked(quiet_if_last=False)
@@ -627,6 +642,9 @@ class Director:
             # (콘솔 `r` 뒤의 중단된 발화 등)가 관람객을 기다리는 기한을 꺼
             # 버리면, 그 뒤로는 침묵이 아무리 길어도 자동 진행이 안 된다.
             self._question_deadline = None
+            # 창이 닫혔다 — 연 시각도 지운다. 남겨 두면 그 뒤(질문 답 생성 대기처럼 상태가 LISTENING 인
+            # 틈)에 대기 시간을 바꿀 때 옛 창의 시각으로 기한이 걸려 섹션이 건너뛰어진다.
+            self._question_opened_at = None
 
             # 큐 id 만으로 "사회자 몫이 방금 끝났다" 를 판정한다 — role 은
             # 안 본다. 도슨트 몫에는 아래에서 `f"{cue.id}:docent"` 처럼 구분되는
@@ -729,7 +747,7 @@ class Director:
                 # 없는 큐의 해설이 끝났다). 마이크가 열리는 바로 그 자리에서
                 # 침묵 기한을 건다 — 말로 물어 놓고 아무도 답하지 않으면
                 # `tick()` 이 다음 섹션으로 넘긴다.
-                self._question_deadline = self._now() + QUESTION_WAIT_S
+                self._arm_question_deadline()
                 self._emit(cmds)
                 return
 
@@ -894,6 +912,65 @@ class Director:
                     f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
                 )
             self._begin_cue(self._sheet.seek(i))
+
+    def set_question_wait(self, value) -> None:
+        """침묵 대기 시간을 바꾼다 — 콘솔·대시보드 `w <초|끄기>`(2026-09-25).
+
+        **지금 도는 대기에도 적용한다**(결정): 질문 창이 열려 있으면 이미 지난 시간을 빼고 새 값으로
+        이어 센다. 새 값이 이미 지난 시간보다 짧으면 다음 tick 에 넘어간다(운영자가 줄였다는 뜻이다).
+        꺼져 있다가 켜면 **지금부터** 센다 — 꺼 둔 동안의 침묵을 소급하면 켜자마자 넘어간다.
+
+        결과는 경고 한 줄로 남긴다(`set_level` 과 같은 이유 — 누가 언제 바꿨나를 로그로 따라간다).
+        범위 밖·모르는 값은 경고만 하고 바꾸지 않는다(오타 한 번이 시연을 흔들면 안 된다).
+        """
+        with self._lock:
+            raw = str(value).strip().lower()
+            if raw.endswith("초"):
+                raw = raw[:-1].strip()
+            if raw in _QUESTION_WAIT_OFF:
+                new = None
+            else:
+                try:
+                    new = float(int(raw))
+                except ValueError:
+                    new = -1.0
+                if not QUESTION_WAIT_MIN_S <= new <= QUESTION_WAIT_MAX_S:
+                    self._warn(
+                        f"침묵 대기 시간은 {QUESTION_WAIT_MIN_S}~{QUESTION_WAIT_MAX_S}초 또는 '끄기'다 — "
+                        f"{value!r} 는 받지 않는다"
+                    )
+                    return
+            old = self._question_wait_s
+            if new == old:
+                self._warn(f"침묵 대기 시간은 이미 {self._wait_label(new)}이다 — 바꿀 것이 없다")
+                return
+            self._question_wait_s = new
+            listening = self._machine.state is State.LISTENING
+            if listening and self._question_opened_at is not None:
+                if new is None:
+                    self._question_deadline = None
+                elif old is None:
+                    self._question_opened_at = self._now()
+                    self._question_deadline = self._question_opened_at + new
+                else:
+                    self._question_deadline = self._question_opened_at + new
+            self._warn(
+                f"침묵 대기 시간 {self._wait_label(old)} → {self._wait_label(new)}"
+                + ("(지금 질문 창에도 적용)" if listening and self._question_opened_at is not None else "")
+                + (" — 자동 진행을 껐다. 운영자가 n 으로 넘긴다" if new is None else "")
+            )
+
+    @staticmethod
+    def _wait_label(v: float | None) -> str:
+        return "끄기" if v is None else f"{v:g}초"
+
+    def _arm_question_deadline(self) -> None:
+        """질문 창을 연다 — 연 시각을 남기고, 자동 진행이 켜져 있으면 기한을 건다.
+        **`self._lock` 을 쥔 채** 부른다. 기한을 거는 자리는 이 함수 하나다."""
+        self._question_opened_at = self._now()
+        self._question_deadline = (
+            None if self._question_wait_s is None else self._question_opened_at + self._question_wait_s
+        )
 
     def set_level(self, name: str) -> None:
         """관람객 수준을 바꾼다 — **다음 큐부터**(콘솔·대시보드 `l <수준>`).
@@ -1113,7 +1190,8 @@ class Director:
                 "state": self._machine.state.value,
                 "speaking_role": self._machine.speaking_role,
                 "question_wait_s": wait,
-                "question_wait_total_s": QUESTION_WAIT_S,
+                # 운영자가 바꾼 대기 시간(None 이면 자동 진행 끔) — 대시보드가 막대와 값을 그린다.
+                "question_wait_total_s": self._question_wait_s,
                 "connected": sorted(self._connected),
                 "solo_role": self.solo_role,
                 "standby": sorted(self._standby),
@@ -1164,7 +1242,7 @@ class Director:
                 self._deadline = None
                 # 복구로 열린 마이크도 관람객 창구다 — 기한을 안 걸면 복구된
                 # 뒤로는 침묵이 아무리 길어도 운영자가 `n` 을 칠 때까지 정적이다.
-                self._question_deadline = self._now() + QUESTION_WAIT_S
+                self._arm_question_deadline()
                 self._emit(self._machine.force_listening(self._who("mc")))
             elif (
                 self._question_deadline is not None
@@ -1184,6 +1262,9 @@ class Director:
                 # 상태를 안 바꾸고 돌아오므로, 안 끄면 이 갈래가 tick 마다
                 # (0.5초에 한 번) 시연이 끝날 때까지 계속 돈다.
                 self._question_deadline = None
+                # 창이 닫혔다 — 연 시각도 지운다. 남겨 두면 그 뒤(질문 답 생성 대기처럼 상태가 LISTENING 인
+                # 틈)에 대기 시간을 바꿀 때 옛 창의 시각으로 기한이 걸려 섹션이 건너뛰어진다.
+                self._question_opened_at = None
                 self._next_locked(quiet_if_last=True)
 
     def abort(self) -> None:

@@ -2958,3 +2958,83 @@ def test_공연이_침묵으로_끝나면_마이크를_닫고_첫_큐로_되감�
     h.clear()
     h.d.start()                                           # 다음 관람객 — 첫 큐부터
     assert h.says() == [("mc", "사회자 첫 대사")]
+
+
+# ── 침묵 대기 시간 설정(2026-09-25, 콘솔·대시보드 `w <초|끄기>`) ──────────────
+
+
+def test_침묵_대기_시간을_바꾸면_다음_질문_창이_그_값을_쓴다():
+    h = Harness(after=("", ""))
+    h.d.set_question_wait("12")
+    assert h.d.snapshot()["question_wait_total_s"] == 12
+    _듣는_중까지(h)
+    h.clock.t += 11.9
+    h.d.tick()
+    assert h.d.state is State.LISTENING               # 8초가 아니라 12초를 기다린다
+    h.clock.t += 0.2
+    h.d.tick()
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_도는_중에_늘리면_지난_시간을_빼고_이어_센다():
+    h = Harness(after=("", ""))
+    _듣는_중까지(h)                                    # 창이 t=0 에 열렸다(8초)
+    h.clock.t = 6.0
+    h.d.set_question_wait("20")
+    assert any("지금 질문 창에도 적용" in w for w in h.warnings), h.warnings
+    assert h.d.snapshot()["question_wait_s"] == pytest.approx(14.0)
+    h.clock.t = 19.9
+    h.d.tick()
+    assert h.d.state is State.LISTENING
+    h.clock.t = 20.1
+    h.d.tick()
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_도는_중에_이미_지난_시간보다_짧게_줄이면_바로_넘어간다():
+    h = Harness(after=("", ""))
+    _듣는_중까지(h)
+    h.clock.t = 6.0
+    h.d.set_question_wait("3")
+    h.d.tick()
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+def test_끄면_자동_진행하지_않고_켜면_지금부터_센다():
+    h = Harness(after=("", ""))
+    _듣는_중까지(h)
+    h.d.set_question_wait("끄기")
+    assert h.d.snapshot()["question_wait_total_s"] is None
+    h.clock.t = 100.0
+    h.d.tick()
+    assert h.d.state is State.LISTENING               # 꺼져 있으면 영영 기다린다
+    h.d.set_question_wait("5")                        # 꺼 둔 100초를 소급하지 않는다
+    h.d.tick()
+    assert h.d.state is State.LISTENING
+    h.clock.t = 105.1
+    h.d.tick()
+    assert h.says()[-1] == ("mc", "사회자 둘째 대사")
+
+
+@pytest.mark.parametrize("bad", ["2", "61", "열초", "", "-5"])
+def test_범위_밖이나_모르는_대기_시간은_경고만_하고_바꾸지_않는다(bad):
+    h = Harness()
+    h.d.set_question_wait(bad)
+    assert h.d.snapshot()["question_wait_total_s"] == 8
+    assert any("3~60초" in w for w in h.warnings), h.warnings
+
+
+def test_닫힌_질문_창의_시각으로_기한을_걸지_않는다():
+    """질문 답을 생성하며 기다리는 동안에도 상태는 LISTENING 이다 — 그때 대기 시간을 바꿔도 옛 창의
+    시각으로 기한이 걸리면 안 된다(섹션이 통째로 건너뛰어진다)."""
+    import threading as _t
+
+    gate = _t.Event()
+    h = Harness(generate=lambda role, brief, history: (gate.wait(3), "답이에요.")[1])
+    _듣는_중까지(h)
+    h.d.on_heard("마르코니가 누구예요")               # 창이 닫힌다(관람객이 말했다)
+    h.clock.t = 50.0
+    h.d.set_question_wait("5")
+    h.d.tick()
+    assert h.d.snapshot()["cue_id"] == "c1", "닫힌 창의 시각으로 기한이 걸려 다음 큐로 넘어갔다"
+    gate.set()

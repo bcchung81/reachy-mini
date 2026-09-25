@@ -360,6 +360,11 @@ def main() -> None:
         on_level_change=generate.select,
         warn=warn, hub=hub,
     )
+    # 질문 창 침묵 대기 시간 — 기동 때 값(시연 중에는 콘솔·대시보드 `w` 로 바꾼다). 감독의 공개
+    # 메서드를 그대로 부른다: 범위 검사·경고 문구가 한 곳에 있고, 틀린 값은 경고하고 기본(8초)으로 돈다.
+    wait_env = os.environ.get("REACHY_QUESTION_WAIT_S", "").strip()
+    if wait_env:
+        server.director.set_question_wait(wait_env)
     stop = threading.Event()
     threading.Thread(
         target=server.tick_forever, args=(0.5, stop.is_set), daemon=True

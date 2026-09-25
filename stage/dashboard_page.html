@@ -256,6 +256,12 @@
   .auto-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
   .auto-track { height: 6px; border-radius: 3px; background: #242B35; }
   #auto-bar { width: 0%; height: 6px; border-radius: 3px; background: #F0A64A; transition: width 0.3s linear; }
+  .wait-set { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9AA3AE; }
+  .wait-label { margin-right: auto; }
+  #wait-value { min-width: 3.2em; text-align: center; color: #E8EAED; font-weight: 700; }
+  .wait-btn { border: 1px solid #3A4350; border-radius: 4px; background: #1C222B; color: #E8EAED;
+              min-width: 28px; height: 26px; padding: 0 8px; font-size: 13px; }
+  .wait-btn:disabled { opacity: 0.4; }
 
   /* 로그는 200줄까지 쌓인다 — 런다운과 같은 이유로 `contain: size` 로 내용 길이를 패널 높이에서
      떼고, 창에 맞춘 높이 안에서 세로 스크롤한다(최신 줄로 자동 스크롤은 appendLog 가 한다). */
@@ -357,6 +363,14 @@
       <div class="auto">
         <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
         <div class="auto-track"><div id="auto-bar"></div></div>
+        <!-- 침묵 대기 시간(콘솔 `w <초|끄기>` 와 같은 명령). 3~60초, 1초 단위. 끄면 운영자가 다음을 누른다. -->
+        <div class="wait-set">
+          <span class="wait-label">침묵 대기</span>
+          <button type="button" id="wait-dec" class="wait-btn" aria-label="침묵 대기 1초 줄이기">−</button>
+          <span id="wait-value">8초</span>
+          <button type="button" id="wait-inc" class="wait-btn" aria-label="침묵 대기 1초 늘리기">+</button>
+          <button type="button" id="wait-off" class="wait-btn wait-toggle">끄기</button>
+        </div>
       </div>
     </section>
   </div>
@@ -1180,9 +1194,38 @@ function setTally(role, connected, rejected, speakingRole) {
   tag.textContent = TALLY_TEXT[state];
 }
 
+// ── 침묵 대기 시간 설정 — 감독의 snapshot.question_wait_total_s 가 정본(null 이면 자동 진행 끔) ──
+var WAIT_MIN = 3, WAIT_MAX = 60, WAIT_DEFAULT = 8;
+var waitNow = WAIT_DEFAULT;      // 지금 값(null = 끔)
+var waitLastOn = WAIT_DEFAULT;   // 껐다 켤 때 되돌아갈 값
+function renderWaitSetting(total) {
+  if (total === undefined) return;             // 구버전 감독 — 건드리지 않는다
+  waitNow = typeof total === "number" ? Math.round(total) : null;
+  if (waitNow !== null) waitLastOn = waitNow;
+  document.getElementById("wait-value").textContent = waitNow === null ? "끔" : waitNow + "초";
+  document.getElementById("wait-off").textContent = waitNow === null ? "켜기" : "끄기";
+  document.getElementById("wait-dec").disabled = waitNow === null || waitNow <= WAIT_MIN;
+  document.getElementById("wait-inc").disabled = waitNow === null || waitNow >= WAIT_MAX;
+}
+document.getElementById("wait-dec").addEventListener("click", function () {
+  if (waitNow !== null && waitNow > WAIT_MIN) sendCmd("w " + (waitNow - 1));
+});
+document.getElementById("wait-inc").addEventListener("click", function () {
+  if (waitNow !== null && waitNow < WAIT_MAX) sendCmd("w " + (waitNow + 1));
+});
+document.getElementById("wait-off").addEventListener("click", function () {
+  sendCmd(waitNow === null ? "w " + waitLastOn : "w 끄기");
+});
+
 function applyAutoProgress(wait, total) {
   var text = document.getElementById("auto-text");
   var bar = document.getElementById("auto-bar");
+  renderWaitSetting(total);
+  if (total === null) {
+    text.textContent = "꺼짐 — 다음을 눌러 넘긴다";
+    bar.style.width = "0%";
+    return;
+  }
   if (wait === null || wait === undefined) {
     text.textContent = "대기 전";
     bar.style.width = "0%";

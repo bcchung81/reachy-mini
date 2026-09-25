@@ -377,3 +377,12 @@ def test_카메라_라벨과_탤리는_영상_위에_쌓인다():
     assert re.search(r"z-index\s*:\s*[1-9]\d*", label_rule), label_rule
     tally_rule = _css_rule(src, ".tally")
     assert re.search(r"z-index\s*:\s*[1-9]\d*", tally_rule), tally_rule
+
+
+def test_침묵_대기_버튼이_w_명령을_보내고_끔을_그린다():
+    html = PAGE.read_text(encoding="utf-8")
+    for el in ('id="wait-dec"', 'id="wait-inc"', 'id="wait-off"', 'id="wait-value"'):
+        assert el in html, el
+    assert 'sendCmd("w " + (waitNow - 1))' in html and 'sendCmd("w " + (waitNow + 1))' in html
+    assert '"w 끄기"' in html
+    assert "question_wait_total_s" in html

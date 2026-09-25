@@ -466,3 +466,14 @@ def test_콘솔_조작은_로그에_한_줄씩_남는다():
     h.run(["s", "a", "?", "", "n"])
     ops = [m for m in h.out if m.startswith("[운영]")]
     assert ops == ["[운영] 콘솔 s", "[운영] 콘솔 a", "[운영] 콘솔 n"], ops
+
+
+def test_w_는_침묵_대기_시간을_바꾸고_진행을_멈추지_않는다():
+    import stage.console as console
+
+    h = Harness()
+    h.d.start()
+    h.sent.clear()
+    console.dispatch(h.d, "w 15", out=h.out.append)
+    assert h.d.snapshot()["question_wait_total_s"] == 15
+    assert not any(t == "abort" for _, t, _ in h.sent)   # 말하던 것을 끊지 않는다

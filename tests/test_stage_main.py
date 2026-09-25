@@ -922,3 +922,35 @@ def test_생성문의_글_표기는_말로_바꾸고_알린다(기록LLM):
     generate = stage_main.build_generate(_레벨, warn=경고.append)
     assert generate("docent", "지시", []) == "달은 왕복 2에서 3초예요.약 30퍼센트 추정예요."
     assert any("글 표기를 말로 바꿨다" in w for w in 경고), 경고
+
+
+def test_기동_환경변수의_침묵_대기_시간이_감독에_닿는다(monkeypatch):
+    """`REACHY_QUESTION_WAIT_S` — 감독의 공개 메서드로 넣어 범위 검사·경고가 한 곳에 있다."""
+    monkeypatch.setenv("REACHY_QUESTION_WAIT_S", "15")
+    monkeypatch.setattr(stage_main, "build_generate", _가짜_생성기_공장([]))
+    got: list = []
+
+    class _멈춤(Exception):
+        pass
+
+    class _가짜감독:
+        def set_question_wait(self, v):
+            got.append(v)
+
+    class _가짜서버:
+        director = _가짜감독()
+        camera = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def tick_forever(self, *a):
+            pass
+
+        def serve(self, *a):
+            raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", _가짜서버)
+    with pytest.raises(_멈춤):
+        stage_main.main()
+    assert got == ["15"]
