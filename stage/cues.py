@@ -564,6 +564,31 @@ class CueSheet:
             raise CueError("큐시트가 비어 있다")
         self._cues = list(cues)
         self._i = 0
+        # 코스(2026-09-25) — 이 id 들만 순서대로 돈다(`advance`·`back`·`reset`). None 이면 전체. 운영자의 직접
+        # 이동(`seek`)은 코스 밖 큐도 간다 — 그 뒤 `advance` 는 코스의 다음 큐로 돌아온다.
+        self._course: frozenset[str] | None = None
+
+    def set_course(self, ids) -> None:
+        """코스를 바꾼다. **커서는 옮기지 않는다** — 지금 큐는 끝까지(결정 2026-09-25). 모르는 id 는 CueError."""
+        if ids is None:
+            self._course = None
+            return
+        ids = list(ids)
+        if not ids:
+            raise CueError("코스가 비어 있다")
+        known = {c.id for c in self._cues}
+        unknown = [x for x in ids if x not in known]
+        if unknown:
+            raise CueError(f"코스에 큐시트에 없는 큐가 있다: {unknown}")
+        self._course = frozenset(ids)
+
+    def in_course(self, i: int) -> bool:
+        return self._course is None or self._cues[i].id in self._course
+
+    def course_position(self) -> tuple[int | None, int]:
+        """(지금 큐가 코스에서 몇 번째인가 — 코스 밖이면 None, 코스의 큐 수). 번호는 1부터."""
+        members = [j for j in range(len(self._cues)) if self.in_course(j)]
+        return (members.index(self._i) + 1 if self._i in members else None), len(members)
 
     @property
     def index(self) -> int:
@@ -571,17 +596,19 @@ class CueSheet:
 
     @property
     def done(self) -> bool:
-        return self._i >= len(self._cues) - 1
+        """코스에 이 뒤로 남은 큐가 없다."""
+        return not any(self.in_course(j) for j in range(self._i + 1, len(self._cues)))
 
     def current(self) -> Cue:
         return self._cues[self._i]
 
     def advance(self) -> Cue | None:
-        """다음 큐로 간다. 마지막이면 None 을 주고 커서는 머문다."""
-        if self._i >= len(self._cues) - 1:
-            return None
-        self._i += 1
-        return self._cues[self._i]
+        """코스의 다음 큐로 간다. 마지막이면 None 을 주고 커서는 머문다."""
+        for j in range(self._i + 1, len(self._cues)):
+            if self.in_course(j):
+                self._i = j
+                return self._cues[j]
+        return None
 
     def back(self) -> Cue | None:
         """이전 큐로 되돌린다. 첫 큐면 None 을 주고 커서는 머문다.
@@ -590,13 +617,15 @@ class CueSheet:
         되돌리는 유일한 길이다. 커서를 앞으로만 옮길 수 있으면 수동
         오버라이드가 반쪽이다 — 넘어가 버린 섹션을 되찾을 방법이 없었다.
         """
-        if self._i <= 0:
-            return None
-        self._i -= 1
-        return self._cues[self._i]
+        for j in range(self._i - 1, -1, -1):
+            if self.in_course(j):
+                self._i = j
+                return self._cues[j]
+        return None
 
     def reset(self) -> None:
-        self._i = 0
+        """코스의 첫 큐로 되감는다."""
+        self._i = next(j for j in range(len(self._cues)) if self.in_course(j))
 
     def cues(self) -> tuple[Cue, ...]:
         """전체 큐 — 대시보드 런다운이 목록을 그린다. 바깥에서 못 바꾸게 튜플로 준다."""

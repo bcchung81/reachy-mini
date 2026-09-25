@@ -31,6 +31,7 @@ class StageServer:
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
         camera: CameraRelay | None = None,
+        courses: dict[str, tuple[str, ...] | None] | None = None,
     ) -> None:
         self._warn = warn
         self._conns: dict[str, object] = {}
@@ -57,6 +58,9 @@ class StageServer:
             docent_min_chars=docent_min_chars,
             level_min_chars=level_min_chars,
             on_level_change=on_level_change,
+            # 코스(2026-09-25)도 같은 길이다 — 여기서 안 넘기면 감독은 늘 "전체" 하나로 돈다.
+            # `tests/test_stage_main.py::test_main_에서_감독까지_코스가_이어진다` 가 지킨다.
+            courses=courses,
         )
         self.camera = camera if camera is not None else CameraRelay(
             send_robot=self._send_raw, warn=warn,

@@ -14,6 +14,7 @@ HELP = """
   a  즉시 중단(지금 큐에 머문다)  |  ?  도움말  |  q  무대감독 끄기
   g <큐id>  그 큐로 이동
   l <수준>  관람객 수준 바꾸기(바로 — 다음 발화부터)
+  k <코스>  코스 바꾸기(전체/하이라이트 — 바로, 다음 큐부터 새 코스)
   w <초|끄기>  질문 창 침묵 대기 시간(3~60초, 지금 창에도 적용)
   m <모드>  운영 모드 바꾸기(podcast/solo)
   z <mc|docent>  대기모드 켜고 끄기
@@ -128,6 +129,10 @@ def dispatch(director: Director, cmd: str, out, camera=None) -> None:
         # 도슨트 설명·질문 답부터 새 수준이다. 이름 검증·경고 문구는 `Director.set_level` 한
         # 곳에만 둔다(`g` 와 같은 이유). 대시보드가 명령을 `.lower()` 해도 한글 수준 이름은 그대로다.
         director.set_level(cmd[2:].strip())
+    elif cmd.startswith("k "):
+        # 코스(전체/하이라이트) — **바로**, 지금 큐는 끝까지(2026-09-25). 먼저 멈추지 않는다(`l` 과 같은 이유 —
+        # 진행 중인 말을 끊는 명령이 아니다). 이름 검증·경고 문구는 `Director.set_course` 한 곳에만 둔다.
+        director.set_course(cmd[2:].strip())
     elif cmd.startswith("w "):
         # 질문 창의 침묵 대기 시간(3~60초 또는 끄기). 먼저 멈추지 않는다 — 진행을 바꾸는 명령이 아니라
         # 기다리는 길이만 바꾼다. 검증·경고 문구는 `Director.set_question_wait` 한 곳에만 둔다.

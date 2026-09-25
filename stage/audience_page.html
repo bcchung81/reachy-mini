@@ -165,8 +165,15 @@ function renderSnapshot(s) {
     title.textContent = "사회자와 이야기해요";
   } else if (s.show_running) {
     var cue = cues[s.cue_id];
-    var n = typeof s.cue_index === "number" ? s.cue_index + 1 : null;
-    pos.textContent = n && s.cue_count ? n + " / " + s.cue_count : "";
+    // 코스 안 위치(2026-09-25) — 하이라이트면 "3 / 9". 코스 밖 큐(운영자가 직접 옮긴 것)면 번호를 비운다.
+    // 구버전 서버(course_position 없음)는 큐시트 번호로 그린다.
+    var cp = Array.isArray(s.course_position) ? s.course_position : null;
+    if (cp) {
+      pos.textContent = cp[0] ? cp[0] + " / " + cp[1] : "";
+    } else {
+      var n = typeof s.cue_index === "number" ? s.cue_index + 1 : null;
+      pos.textContent = n && s.cue_count ? n + " / " + s.cue_count : "";
+    }
     title.textContent = cue ? cue.title : "";
   } else {
     pos.textContent = "";

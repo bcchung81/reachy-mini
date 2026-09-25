@@ -20,6 +20,7 @@ import pathlib
 import sys
 import threading
 
+from stage.courses import CourseError, load_courses
 from stage.cues import CueSheet, load_cues
 from stage.dashboard import DEFAULT_HOST as DASH_HOST
 from stage.dashboard import DEFAULT_PORT as DASH_PORT
@@ -381,13 +382,26 @@ def main() -> None:
     # 하한(`level_min_chars`). 하나라도 빠지면 반쪽 전환이다 — 훅이 빠지면 감독이
     # 기동에서 막고, 목록이 빠지면 "모르는 수준" 경고만 뜬다.
     generate = LevelSwitch(levels, level, build_generate, warn=warn)
+    # 코스(2026-09-25, `data/courses.yaml`). **틀린 코스 파일은 공연을 막지 않는다** — 크게 경고하고 "전체" 하나로
+    # 돈다(대시보드 이력에도 남는다). 레벨 파일과 달리 코스는 공연이 성립하는 조건이 아니고, 다른 큐시트
+    # (`REACHY_CUES_PATH`)로 띄우면 기본 코스 파일의 큐 id 가 맞지 않는 것이 정상이다(테스트가 잡았다).
+    cues = load_cues()
+    try:
+        courses = load_courses(cues)
+    except CourseError as exc:
+        warn(f"⚠ 코스 파일을 쓸 수 없다({exc}) — 전체 코스 하나로 돈다")
+        courses = None
+    else:
+        print(f"코스: {', '.join(f'{n}({len(ids) if ids else len(cues)}큐)' for n, ids in courses.items())}"
+              f" — 기동 코스 {next(iter(courses))}")
     server = StageServer(
-        CueSheet(load_cues()), generate, expect_units=expect,
+        CueSheet(cues), generate, expect_units=expect,
         level_name=level.name,
         docent_min_chars=level.min_chars,
         level_min_chars={name: lv.min_chars for name, lv in levels.items()},
         on_level_change=generate.select,
         warn=warn, hub=hub,
+        courses=courses,
     )
     # 질문 창 침묵 대기 시간 — 기동 때 값(시연 중에는 콘솔·대시보드 `w` 로 바꾼다). 감독의 공개
     # 메서드를 그대로 부른다: 범위 검사·경고 문구가 한 곳에 있고, 틀린 값은 경고하고 기본(8초)으로 돈다.

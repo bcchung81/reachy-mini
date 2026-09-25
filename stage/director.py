@@ -237,6 +237,7 @@ class Director:
         docent_min_chars: int = MIN_CHARS,
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
+        courses: dict[str, tuple[str, ...] | None] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -290,6 +291,14 @@ class Director:
         # 목록이 하나뿐이면 `set_level` 이 바꿀 수 있는 것이 없으므로(모르는 이름이거나
         # "이미 그 수준") 아무것도 안 하는 훅이 불릴 일도 없다.
         self._on_level_change = on_level_change or (lambda name: None)
+
+        # **코스**(2026-09-25, `data/courses.yaml` → `stage/courses.py::load_courses`). 이름 → 큐 id 들(None 이면
+        # 전체), dict 순서가 곧 페이지 버튼 순서이고 첫째가 기동 코스다. 안 받으면 "전체" 하나 — 기존 호출부·
+        # 테스트는 지금처럼 큐시트 전체를 돈다. 코스의 첫 큐가 큐시트 첫 큐가 아닐 수 있어 커서를 그 자리로 맞춘다.
+        self._courses = dict(courses) if courses else {"전체": None}
+        self._course_name = next(iter(self._courses))
+        self._sheet.set_course(self._courses[self._course_name])
+        self._sheet.reset()
 
         # ~~포인트 답 분량 배선 3종(`level_point_min_chars`·`level_point_max`·
         # `level_point_min_sentences`)~~ — 고정 대본 전환으로 없앴다. 턴 설명을
@@ -1115,6 +1124,45 @@ class Director:
             None if self._question_wait_s is None else self._question_opened_at + self._question_wait_s
         )
 
+    def set_course(self, name: str) -> None:
+        """코스를 바꾼다 — **바로**(콘솔·대시보드 `k <코스>`, 결정 2026-09-25).
+
+        지금 큐는 끝까지 말하고, '다음'(관람객·`n`·침묵 자동 진행)부터 새 코스의 다음 큐로 간다. 지금 큐가 새 코스에
+        없어도 멈추지 않는다 — 끝나면 새 코스에서 그 뒤의 첫 큐로 간다. 공연 전(진행 중이 아님)이면 커서를 새 코스의
+        첫 큐로 맞춘다 — [공연 시작] 도 그 자리에서 시작한다(`start_show` 가 되감는다).
+
+        결과는 경고 한 줄(바꿈·이미·모름) — 수준·모드와 같은 이유(누가 언제 바꿨나를 로그로 따라간다). 단독에서도
+        받는다(수준과 같다 — 팟캐스트로 돌아왔을 때 쓸 코스를 미리 고른다).
+        """
+        with self._lock:
+            if name not in self._courses:
+                self._warn(
+                    f"모르는 코스다: {name!r} — 바꾸지 않는다(고를 수 있는 것: {', '.join(self._courses)})"
+                )
+                return
+            if name == self._course_name:
+                self._warn(f"코스는 이미 {name} 이다 — 바꿀 것이 없다")
+                return
+            old, self._course_name = self._course_name, name
+            self._sheet.set_course(self._courses[name])
+            _, n = self._sheet.course_position()
+            if not self._show_running and self._machine.state is State.IDLE:
+                self._sheet.reset()
+                self._warn(f"코스 {old} → {name}({n}큐) — 공연 시작은 이 코스의 첫 큐부터")
+                return
+            here = "" if self._sheet.in_course(self._sheet.index) else (
+                f" 지금 큐({self._sheet.current().id})는 새 코스에 없다 — 끝나면 새 코스의 다음 큐로 간다."
+            )
+            self._warn(f"코스 {old} → {name}({n}큐) — 바로 적용(지금 큐는 끝까지, 다음 큐부터 새 코스).{here}")
+
+    def course_names(self) -> list[str]:
+        """고를 수 있는 코스 — 페이지 버튼 순서(courses.yaml 순서). 기동 뒤 안 바뀌므로 락이 필요 없다."""
+        return list(self._courses)
+
+    def course_ids(self, name: str) -> tuple[str, ...] | None:
+        """그 코스의 큐 id 들 — 전체면 None. 모르는 이름은 KeyError(교육자료가 부른 쪽에서 가른다)."""
+        return self._courses[name]
+
     def set_level(self, name: str) -> None:
         """관람객 수준을 바꾼다 — **즉시, 다음 발화부터**(콘솔·대시보드 `l <수준>`).
 
@@ -1367,6 +1415,14 @@ class Director:
                 "cue_count": len(self._sheet.cues()),
                 # 제어판 토글의 근거 — true 면 [공연 종료], false 면 [공연 시작](2026-09-25).
                 "show_running": self._show_running,
+                # 코스(2026-09-25) — 이름, 지금 큐의 코스 안 위치 [몇 번째(코스 밖이면 None), 코스 큐 수], 코스의 큐
+                # id 들(전체면 None). 런다운이 코스 밖 큐를 흐리게 그리고 보조 화면이 "3 / 9" 를 그린다.
+                "course": self._course_name,
+                "course_position": list(self._sheet.course_position()),
+                "course_cue_ids": (
+                    None if self._courses[self._course_name] is None
+                    else list(self._courses[self._course_name])
+                ),
                 "state": self._machine.state.value,
                 "speaking_role": self._machine.speaking_role,
                 "question_wait_s": wait,

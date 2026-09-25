@@ -113,7 +113,8 @@ class 가짜감독:
     def snapshot(self):
         return {"cue_id": "01-intro", "cue_index": 0, "cue_count": 2, "state": "listening",
                 "speaking_role": None, "question_wait_s": 5.2, "question_wait_total_s": 8.0,
-                "mode": "podcast", "show_running": True, "level": "초등",
+                "mode": "podcast", "show_running": True, "level": "초등", "course": "전체",
+                "course_position": [1, 2], "course_cue_ids": None,
                 "connected": ["mc", "docent"], "rejected": ["docent"], "standby": [], "solo_role": None}
 
     def cue_list(self):
@@ -127,6 +128,12 @@ class 가짜감독:
 
     def mode_names(self):
         return ["podcast", "solo"]
+
+    def course_names(self):
+        return ["전체", "첫큐만"]
+
+    def course_ids(self, name):
+        return {"전체": None, "첫큐만": ("01-intro",)}[name]
 
     def abort(self):
         self.calls.append("abort")
@@ -280,3 +287,25 @@ def test_보조_화면은_textContent_로만_쓰고_외부_리소스를_안_부�
 def test_보조_화면은_공연이_끝나면_이전_관람객의_자막을_치운다():
     src = _page()
     assert 'if (!solo && s.show_running === false && s.state === "idle" && lines.length) {' in src
+
+
+
+def test_교육자료는_코스의_큐만_싣고_수준_링크가_코스를_유지한다(aud):
+    """"오늘 들은 이야기" 다 — 하이라이트면 하이라이트 큐만. 수준을 바꿔도 코스가 풀리지 않는다."""
+    _, _, body = _get(aud["port"], "/handout?level=%EC%B4%88%EB%93%B1&course=%EC%B2%AB%ED%81%90%EB%A7%8C")
+    assert body.count("<section ") == 1 and "체험관 개요" in body
+    assert "코스: <strong>첫큐만</strong>" in body
+    assert "&course=%EC%B2%AB%ED%81%90%EB%A7%8C" in body                            # 수준 링크가 코스를 유지
+    _, _, body = _get(aud["port"], "/handout?level=%EC%B4%88%EB%93%B1")
+    assert body.count("<section ") == 2                                               # 스냅샷의 코스(전체)
+
+
+def test_모르는_코스의_교육자료는_400으로_거절한다(aud):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _get(aud["port"], "/handout?course=%EB%B0%98%EB%82%98%EC%A0%88")                # 반나절
+    assert e.value.code == 400
+
+
+def test_보조_화면은_코스_안_위치로_번호를_그린다():
+    src = _page()
+    assert 'pos.textContent = cp[0] ? cp[0] + " / " + cp[1] : "";' in src

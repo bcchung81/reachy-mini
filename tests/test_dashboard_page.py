@@ -435,3 +435,19 @@ def test_단독에서는_자동_진행_영역이_없음을_알린다():
     assert "applyAutoProgress(s.question_wait_s, s.question_wait_total_s, s.mode);" in src
     body = _media_block(src, "function applyAutoProgress(wait, total, mode)")
     assert 'text.textContent = "단독 — 자동 진행 없음";' in body
+
+
+def test_코스_버튼은_콘솔과_같은_k_명령을_보내고_hello_courses_로_짓는다():
+    """코스(2026-09-25) — 버튼 이름과 감독이 받는 이름이 한 곳(hello.courses)에서 나온다. 코스가 하나면 숨긴다."""
+    src = _src()
+    assert 'sendCmd("k " + name)' in src
+    assert "buildCourseControl(msg.courses);" in src
+    body = _media_block(src, "function buildCourseControl(courses)")
+    assert "courses.length > 1" in body
+
+
+def test_런다운은_코스_밖_큐를_흐리게_제외로_그린다():
+    """진행이 밟지 않는 큐를 운영자가 한눈에 — 지금 큐는 코스 밖이어도(직접 이동) 지금 큐로 그린다."""
+    body = _media_block(_src(), "function refreshRundownTags()")
+    assert 'if (i !== idx && !inCourse(row.id)) {' in body
+    assert 'row.tag.textContent = "제외";' in body

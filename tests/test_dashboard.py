@@ -55,6 +55,10 @@ class 가짜감독:
         # `test_hello_의_모드_목록은_감독이_준_것을_그대로_싣는다` 가 다른 값으로 본다.
         return ["podcast", "solo"]
 
+    def course_names(self):
+        # 코스(2026-09-25) — 실제 파일("전체"·"하이라이트")과 **다른** 이름을 준다: hello 가 감독이 준 것을 그대로 싣는지.
+        return ["모두", "짧게"]
+
     def abort(self):
         self.calls.append("abort")
 
@@ -143,6 +147,7 @@ def test_접속하면_큐목록_이력_스냅샷을_한번에_준다(dash):
         assert m["cues"] == [{"id": "07-maritime", "title": "해상무선통신", "topic": "타이타닉"}]
         assert m["levels"] == ["초등", "전문가"]      # 헤더의 수준 버튼(감독이 준 순서 그대로)
         assert m["modes"] == ["podcast", "solo"]     # 헤더의 운영 모드 토글
+        assert m["courses"] == ["모두", "짧게"]        # 헤더의 코스 토글(감독이 준 것 그대로)
         assert m["snapshot"]["cue_id"] == "07-maritime"
         assert [e["text"] for e in m["history"] if e["kind"] == "warn"] == ["먼저 난 경고"]
 

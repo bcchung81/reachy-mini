@@ -39,7 +39,7 @@ PAGE = pathlib.Path(__file__).with_name("dashboard_page.html")
 AUDIENCE_PAGE = pathlib.Path(__file__).with_name("audience_page.html")
 AUDIENCE_SNAPSHOT_KEYS = (
     "cue_index", "cue_id", "cue_count", "state", "speaking_role",
-    "question_wait_s", "question_wait_total_s", "mode", "show_running",
+    "question_wait_s", "question_wait_total_s", "mode", "show_running", "course_position",
 )
 
 
@@ -117,16 +117,27 @@ class DashboardServer:
         모르는 수준은 400 — 조용히 기본 수준으로 바꿔 주면 초등 자료를 달라고 한 교사가 일반 자료를 받는다.
         """
         levels = self._director.level_names()
-        asked = (urllib.parse.parse_qs(query).get("level") or [""])[0].strip()
-        if not asked:
+        courses = self._director.course_names()
+        q = urllib.parse.parse_qs(query)
+        asked = (q.get("level") or [""])[0].strip()
+        course = (q.get("course") or [""])[0].strip()
+        if not asked or not course:
             snap = self._safe_snapshot() or {}
-            asked = snap.get("level") or (levels[0] if levels else "")
+            asked = asked or snap.get("level") or (levels[0] if levels else "")
+            course = course or snap.get("course") or (courses[0] if courses else "")
         if asked not in levels:
             return connection.respond(
                 400, f"모르는 관람객 수준이다: {asked!r} — 고를 수 있는 것: {', '.join(levels)}"
             )
+        if course not in courses:
+            return connection.respond(
+                400, f"모르는 코스다: {course!r} — 고를 수 있는 것: {', '.join(courses)}"
+            )
+        # 코스의 큐만 — "오늘 들은 이야기" 다. 전체면(None) 큐시트 전체.
+        ids = self._director.course_ids(course)
+        cues = tuple(c for c in self._director.cues() if ids is None or c.id in ids)
         try:
-            body = render_handout(self._director.cues(), asked, levels)
+            body = render_handout(cues, asked, levels, course=course if len(courses) > 1 else None)
         except Exception as exc:  # noqa: BLE001 — 교육자료가 깨져도 서버는 산다. 원인은 터미널에
             self._warn(f"교육자료를 만들지 못했다({type(exc).__name__}: {exc})")
             return connection.respond(500, "handout failed")
@@ -188,6 +199,8 @@ class DashboardServer:
                 # 헤더의 운영 모드 토글(podcast/solo 순서). 수준과 같은 이유로 감독에게
                 # 받는다 — 버튼 이름과 `m <모드>` 가 받아들이는 이름이 한 곳에서 나온다.
                 "modes": self._director.mode_names(),
+                # 코스(전체/하이라이트, 2026-09-25) — courses.yaml 순서. 버튼 이름과 `k <코스>` 가 받는 이름이 한 곳에서.
+                "courses": self._director.course_names(),
                 "history": self._hub.history(),
                 "snapshot": self._safe_snapshot(),
             }))
