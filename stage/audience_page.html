@@ -1,0 +1,211 @@
+<!doctype html>
+<!--
+  관람객 보조 화면(2026-09-25) — 결정 문서 「관람객용 보조 화면」: 대시보드 재사용, 읽기 전용, 큰 글씨.
+  보여 주는 것: 자막(누가·무엇을), 지금 섹션(번호/전체·제목), 질문 안내(질문 받는 동안 "지금 말씀해 주세요"와 남은 초).
+
+  **읽기 전용이다 — 이 페이지는 아무것도 보내지 않는다.** 소켓도 조정실(`/ws`)이 아닌 `/ws/audience` 에 붙고,
+  서버는 그 소켓으로 받은 것을 버린다(`stage/dashboard.py::_audience`). 소켓은 로봇 대사와 스냅샷의 허용 칸만
+  흘린다 — 경고·거부 사유·관람객 STT 원문은 관람객 화면에 나가지 않는다.
+
+  모든 글자는 textContent 로만 넣는다(대사는 LLM 생성 답일 수 있다). 외부 리소스를 부르지 않는다(시연장은 오프라인).
+  한 줄 주제(`topic`)는 보여 주지 않는다 — 일부가 저작 메모다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전파체험관 이야기</title>
+<style>
+  :root {
+    --bg: #0B0E13; --panel: #131821; --text: #F2F4F7; --dim: #8C96A3; --line: #242B35;
+    --mc: #4CC3D9; --docent: #F0A64A; --listen: #3FB950;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 20px; padding: 2.2vh 3vw 1.6vh;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: clamp(16px, 1.6vw, 28px); font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
+  .section { margin-left: auto; text-align: right; min-width: 0; }
+  .section .pos { color: var(--dim); font-size: clamp(14px, 1.3vw, 22px); font-variant-numeric: tabular-nums; }
+  .section .title {
+    font-size: clamp(20px, 2.2vw, 40px); font-weight: 700; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 62vw; display: block;
+  }
+  main {
+    flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2.4vh;
+    padding: 3vh 5vw 4vh; min-height: 0;
+  }
+  .line { display: flex; gap: 1.4vw; align-items: flex-start; }
+  .line[hidden] { display: none; }
+  .who {
+    flex: 0 0 auto; font-weight: 800; border-radius: 999px; padding: 0.25em 0.8em; margin-top: 0.15em;
+    font-size: clamp(16px, 1.6vw, 28px); color: #05070A; background: var(--dim);
+  }
+  .who.mc { background: var(--mc); }
+  .who.docent { background: var(--docent); }
+  .text { line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
+  #prev .text { font-size: clamp(20px, 2.2vw, 38px); color: var(--dim); }
+  #prev .who { opacity: 0.55; }
+  #cur .text { font-size: clamp(28px, 3.4vw, 60px); font-weight: 600; }
+  body.paused #cur .text { color: var(--dim); }
+  footer {
+    min-height: 12vh; display: flex; align-items: center; justify-content: center; gap: 1.6vw;
+    border-top: 1px solid var(--line); background: var(--panel); padding: 1.6vh 3vw; text-align: center;
+  }
+  #status { font-size: clamp(20px, 2.4vw, 42px); font-weight: 700; }
+  #status.listen { color: var(--listen); }
+  #hint { font-size: clamp(14px, 1.4vw, 24px); color: var(--dim); }
+  #count {
+    font-variant-numeric: tabular-nums; font-size: clamp(20px, 2.4vw, 42px); font-weight: 800;
+    color: #05070A; background: var(--listen); border-radius: 12px; padding: 0.1em 0.5em; min-width: 2.4em;
+  }
+  #count[hidden], #hint[hidden] { display: none; }
+  .conn { position: fixed; right: 12px; bottom: 10px; font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body class="paused">
+<header>
+  <span class="brand">전파체험관 이야기</span>
+  <div class="section">
+    <span id="pos" class="pos"></span>
+    <span id="title" class="title">곧 시작합니다</span>
+  </div>
+</header>
+<main aria-live="polite">
+  <div id="prev" class="line" hidden><span class="who"></span><span class="text"></span></div>
+  <div id="cur" class="line" hidden><span class="who"></span><span class="text"></span></div>
+</main>
+<footer>
+  <span id="status">곧 해설이 시작됩니다</span>
+  <span id="count" hidden></span>
+  <span id="hint" hidden></span>
+</footer>
+<span id="conn" class="conn"></span>
+<script>
+"use strict";
+var WHO = { mc: "사회자", docent: "도슨트" };
+var RECONNECT_MS = 1500;
+var cues = {};          // id -> {title, index}
+var lines = [];         // 최근 대사 둘 — {role, text}
+var snap = null;
+
+function wsUrl() {
+  return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/audience";
+}
+
+function connect() {
+  var ws = new WebSocket(wsUrl());
+  ws.addEventListener("open", function () { document.getElementById("conn").textContent = ""; });
+  ws.addEventListener("close", function () {
+    document.getElementById("conn").textContent = "다시 연결하는 중…";
+    setTimeout(connect, RECONNECT_MS);
+  });
+  ws.addEventListener("error", function () { ws.close(); });
+  ws.addEventListener("message", function (ev) {
+    var msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    handle(msg);
+  });
+  // 이 페이지는 보내지 않는다 — 읽기 전용이다(서버도 받은 것을 버린다).
+}
+
+function handle(msg) {
+  if (!msg || typeof msg.kind !== "string") return;
+  if (msg.kind === "hello") {
+    cues = {};
+    (Array.isArray(msg.cues) ? msg.cues : []).forEach(function (c, i) {
+      cues[c.id] = { title: c.title, index: i };
+    });
+    lines = [];
+    if (msg.say) pushLine(msg.say);
+    if (msg.snapshot) renderSnapshot(msg.snapshot);
+    renderLines();
+  } else if (msg.kind === "say") {
+    pushLine(msg);
+    renderLines();
+  } else if (msg.kind === "snapshot") {
+    renderSnapshot(msg);
+  }
+}
+
+function pushLine(m) {
+  if (typeof m.text !== "string" || !m.text) return;
+  lines.push({ role: m.role, text: m.text });
+  if (lines.length > 2) lines.shift();
+}
+
+function fillLine(el, line) {
+  if (!line) { el.hidden = true; return; }
+  var who = el.querySelector(".who");
+  who.textContent = WHO[line.role] || "";
+  who.className = "who " + (WHO[line.role] ? line.role : "");
+  el.querySelector(".text").textContent = line.text;
+  el.hidden = false;
+}
+
+function renderLines() {
+  fillLine(document.getElementById("cur"), lines[lines.length - 1]);
+  fillLine(document.getElementById("prev"), lines.length > 1 ? lines[0] : null);
+}
+
+function renderSnapshot(s) {
+  snap = s;
+  var solo = s.mode === "solo";
+  var pos = document.getElementById("pos");
+  var title = document.getElementById("title");
+  if (solo) {
+    pos.textContent = "";
+    title.textContent = "사회자와 이야기해요";
+  } else if (s.show_running) {
+    var cue = cues[s.cue_id];
+    var n = typeof s.cue_index === "number" ? s.cue_index + 1 : null;
+    pos.textContent = n && s.cue_count ? n + " / " + s.cue_count : "";
+    title.textContent = cue ? cue.title : "";
+  } else {
+    pos.textContent = "";
+    title.textContent = "곧 시작합니다";
+  }
+  var listening = s.state === "listening";
+  document.body.classList.toggle("paused", !listening && s.state === "idle");
+  if (!solo && s.show_running === false && s.state === "idle" && lines.length) {
+    // 공연이 끝나 쉬는 동안에는 이전 관람객의 마지막 자막을 치운다 — 다음 그룹이 "와 주셔서 고맙습니다" 를
+    // 보고 서 있지 않게. 단독은 공연이 아니라 대화라 남긴다.
+    lines = [];
+    renderLines();
+  }
+  var status = document.getElementById("status");
+  var count = document.getElementById("count");
+  var hint = document.getElementById("hint");
+  status.className = listening ? "listen" : "";
+  count.hidden = true;
+  hint.hidden = true;
+  if (solo) {
+    status.textContent = listening ? "사회자에게 무엇이든 물어보세요" : "";
+    return;
+  }
+  if (listening) {
+    status.textContent = "궁금한 것이 있으면 지금 말씀해 주세요";
+    if (typeof s.question_wait_s === "number") {
+      count.textContent = Math.ceil(s.question_wait_s) + "초";
+      count.hidden = false;
+    }
+    hint.textContent = "넘어가려면 '다음'이라고 말해 주세요";
+    hint.hidden = false;
+  } else if (s.state === "idle") {
+    status.textContent = s.show_running ? "잠시 쉬어 갑니다" : "곧 해설이 시작됩니다";
+  } else {
+    status.textContent = "";
+  }
+}
+
+connect();
+</script>
+</body>
+</html>

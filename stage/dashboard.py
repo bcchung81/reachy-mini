@@ -27,22 +27,49 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.server import serve as _ws_serve
 
 from stage.console import dispatch as console_dispatch
+from stage.handout import render_handout
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8778
 SNAPSHOT_INTERVAL_S = 0.5
 PAGE = pathlib.Path(__file__).with_name("dashboard_page.html")
+# 관람객 보조 화면(2026-09-25, 결정 문서 「관람객용 보조 화면」). **읽기 전용** — 전용 소켓 `/ws/audience` 로
+# 로봇 대사와 스냅샷의 아래 칸만 흘린다. 조정실 소켓(`/ws`)의 hello 에는 경고·거부 사유·관람객 STT 원문이 담긴
+# 이벤트 이력이 실리고 스냅샷에는 연결·거부·카메라 상태가 있다 — 관람객 화면에 나갈 것이 아니다.
+AUDIENCE_PAGE = pathlib.Path(__file__).with_name("audience_page.html")
+AUDIENCE_SNAPSHOT_KEYS = (
+    "cue_index", "cue_id", "cue_count", "state", "speaking_role",
+    "question_wait_s", "question_wait_total_s", "mode", "show_running",
+)
+
+
+def audience_event(ev: dict) -> dict | None:
+    """허브 이벤트 → 보조 화면 이벤트. **로봇에게 실제로 보낸 대사(`sent`/`say`)만** 넘긴다 — 나머지는 None."""
+    if ev.get("kind") != "sent" or ev.get("type") != "say":
+        return None
+    fields = ev.get("fields") or {}
+    return {"kind": "say", "role": ev.get("role"), "text": str(fields.get("text", "")),
+            "cue_id": str(fields.get("cue_id", ""))}
+
+
+def audience_snapshot(snap: dict | None) -> dict | None:
+    """스냅샷에서 보조 화면이 쓰는 칸만 — 허용 목록이다(새 칸이 생겨도 저절로 새지 않는다)."""
+    if snap is None:
+        return None
+    return {k: snap.get(k) for k in AUDIENCE_SNAPSHOT_KEYS}
 
 
 class DashboardServer:
     def __init__(self, hub, director, camera=None, dispatch: Callable = console_dispatch,
                  page: pathlib.Path = PAGE, interval: float = SNAPSHOT_INTERVAL_S,
-                 warn: Callable[[str], None] = print) -> None:
+                 warn: Callable[[str], None] = print,
+                 audience_page: pathlib.Path = AUDIENCE_PAGE) -> None:
         self._hub = hub
         self._director = director
         self._camera = camera
         self._dispatch = dispatch
         self._page = page
+        self._audience_page = audience_page
         self._interval = interval
         self._warn = warn
 
@@ -50,25 +77,60 @@ class DashboardServer:
     def process_request(self, connection, request):
         # `request.path` 는 쿼리까지 담는다 — 그대로 비교하면 캐시 무효화용 `/?v=2` 나
         # `/ws?x=1` 이 404 가 된다. 경로만 본다.
-        path = urllib.parse.urlsplit(request.path).path
-        if path == "/ws":
+        split = urllib.parse.urlsplit(request.path)
+        path = split.path
+        if path in ("/ws", "/ws/audience"):
+            # 보조 화면 소켓도 같은 검사를 거친다 — 읽기 전용이라 조작 위험은 없지만, 다른 사이트가 시연 내용을
+            # 몰래 받아 가는 창구가 될 이유도 없다.
             return self._check_origin(connection, request)  # None 이면 핸드셰이크로 넘어간다
         if path in ("/", "/index.html"):
-            try:
-                # 요청마다 읽는다 — 시연 중 페이지 파일을 고쳐도 새로고침으로 반영되고,
-                # 파일이 사라졌으면 기동 때가 아니라 그 요청에서 500 + 경고로 드러난다.
-                body = self._page.read_text(encoding="utf-8")
-            except OSError as exc:
-                self._warn(f"대시보드 페이지를 못 읽었다({self._page}: {exc})")
-                return connection.respond(500, "dashboard page missing")
-            resp = connection.respond(200, body)
-            # `respond` 는 text/plain 을 붙인다 — 브라우저가 HTML 로 그리게 바꾼다.
-            # `Headers` 는 같은 이름을 여러 번 담을 수 있어 대입만 하면 text/plain 이
-            # 남은 채 한 줄이 더 붙는다 — 지우고 넣는다.
-            del resp.headers["Content-Type"]
-            resp.headers["Content-Type"] = "text/html; charset=utf-8"
-            return resp
+            return self._serve_file(connection, self._page, "대시보드 페이지")
+        if path == "/audience":
+            return self._serve_file(connection, self._audience_page, "관람객 보조 화면")
+        if path == "/handout":
+            return self._serve_handout(connection, split.query)
         return connection.respond(404, "not found")
+
+    @staticmethod
+    def _html(connection, status: int, body: str):
+        resp = connection.respond(status, body)
+        # `respond` 는 text/plain 을 붙인다 — 브라우저가 HTML 로 그리게 바꾼다.
+        # `Headers` 는 같은 이름을 여러 번 담을 수 있어 대입만 하면 text/plain 이
+        # 남은 채 한 줄이 더 붙는다 — 지우고 넣는다.
+        del resp.headers["Content-Type"]
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        return resp
+
+    def _serve_file(self, connection, page: pathlib.Path, what: str):
+        try:
+            # 요청마다 읽는다 — 시연 중 페이지 파일을 고쳐도 새로고침으로 반영되고,
+            # 파일이 사라졌으면 기동 때가 아니라 그 요청에서 500 + 경고로 드러난다.
+            body = page.read_text(encoding="utf-8")
+        except OSError as exc:
+            self._warn(f"{what}를 못 읽었다({page}: {exc})")
+            return connection.respond(500, "page missing")
+        return self._html(connection, 200, body)
+
+    def _serve_handout(self, connection, query: str):
+        """수준별 교육자료(`stage/handout.py`). 수준은 `?level=`, 없으면 **지금 감독의 수준**이다.
+
+        모르는 수준은 400 — 조용히 기본 수준으로 바꿔 주면 초등 자료를 달라고 한 교사가 일반 자료를 받는다.
+        """
+        levels = self._director.level_names()
+        asked = (urllib.parse.parse_qs(query).get("level") or [""])[0].strip()
+        if not asked:
+            snap = self._safe_snapshot() or {}
+            asked = snap.get("level") or (levels[0] if levels else "")
+        if asked not in levels:
+            return connection.respond(
+                400, f"모르는 관람객 수준이다: {asked!r} — 고를 수 있는 것: {', '.join(levels)}"
+            )
+        try:
+            body = render_handout(self._director.cues(), asked, levels)
+        except Exception as exc:  # noqa: BLE001 — 교육자료가 깨져도 서버는 산다. 원인은 터미널에
+            self._warn(f"교육자료를 만들지 못했다({type(exc).__name__}: {exc})")
+            return connection.respond(500, "handout failed")
+        return self._html(connection, 200, body)
 
     def _check_origin(self, connection, request):
         """다른 사이트가 연 소켓(CSWSH)을 막는다. 통과면 None, 아니면 403 응답.
@@ -104,6 +166,10 @@ class DashboardServer:
 
     # ── WebSocket ─────────────────────────────────────────────────
     def handler(self, ws) -> None:
+        # 경로로 가른다 — `process_request` 가 `/ws`·`/ws/audience` 만 핸드셰이크로 넘긴다.
+        if urllib.parse.urlsplit(ws.request.path).path == "/ws/audience":
+            self._audience(ws)
+            return
         # **구독을 이력보다 먼저 한다.** 거꾸로면 이력을 읽은 뒤·구독하기 전에 난
         # 이벤트가 어디에도 안 실린다(조용히 빠진다). 이 순서면 그 틈의 이벤트가
         # 이력과 큐 양쪽에 실려 한 번 겹칠 수는 있어도 빠지지는 않는다.
@@ -165,6 +231,39 @@ class DashboardServer:
             if self._camera is not None and viewer is not None:
                 self._camera.remove_viewer(viewer)
 
+    def _audience(self, ws) -> None:
+        """관람객 보조 화면 연결 하나 — **읽기 전용**. 받은 메시지는 버린다(명령은 조정실 `/ws` 에서만).
+
+        조정실 핸들러와 같은 순서(구독 → hello → 펌프)다. hello 에는 이벤트 이력 대신 **마지막 대사 하나**만
+        싣는다 — 새로고침해도 지금 자막이 바로 보이고, 이력 속 경고·STT 원문은 나가지 않는다.
+        """
+        sub = self._hub.subscribe()
+        stop = threading.Event()
+        try:
+            last_say = None
+            for ev in reversed(self._hub.history()):
+                last_say = audience_event(ev)
+                if last_say is not None:
+                    break
+            ws.send(self._dumps({
+                "kind": "hello",
+                "cues": [{"id": c["id"], "title": c["title"]} for c in self._director.cue_list()],
+                "say": last_say,
+                "snapshot": audience_snapshot(self._safe_snapshot()),
+            }))
+            threading.Thread(target=self._pump, args=(ws, sub, stop, True), daemon=True).start()
+            warned = False
+            for _raw in ws:
+                if not warned:
+                    # 관람객 기기에서 명령을 보내려 했을 수 있다 — 조용히 삼키지 않고 한 번 알린다.
+                    self._warn("관람객 보조 화면 소켓은 읽기 전용이다 — 받은 메시지를 버린다(명령은 조정실에서)")
+                    warned = True
+        except ConnectionClosed:
+            pass
+        finally:
+            stop.set()
+            self._hub.unsubscribe(sub)
+
     @staticmethod
     def _deliver_maker(sub):
         def deliver(ev: dict) -> None:
@@ -178,8 +277,11 @@ class DashboardServer:
                 sub.mark_dropped()
         return deliver
 
-    def _pump(self, ws, sub, stop: threading.Event) -> None:
-        """이 연결의 유일한 송신자. 이벤트는 오는 대로, 스냅샷은 `interval` 마다."""
+    def _pump(self, ws, sub, stop: threading.Event, audience: bool = False) -> None:
+        """이 연결의 유일한 송신자. 이벤트는 오는 대로, 스냅샷은 `interval` 마다.
+
+        `audience` 면 관람객 보조 화면용으로 거른다 — 대사(`say`)만, 스냅샷은 허용 칸만.
+        """
         last = 0.0
         dropped_seen = 0
         while not stop.is_set():
@@ -198,11 +300,15 @@ class DashboardServer:
                     f"(이 연결 누적 {dropped}) — 페이지 로그에서 빠졌다. 상태는 다음 스냅샷으로 맞춰진다"
                 )
                 dropped_seen = dropped
+            if audience and ev is not None:
+                ev = audience_event(ev)
             try:
                 if ev is not None:
                     ws.send(self._dumps(ev))
                 if time.monotonic() - last >= self._interval:
                     snap = self._safe_snapshot()
+                    if audience:
+                        snap = audience_snapshot(snap)
                     if snap is not None:
                         ws.send(self._dumps({"kind": "snapshot", **snap}))
                     last = time.monotonic()

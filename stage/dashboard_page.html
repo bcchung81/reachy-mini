@@ -93,6 +93,11 @@
      대기 안내 문구~~ — 2026-09-25 수준 전환이 즉시(다음 발화부터)가 되어
      대기가 없다. 누르면 곧바로 채워진 색이 옮겨 간다. */
   .level-btn.applied { background: #4CC3D9; border-color: #4CC3D9; color: #05070A; }
+  .hdr-link {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; text-decoration: none;
+  }
+  .hdr-link:hover { color: #E8EAED; border-color: #4CC3D9; }
 
   .conn {
     font-size: 12px; font-weight: 600; color: #fff; background: #3A4350;
@@ -280,6 +285,8 @@
      하므로 여기서 숨기지 않는다. */
   @media (max-width: 1180px) {
     .level-caption { display: none; }
+    /* 설정 때 한 번 여는 편의 링크라 좁은 폭에서 먼저 접는다 — 주소는 운영 문서에 있다. */
+    .hdr-link { display: none; }
   }
 
   /* 900px 보다 좁으면(세로 태블릿·휴대폰 가로 등) 왼쪽 열(300 고정) + 오른쪽 열(카메라
@@ -318,6 +325,11 @@
            평문으로 넣는다 — 두 경우 다 id="level" 은 그대로 있다(정적 테스트가 요구). -->
       <span id="level">—</span>
     </span>
+    <!-- 관람객 보조 화면·수준별 교육자료(2026-09-25) — 새 탭. 교육자료 주소의 수준은 renderLevelState 가
+         지금 수준으로 맞춘다. 보조 화면은 운영 노트북의 두 번째 모니터(HDMI)에 띄우는 것이 기본이다
+         (망에 열면 이 조정실도 같이 열린다 — docs/two-robot-offline-test.md). -->
+    <a id="link-audience" class="hdr-link" href="/audience" target="_blank" rel="noopener">관람객 화면 ↗</a>
+    <a id="link-handout" class="hdr-link" href="/handout" target="_blank" rel="noopener">교육자료 ↗</a>
     <span id="conn" class="conn">연결 중…</span>
   </div>
 </header>
@@ -960,6 +972,10 @@ function buildLevelControl(levels) {
 }
 
 function renderLevelState(s) {
+  // 교육자료 링크는 늘 지금 수준으로 연다 — 운영자가 수준을 바꾼 뒤 인쇄하면 그 수준 자료가 나온다.
+  if (s.level) {
+    document.getElementById("link-handout").href = "/handout?level=" + encodeURIComponent(s.level);
+  }
   if (!levelButtonsMode) {
     // 구버전 서버 폴백 — 버튼이 없으니 이름만 보여준다(계약: never throw).
     document.getElementById("level").textContent = s.level || "—";

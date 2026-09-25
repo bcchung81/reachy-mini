@@ -1309,6 +1309,13 @@ class Director:
         self._warn(f"단독 모드에서는 팟캐스트 진행({what})을 하지 않는다 — 먼저 m podcast")
         return True
 
+    def cues(self) -> tuple[Cue, ...]:
+        """큐시트 전체 — 수준별 교육자료(`stage/handout.py`)가 대본을 옮긴다.
+
+        큐시트는 기동 뒤 바뀌지 않으므로(`Cue` 는 불변) 락이 필요 없다(`cue_list` 와 같다).
+        """
+        return self._sheet.cues()
+
     def cue_list(self) -> list[dict]:
         """런다운용 큐 목록. 큐시트는 기동 뒤 바뀌지 않으므로 락이 필요 없다.
 
