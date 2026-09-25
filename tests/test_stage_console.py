@@ -307,7 +307,7 @@ def test_도움말에_l_이_있다():
     누르고 나서 "왜 안 바뀌지" 를 안 한다."""
     h = Harness()
     h.run(["?", "q"])
-    assert any("l <수준>  관람객 수준 바꾸기(다음 큐부터)" in m for m in h.out), h.out
+    assert any("l <수준>  관람객 수준 바꾸기(바로 — 다음 발화부터)" in m for m in h.out), h.out
 
 
 def test_m_은_모드를_감독에_넘긴다():
@@ -372,14 +372,10 @@ def test_단독에서도_a_는_멈춘다():
     assert h.warnings == []
 
 
-def test_l_뒤_r_은_대기_수준을_바로_적용한다():
-    """사용자 결정 — 바로 적용하려면 "이 큐 다시(R)". `r` 은 abort + start 라
-    `_begin_cue` 를 지나므로 같은 큐가 **새 수준의 대본**으로 다시 열린다.
-    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③).
-
-    ~~여는 대사 캐시가 갈리는 것으로 봤다~~ — 캐시가 사라져(고정 대본 전환)
-    수준이 갈리는 곳은 턴 대본이다. 여는 대사는 두 번 다 큐시트 원문이고,
-    그 뒤의 해설이 중고등 → 초등으로 바뀌는지를 본다."""
+def test_l_은_말을_멈추지_않고_이_큐의_남은_설명부터_새_수준이다():
+    """2026-09-25 결정 — 수준은 **바로, 다음 발화부터**. ~~바로 적용하려면 "이 큐 다시(R)"~~.
+    콘솔 `l` 은 `n`·`g` 와 달리 먼저 멈추지 않는다: 지금 문장은 끝까지 가야 한다. 처음 수준은
+    기본값("일반")이 아닌 "중고등"(함정 ③)."""
     def 브리프(수준):
         return {"mc_brief": f"{수준} 진행", "docent_brief": f"{수준} 해설"}
 
@@ -394,12 +390,13 @@ def test_l_뒤_r_은_대기_수준을_바로_적용한다():
         level_min_chars={"초등": 70, "중고등": 120, "일반": 180, "전문가": 260},
         on_level_change=훅.append,
     )
-    h.run(["s", "l 초등", "r", "q"])
-    assert [t for _, t in h.says()] == ["원문 c1", "원문 c1"]
+    h.run(["s", "l 초등", "q"])
+    assert [t for _, t, _ in h.sent].count("abort") == 0        # 멈추지 않는다
+    assert h.says() == [("mc", "원문 c1")]                       # 다시 열지도 않는다
     h.ended("mc", "c1")
     assert h.says()[-1] == ("docent", "초등 설명"), h.says()
     assert 훅 == ["초등"]
-    assert "관람객 수준을 초등(으)로 바꿨다 — c1 부터" in h.warnings, h.warnings
+    assert "관람객 수준 중고등 → 초등 — 바로 적용(지금 문장은 끝까지, 다음 발화부터)" in h.warnings, h.warnings
     assert h.d.snapshot()["level"] == "초등"
 
 

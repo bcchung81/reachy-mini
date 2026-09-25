@@ -224,7 +224,7 @@ class Director:
         # 사회자 몫은 이 값을 쓰지 않는다 — 위 `MIN_CHARS` 주석 참고.
         #
         # ~~기동 때 한 번 정해지고 바뀌지 않는다.~~ 2026-09-21부터 `_level_name` 과
-        # 함께 **큐를 시작할 때** 바뀔 수 있다(`set_level` → `_apply_pending_level`).
+        # 함께 바뀐다 — ~~큐를 시작할 때(`_apply_pending_level`)~~ 2026-09-25부터 **즉시**(`set_level`).
         self._docent_min_chars = docent_min_chars
 
         # **관람객 수준 실시간 전환**(콘솔·대시보드 `l <수준>`). 셋이 한 묶음이다:
@@ -232,7 +232,7 @@ class Director:
         #                        dict 순서가 곧 페이지 버튼 순서다(`level_names`).
         #   `_on_level_change` — 생성기(역할·수준별 페르소나)를 그 수준으로 바꾸는 훅.
         #                        `stage/__main__.py::LevelSwitch.select` 가 온다.
-        #   `_level_pending`   — 다음 큐부터 적용할 이름. 없으면 None.
+        #   ~~`_level_pending` — 다음 큐부터 적용할 이름~~ — 2026-09-25 즉시 적용으로 없앴다.
         #
         # 목록을 안 받으면 **지금 수준 하나만** 아는 감독이다(기존 호출부·테스트 그대로).
         # 수준 프로필 전체가 아니라 이름 → 하한만 받는 이유는 위 `_docent_min_chars`
@@ -255,10 +255,9 @@ class Director:
                 f"지금 관람객 수준 {level_name!r} 이 수준 목록에 없다: "
                 f"{list(self._level_min_chars)}"
             )
-        # 목록이 하나뿐이면 `set_level` 이 대기를 만들 수 없으므로(모르는 이름이거나
+        # 목록이 하나뿐이면 `set_level` 이 바꿀 수 있는 것이 없으므로(모르는 이름이거나
         # "이미 그 수준") 아무것도 안 하는 훅이 불릴 일도 없다.
         self._on_level_change = on_level_change or (lambda name: None)
-        self._level_pending: str | None = None
 
         # ~~포인트 답 분량 배선 3종(`level_point_min_chars`·`level_point_max`·
         # `level_point_min_sentences`)~~ — 고정 대본 전환으로 없앴다. 턴 설명을
@@ -973,19 +972,26 @@ class Director:
         )
 
     def set_level(self, name: str) -> None:
-        """관람객 수준을 바꾼다 — **다음 큐부터**(콘솔·대시보드 `l <수준>`).
+        """관람객 수준을 바꾼다 — **즉시, 다음 발화부터**(콘솔·대시보드 `l <수준>`).
 
-        사용자 결정(2026-09-21): 지금 큐는 원래 수준으로 끝까지 간다. 여기서 바로
-        바꾸면 사회자는 옛 수준 브리프로 연 큐를 도슨트가 새 수준 브리프·페르소나로
-        해설해 한 큐 안에서 수준이 섞인다(해설 폴백·받아치기 예비가 이 큐 도중에도
-        `_level_name` 을 본다). 적용은 `_begin_cue` 한 곳에서만 한다 — 바로 적용하려면
-        운영자가 `r` 을 누른다(= abort + start, 역시 `_begin_cue`).
+        ~~다음 큐부터~~(2026-09-21 결정)를 2026-09-25 에 뒤집었다: 운영자가 수준을 바꾸는 것은 대개
+        관람객을 보고 "지금 너무 어렵다/쉽다" 를 느낀 순간이라, 한 큐(1~3분)를 기다리게 하면 늦다.
+        **말은 끊지 않는다** — 지금 나가는 문장은 끝까지 가고, 이 큐의 남은 도슨트 설명과 질문 답부터
+        새 수준이다. 섞여도 어색하지 않은 이유: 사회자 대사는 수준 공통이고(큐시트 규칙) 수준이 바꾸는
+        것은 도슨트 설명의 난이도뿐이다. 턴 **위치**(몇 번째 설명인가)는 그대로 두고 대본만 새 수준으로
+        다시 고른다 — 턴 구조는 수준과 무관하다(`stage/cues.py::MAX_TURNS`).
 
-        **발화 중에도 거절하지 않는다.** 적용이 다음 큐라 지금 발화를 건드리지 않는다
-        — 콘솔 `n`·`g` 처럼 `abort()` 를 먼저 부를 이유도 없다.
+        **생성기 전환 훅을 먼저 부른다.** 터지면 아무것도 바꾸지 않는다 — 수준 표시·하한·대본은 새
+        것인데 생성기만 옛 것인 반쪽 상태를 만들지 않는다(예전 `_apply_pending_level` 과 같은 규칙).
+        훅은 락 안에서 불린다 — 대입 하나라서 괜찮다(`stage/__main__.py::LevelSwitch.select`).
 
-        결과는 전부 경고 한 줄로 남긴다(바꿈·취소·이미·모름). 운영자 화면(대시보드
-        로그)과 터미널에 같은 줄이 가야 "누가 언제 수준을 바꿨나" 를 로그로 따라간다.
+        **이미 만들고 있는 질문 답은 옛 수준 그대로 나간다** — 생성 스레드가 옛 생성기로 이미 떠났다.
+        "다음 발화부터" 의 뜻이 이것이다(그 답은 이미 시작된 발화로 친다). 그 답의 "너무 짧다" 경고는
+        `_await_pending`(→ `_warn_if_short`)이 락 밖에서 `_docent_min_chars` 를 읽으므로 새 수준 하한으로
+        잴 수 있다 — 틀릴 수 있는 것은 경고 한 줄의 기준뿐이라 받아들인다.
+
+        결과는 전부 경고 한 줄로 남긴다(바꿈·이미·모름·실패). 운영자 화면(대시보드 로그)과 터미널에
+        같은 줄이 가야 "누가 언제 수준을 바꿨나" 를 로그로 따라간다.
         """
         with self._lock:
             if name not in self._level_min_chars:
@@ -997,20 +1003,22 @@ class Director:
                 )
                 return
             if name == self._level_name:
-                if self._level_pending is not None:
-                    # 대시보드에서 적용된 버튼을 다시 누른 것 — "되돌리기" 로 읽는다.
-                    self._warn(
-                        f"관람객 수준 {self._level_name} → {self._level_pending} 대기를 "
-                        f"취소했다 — {self._level_name} 그대로 간다"
-                    )
-                    self._level_pending = None
-                else:
-                    self._warn(f"관람객 수준은 이미 {name} 이다 — 바꿀 것이 없다")
+                self._warn(f"관람객 수준은 이미 {name} 이다 — 바꿀 것이 없다")
                 return
-            self._level_pending = name
-            self._warn(
-                f"관람객 수준 {self._level_name} → {name} — 다음 큐부터 적용(바로 하려면 r)"
-            )
+            old = self._level_name
+            try:
+                self._on_level_change(name)
+            except Exception as exc:  # noqa: BLE001 — 곁다리 기능의 실패가 진행을 막으면 안 된다
+                self._warn(
+                    f"관람객 수준 {name} 전환 실패({type(exc).__name__}: {exc}) — {old} 그대로 간다"
+                )
+                return
+            self._level_name = name
+            self._docent_min_chars = self._level_min_chars[name]
+            if self._points:
+                # 지금 큐의 턴 대본을 새 수준으로 — 위치(`_point_i`)는 그대로.
+                self._points = self._sheet.current().points_for(name)
+            self._warn(f"관람객 수준 {old} → {name} — 바로 적용(지금 문장은 끝까지, 다음 발화부터)")
 
     def level_names(self) -> list[str]:
         """고를 수 있는 관람객 수준 이름 — levels.yaml 순서(페이지 버튼 순서).
@@ -1196,10 +1204,10 @@ class Director:
                 "solo_role": self.solo_role,
                 "standby": sorted(self._standby),
                 "rejected": sorted(self._rejected),
-                # `level` 은 지금 **적용된** 수준(이 큐가 도는 수준), `level_pending` 은
-                # 다음 큐부터 적용될 수준(없으면 None). 페이지는 둘을 다르게 칠한다.
+                # `level` 은 지금 적용된 수준. ~~`level_pending`(다음 큐부터 적용될 수준)~~ 은
+                # 2026-09-25 즉시 적용으로 늘 None 이다 — 옛 페이지와의 계약이라 키는 남긴다.
                 "level": self._level_name,
-                "level_pending": self._level_pending,
+                "level_pending": None,
                 # 운영 모드와 **단독을 지금 켤 수 있는가**. 뒤의 것은 `set_mode("solo")` 의
                 # 거절과 같은 판정(`_solo_refusal_locked`)을 쓴다 — 페이지가 단독 버튼을 켜
                 # 놓았는데 누르면 거절되는 어긋남이 없게. 사회자가 끊기면 꺼진다.
@@ -1374,14 +1382,8 @@ class Director:
                 f"{self._machine.speaking_role} 가 아직 말하는 중이다"
                 f"(큐 {self._machine.cue_id}) — 동시 발화를 막는다"
             )
-        # **대기 중인 관람객 수준은 여기서 적용한다 — 큐를 시작하는 유일한 자리라서.**
-        # start·next·previous·goto·관람객의 "다음"·침묵 자동 진행, 그리고 콘솔 `r`
-        # (abort + start)이 모두 여기를 지난다(`test_큐를_시작하는_모든_길이_대기_수준을_
-        # 적용한다`). 위 거절 **뒤**에 둔다: 발화 중이라 거절된 시작이 대기를 먹으면
-        # 화면의 수준은 바뀌었는데 흐르는 큐는 옛 수준이다. 아래 브리프·캐시 키·도슨트
-        # 사전 생성 **앞**에 둔다: 이 큐 전체가 새 수준으로 돌아야 한다.
-        if self._level_pending is not None:
-            self._apply_pending_level(cue)
+        # ~~대기 중인 관람객 수준은 여기서 적용한다~~ — 2026-09-25 수준 전환이 즉시(`set_level`)가
+        # 되어 큐를 시작할 때 적용할 대기가 없다.
         # ~~수준별 브리프를 여기서 한 번 가른다~~ — 여는 대사 캐시 키와 도슨트 해설
         # 사전 생성이 쓰던 값인데 둘 다 고정 대본 전환으로 없어졌다. 수준별 브리프는
         # 이제 관람객 질문 답(`_answer`)만 그 자리에서 읽는다.
@@ -1424,50 +1426,6 @@ class Director:
         # 하나뿐이라 `_bump_slot` 을 직접 부른다(세대를 올리고 대기자를 깨운다).
         self._bump_slot("docent")
         self._emit(self._speak("mc", cue.id, mc_text, gaze=cue.gaze, emotion=cue.mc_emotion))
-
-    def _apply_pending_level(self, cue: Cue) -> None:
-        """대기 수준을 적용한다. **`self._lock` 을 쥔 채** `_begin_cue` 에서만 부른다.
-
-        **훅을 먼저 부른다.** 거꾸로면 훅이 터졌을 때 수준 표시·하한은 새 것인데
-        생성기만 옛 것인 반쪽 상태가 남는다.
-
-        **훅이 터져도 큐는 시작한다 — 옛 수준으로.** 예외를 올리면 대기가 남아 큐를
-        시작할 때마다 같은 예외가 나고, 침묵 자동 진행은 커서를 옮긴 **뒤** 여기서
-        터지므로 시연이 그 자리에서 굳는다. 곁다리 기능의 실패가 진행을 막으면 안
-        된다 — 소리 내고, 대기를 버리고(운영자가 다시 고르면 다시 해 본다), 브리프·
-        생성기·하한이 모두 옛 수준으로 맞는 상태로 간다. 대기를 **먼저** 비우는 이유도
-        이것이다(`test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시작한다`).
-
-        훅은 락 안에서 불린다 — `StageServer._send`·경고 콜백과 같은 규칙을 진다:
-        **감독 상태를 읽지 않고 블로킹하지 않는다.** 그래서 이름만 넘긴다. 실제 훅
-        (`stage/__main__.py::LevelSwitch.select`)은 대입 하나이고, 새 수준 생성기를
-        만드는 일(페르소나 파일 읽기)은 첫 생성 때 생성 스레드에서 한다 — 락 밖이다.
-
-        이 뒤에 띄우는 생성(`_spawn_generate`)은 새 생성기를 탄다. 앞 큐가 띄운 늦은
-        생성은 새 생성기로 돌든 옛 생성기로 돌든 **버려진다** — `_begin_cue` 가 세
-        슬롯의 세대를 모두 올리므로(도슨트는 새 생성으로, 받아치기 둘은 무효화로)
-        그 결과는 세대 검사에 걸린다.
-
-        ⚠️ 락 밖에서 읽히는 값이 하나 있다: `_docent_min_chars` 는 `_await_pending`
-        (→ `_warn_if_short`)이 락을 놓고 기다린 뒤 읽는다. 전에는 기동 뒤 안 바뀌어
-        상관없었다. 이제는 그 대기의 세대 확인 **직후**에 다음 큐가 시작되면(콘솔 `n`)
-        옛 큐의 대사를 새 수준 하한으로 잴 수 있다 — 그 대사는 곧바로 2구간의 세대
-        재확인에 걸려 "다음 턴으로 넘어갔다 — 버린다" 가 뒤따르므로 나가지 않는다.
-        틀릴 수 있는 것은 버려질 대사에 붙는 "너무 짧다" 경고 한 줄의 하한뿐이다.
-        """
-        name = self._level_pending
-        self._level_pending = None
-        try:
-            self._on_level_change(name)
-        except Exception as exc:  # noqa: BLE001 — 위 docstring: 진행을 막지 않는다
-            self._warn(
-                f"관람객 수준 {name} 전환 실패({type(exc).__name__}: {exc}) — "
-                f"{self._level_name} 그대로 간다"
-            )
-            return
-        self._level_name = name
-        self._docent_min_chars = self._level_min_chars[name]
-        self._warn(f"관람객 수준을 {name}(으)로 바꿨다 — {cue.id} 부터")
 
     def _spawn_generate(
         self, slot: str, role: str, brief: str, fallback: str, label: str

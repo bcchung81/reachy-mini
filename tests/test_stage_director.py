@@ -1901,29 +1901,27 @@ def test_goto_모르는_큐는_말하는_중이어도_경고만_하고_거절하
 
 # ── (F) 관람객 수준 실시간 전환(`l <수준>`) ────────────────────────────
 #
-# 사용자 결정(2026-09-21): **다음 큐부터** 적용한다. 지금 큐는 원래 수준으로 끝까지
-# 가고, 바로 적용하려면 운영자가 `r` 을 누른다 — 한 큐 안에서 사회자·도슨트 수준이
-# 섞이지 않는다. 적용 지점은 큐를 시작하는 한 곳(`_begin_cue`)이다.
+# ~~사용자 결정(2026-09-21): 다음 큐부터 적용한다~~ — 2026-09-25 결정으로 **바로, 다음 발화부터**
+# 적용한다. 말은 끊지 않는다: 지금 나가는 문장은 끝까지 가고, 이 큐의 남은 도슨트 설명과 질문 답부터
+# 새 수준이다. 대기(`level_pending`)는 없어졌고 스냅샷에는 호환으로 늘 None 이 실린다.
 #
 # 처음 수준은 **"중고등"** 으로 둔다 — `level_name` 의 기본값("일반")과 같은 값으로
 # 단언하면 배선이 끊겨도 통과한다(함정 ③).
 
 # data/levels.yaml 의 순서와 도슨트 하한. 리터럴로 박는다(함정 ⑤ — 로더에서 가져오지 않는다).
 _수준_하한 = {"초등": 70, "중고등": 120, "일반": 180, "전문가": 260}
+_수준들 = ("초등", "중고등", "일반", "전문가")
 
 
 def _수준_브리프(tag):
     return {
-        "초등": {"mc_brief": f"{tag} 초등 진행", "docent_brief": f"{tag} 초등 해설"},
-        "중고등": {"mc_brief": f"{tag} 중고등 진행", "docent_brief": f"{tag} 중고등 해설"},
-        "일반": {"mc_brief": f"{tag} 일반 진행", "docent_brief": f"{tag} 일반 해설"},
-        "전문가": {"mc_brief": f"{tag} 전문가 진행", "docent_brief": f"{tag} 전문가 해설"},
+        lv: {"mc_brief": f"{tag} {lv} 진행", "docent_brief": f"{tag} {lv} 해설"} for lv in _수준들
     }
 
 
 def _수준_설명(tag):
     """수준마다 다른 **고정 해설** — 어느 수준의 대본이 나갔는지 문자열로 가른다."""
-    return {lv: f"{tag} {lv} 설명" for lv in ("초등", "중고등", "일반", "전문가")}
+    return {lv: f"{tag} {lv} 설명" for lv in _수준들}
 
 
 def _수준_시트():
@@ -1954,48 +1952,72 @@ def _수준(h):
     return s["level"], s["level_pending"]
 
 
-def test_수준을_바꾸면_지금_큐가_아니라_다음_큐부터라고_알리고_대기한다():
-    """발화 중에도 거절하지 않는다 — 적용이 다음 큐라서 지금 발화를 건드리지 않는다."""
+_바로_적용 = "관람객 수준 중고등 → 초등 — 바로 적용(지금 문장은 끝까지, 다음 발화부터)"
+
+
+def test_수준을_바꾸면_말을_끊지_않고_바로_적용한다():
+    """발화 중에도 거절하지 않고, 멈추지도 않는다 — 지금 문장은 끝까지 간다.
+    생성기 전환 훅도 그 자리에서 불린다(예전에는 다음 큐를 시작할 때까지 미뤘다)."""
     훅: list[str] = []
     h = _수준_감독(훅)
     h.d.start()                       # 사회자가 c1 을 말하는 중
+    h.clear()
     h.warnings.clear()
     h.d.set_level("초등")
-    assert h.warnings == ["관람객 수준 중고등 → 초등 — 다음 큐부터 적용(바로 하려면 r)"]
-    assert _수준(h) == ("중고등", "초등")
-    assert 훅 == []                   # 생성기는 아직 옛 수준이다(적용 때 바뀐다 — 아래 테스트)
+    assert h.warnings == [_바로_적용]
+    assert _수준(h) == ("초등", None)          # 대기 개념이 없다 — 늘 None(스냅샷 호환)
+    assert 훅 == ["초등"]
     assert h.d.state is State.MC_SPEAKING
+    assert h.sent == []                        # 중단도 새 발화도 보내지 않는다
 
 
-def test_대기_수준은_다음_큐를_시작할_때_해설_대본과_생성기에_한꺼번에_적용된다():
-    """~~여는 대사 캐시 키까지 한꺼번에 봤다~~ — 캐시가 사라져 볼 것이 둘로 줄었다.
-    수준이 실제로 갈리는 곳은 이제 **턴 대본**(`points_for`)과 생성기 전환 훅이다."""
+def test_사회자가_여는_중에_바꾸면_이_큐의_도슨트_설명부터_새_수준이다():
+    """`_begin_cue` 가 옛 수준으로 골라 둔 턴 대본(`self._points`)을 그 자리에서 다시 고르지
+    않으면, 표시는 초등인데 이 큐의 설명은 중고등으로 나간다 — "바로" 가 한 큐 늦는다."""
+    h = _수준_감독()
+    h.d.start()
+    h.d.set_level("초등")
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "c1 초등 설명"), h.says()
+
+
+def _두_턴_시트():
+    return CueSheet([
+        Cue("c1", "첫째", "원문 c1", "옛 지시1", "partner", briefs=_수준_브리프("c1"),
+            points=(
+                Turn("", {lv: f"첫 설명 {lv}" for lv in _수준들}),
+                Turn("둘째 질문?", {lv: f"둘째 설명 {lv}" for lv in _수준들}),
+            )),
+    ])
+
+
+def test_여러_턴_큐_도중에_바꾸면_위치는_그대로_남은_설명만_새_수준이다():
+    """턴 구조는 수준과 무관하다 — 위치(`_point_i`)를 0으로 되돌리면 이미 한 설명을 또 한다."""
+    h = _수준_감독(sheet=_두_턴_시트())
+    h.d.start()
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "첫 설명 중고등")
+    h.d.set_level("초등")                      # 도슨트가 첫 설명을 말하는 중
+    h.ended("docent", "c1:pt0:docent")
+    assert h.says()[-1] == ("mc", "둘째 질문?")  # 사회자 질문은 수준 공통
+    h.ended("mc", "c1:pt1")
+    assert h.says()[-1] == ("docent", "둘째 설명 초등"), h.says()
+    assert h.d._machine.cue_id == "c1:docent"
+
+
+def test_다음_큐도_새_수준으로_시작하고_훅은_한_번만_불린다():
     훅: list[str] = []
     h = _수준_감독(훅)
     h.d.start()
     h.d.set_level("초등")
     h.d.abort()
     h.clear()
-    h.warnings.clear()
     h.d.next()
     assert h.says() == [("mc", "원문 c2")]
-    assert 훅 == ["초등"]
-    assert h.warnings == ["관람객 수준을 초등(으)로 바꿨다 — c2 부터"]
-    assert _수준(h) == ("초등", None)
-    h.clear()
     h.ended("mc", "c2")
-    assert h.says() == [("docent", "c2 초등 설명")], h.says()
-
-
-def test_지금_큐는_대기_수준이_있어도_원래_수준으로_끝까지_간다():
-    """`_begin_cue` 가 고른 턴 대본(`self._points`)이 지금 큐의 수준이다 —
-    `set_level` 이 그 자리에서 수준을 바꿔 버리면 사회자는 중고등, 도슨트는
-    초등인 큐가 나간다."""
-    h = _수준_감독()
-    h.d.start()
-    h.d.set_level("초등")
-    h.ended("mc", "c1")
-    assert h.says()[-1] == ("docent", "c1 중고등 설명"), h.says()
+    assert h.says()[-1] == ("docent", "c2 초등 설명"), h.says()
+    assert 훅 == ["초등"]                      # 큐를 시작할 때 또 부르지 않는다
+    assert _수준(h) == ("초등", None)
 
 
 def _듣는_중까지(h):
@@ -2035,93 +2057,70 @@ def _침묵(h):
     [(_다음, "c2"), (_이전, "c1"), (_이동, "c3"), (_다시, "c1"), (_들은_다음, "c2"), (_침묵, "c2")],
     ids=["next", "previous", "goto", "restart", "heard", "silence"],
 )
-def test_큐를_시작하는_모든_길이_대기_수준을_적용한다(길, 큐):
-    """적용 지점은 `_begin_cue` 하나다. 길 하나라도 그것을 비껴가면 그 길로 넘어간
-    섹션만 옛 수준으로 돈다 — 특히 침묵 자동 진행은 운영자가 아무것도 안 누른 채
-    일어나므로 대기가 조용히 밀린다."""
+def test_큐를_시작하는_어느_길로_가도_바꾼_수준이_남는다(길, 큐):
+    """큐를 시작하는 길 하나라도 수준을 옛 값으로 되돌리거나(예전 대기 적용 코드의 잔재) 턴 대본을
+    다른 수준으로 고르면, 그 길로 넘어간 섹션만 옛 수준으로 돈다 — 특히 침묵 자동 진행은 운영자가
+    아무것도 안 누른 채 일어나므로 조용히 어긋난다."""
     훅: list[str] = []
     h = _수준_감독(훅)
     길(h)
-    assert 훅 == ["초등"]
-    assert f"관람객 수준을 초등(으)로 바꿨다 — {큐} 부터" in h.warnings, h.warnings
-    assert _수준(h) == ("초등", None)
     assert h.d.snapshot()["cue_id"] == 큐
+    h.ended("mc", 큐)
+    assert h.says()[-1] == ("docent", f"{큐} 초등 설명"), h.says()
+    assert 훅 == ["초등"]
+    assert _수준(h) == ("초등", None)
 
 
-def test_말하는_중이라_거절된_시작은_대기_수준을_쓰지_않는다():
-    """검증 → 부작용 순서(`_begin_cue` 머리 주석). 거절된 `s` 가 대기를 먹으면 수준
-    표시는 바뀌었는데 지금 흐르는 큐는 옛 수준이다 — 화면과 무대가 어긋난다."""
+def test_연달아_바꾸면_마지막_수준이_남는다():
     훅: list[str] = []
     h = _수준_감독(훅)
     h.d.start()
     h.d.set_level("초등")
-    with pytest.raises(TurnError):
-        h.d.start()
-    assert _수준(h) == ("중고등", "초등")
-    assert 훅 == []
+    h.d.set_level("전문가")
+    assert 훅 == ["초등", "전문가"]
+    assert h.warnings[-1] == "관람객 수준 초등 → 전문가 — 바로 적용(지금 문장은 끝까지, 다음 발화부터)"
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "c1 전문가 설명")
 
 
-def test_적용된_수준을_다시_고르면_대기를_취소한다():
+def test_지금_수준을_다시_고르면_이미_그_수준이라고만_한다():
     훅: list[str] = []
     h = _수준_감독(훅)
-    h.d.start()
-    h.d.set_level("초등")
-    assert _수준(h) == ("중고등", "초등")   # 전제: 취소할 대기가 있다
-    h.warnings.clear()
-    h.d.set_level("중고등")
-    assert h.warnings == ["관람객 수준 중고등 → 초등 대기를 취소했다 — 중고등 그대로 간다"]
-    assert _수준(h) == ("중고등", None)
-    h.d.abort()
-    h.d.next()
-    assert h.says()[-1] == ("mc", "원문 c2")
-    assert _수준(h) == ("중고등", None)
-    assert 훅 == []
-
-
-def test_대기도_없이_지금_수준을_고르면_이미_그_수준이라고만_한다():
-    h = _수준_감독()
     h.d.set_level("중고등")
     assert h.warnings == ["관람객 수준은 이미 중고등 이다 — 바꿀 것이 없다"]
     assert _수준(h) == ("중고등", None)
+    assert 훅 == []
 
 
-def test_모르는_수준은_고를_수_있는_것을_보여_주고_대기도_건드리지_않는다():
-    h = _수준_감독()
-    h.d.set_level("초등")
-    h.warnings.clear()
+def test_모르는_수준은_고를_수_있는_것을_보여_주고_아무것도_바꾸지_않는다():
+    훅: list[str] = []
+    h = _수준_감독(훅)
     h.d.set_level("유치원")
     assert h.warnings == [
         "모르는 관람객 수준이다: '유치원' — 바꾸지 않는다(고를 수 있는 것: 초등, 중고등, 일반, 전문가)"
     ]
-    assert _수준(h) == ("중고등", "초등")
+    assert _수준(h) == ("중고등", None)
+    assert 훅 == []
 
 
-def test_수준을_바꾸면_도슨트_분량_하한도_그_수준을_따른다():
-    """하한이 옛 수준(일반 180자)에 남으면 전문가(260자)에서 200자 해설이 나와도
-    경고가 없다 — 수준을 바꾼 뒤에만 조용히 성능이 떨어진다."""
+def test_수준을_바꾸면_도슨트_분량_하한도_바로_그_수준을_따른다():
+    """하한이 옛 수준(일반 180자)에 남으면 전문가(260자)에서 200자 답이 나와도 경고가 없다 —
+    수준을 바꾼 뒤에만 조용히 성능이 떨어진다. **같은 큐 안에서** 본다(즉시 적용)."""
     이백자 = "가" * 200
     h = _수준_감독(level_name="일반", docent_min_chars=180,
                   generate=lambda role, brief, hist: 이백자)
     h.d.start()
     h.d.set_level("전문가")
-    h.d.abort()
-    h.d.next()
-    _질문까지(h, "왜요?", cid="c2")     # 생성이 남은 유일한 길
+    _질문까지(h, "왜요?", cid="c1")
     h.warnings.clear()
-    h.ended("mc", "c2:ack")            # 도슨트 답(`role="docent"`)이 나가는 자리
+    h.ended("mc", "c1:ack")            # 도슨트 답(`role="docent"`)이 나가는 자리
     assert h.says()[-1] == ("docent", 이백자)
-    assert "[c2:qa] 생성 결과가 너무 짧다(200자, 하한 260자) — 그대로 쓴다" in h.warnings, h.warnings
+    assert "[c1:qa] 생성 결과가 너무 짧다(200자, 하한 260자) — 그대로 쓴다" in h.warnings, h.warnings
 
 
-def test_새_큐의_질문_답은_생성기를_새_수준으로_바꾼_뒤에_띄운다(monkeypatch):
-    """훅을 빠뜨리면 새 큐의 생성이 **옛 수준의 페르소나**(역할·분량 프롬프트)로
-    새 수준의 지시문을 받는다.
-
-    ~~큐 시작에 띄우던 도슨트 해설 생성으로 봤다~~ — 해설이 고정 대본이 되면서
-    그 자리의 생성은 사라졌다. 남은 생성(관람객 질문 답)으로 같은 것을 본다:
-    섹션이 바뀐 뒤 처음 도는 생성이 새 수준의 생성기를 타야 한다. 스레드 시작
-    시점에 따라 나기도 안 나기도 하는 경합이라 그 자리에서 돌린다(`_즉시`).
-    """
+def test_수준을_바꾼_뒤의_질문_답은_새_생성기와_새_수준_지시문을_쓴다(monkeypatch):
+    """훅이 늦으면 질문 답이 **옛 수준의 페르소나**(역할·분량 프롬프트)로 새 수준의 지시문을
+    받는다. 스레드 시작 시점에 따라 나기도 안 나기도 하는 경합이라 그 자리에서 돌린다(`_즉시`)."""
     import types
 
     import stage.director as director_mod
@@ -2147,21 +2146,19 @@ def test_새_큐의_질문_답은_생성기를_새_수준으로_바꾼_뒤에_�
         sheet=_수준_시트(), level_name="중고등", generate=gen, levels=dict(_수준_하한),
         on_level_change=lambda name: 현재.__setitem__("수준", name),
     )
-    _질문한다(h, "c1 질문")                 # 중고등으로 도는 섹션
+    _질문한다(h, "c1 첫 질문")               # 중고등으로 도는 섹션
     h.d.set_level("초등")
     h.d.abort()
-    h.d.next()
-    _질문까지(h, "c2 질문", cid="c2")      # 섹션이 바뀐 뒤 처음 도는 생성
+    h.d.start()                            # 같은 섹션(r) — 큐가 바뀌지 않아도 새 수준이어야 한다
+    _질문까지(h, "c1 둘째 질문", cid="c1")
     assert [lv for lv, _ in seen] == ["중고등", "초등"], seen
     assert "c1 중고등 해설" in seen[0][1], seen[0]
-    assert "c2 초등 해설" in seen[1][1], seen[1]
+    assert "c1 초등 해설" in seen[1][1], seen[1]
 
 
-def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시작한다():
-    """훅 예외를 그대로 올리면 대기가 남아 **큐를 시작할 때마다** 같은 예외가 난다 —
-    침묵 자동 진행은 커서를 옮긴 뒤 `_begin_cue` 에서 터지므로 시연이 그 자리에서
-    굳는다. 곁다리 기능(수준 전환)의 실패가 진행을 막으면 안 된다: 소리 내고, 대기를
-    버리고, 옛 수준으로 간다(브리프·생성기·하한이 한 수준으로 맞는 상태)."""
+def test_생성기_전환이_터지면_경고하고_아무것도_바꾸지_않는다():
+    """훅이 터졌는데 표시·하한·대본을 새 수준으로 바꾸면 생성기만 옛 수준인 반쪽 상태가 된다.
+    곁다리 기능(수준 전환)의 실패가 진행을 막아서도 안 된다: 소리 내고, 옛 수준으로 간다."""
     def 터지는_훅(name):
         raise RuntimeError("페르소나 없음")
 
@@ -2170,19 +2167,15 @@ def test_생성기_전환이_터지면_경고하고_옛_수준으로_큐를_시�
         on_level_change=터지는_훅,
     )
     h.d.start()
-    h.d.set_level("초등")
-    h.d.abort()
-    h.clear()
     h.warnings.clear()
-    h.d.next()
-    assert h.says() == [("mc", "원문 c2")]
-    h.clear()
-    h.ended("mc", "c2")
-    assert h.says() == [("docent", "c2 중고등 설명")], h.says()   # 옛 수준 그대로
+    h.d.set_level("초등")
     assert h.warnings == [
         "관람객 수준 초등 전환 실패(RuntimeError: 페르소나 없음) — 중고등 그대로 간다"
     ]
     assert _수준(h) == ("중고등", None)
+    assert h.d.state is State.MC_SPEAKING      # 진행은 그대로
+    h.ended("mc", "c1")
+    assert h.says()[-1] == ("docent", "c1 중고등 설명"), h.says()   # 옛 수준 그대로
 
 
 def test_수준_목록은_받은_순서대로_준다():
@@ -2321,7 +2314,7 @@ def test_단독에서도_관람객_수준은_바꿀_수_있다():
     _모드(h, "solo")
     h.d.set_level("초등")
     s = h.d.snapshot()
-    assert (s["mode"], s["level"], s["level_pending"]) == ("solo", "중고등", "초등")
+    assert (s["mode"], s["level"], s["level_pending"]) == ("solo", "초등", None)
 
 
 def test_모르는_모드와_같은_모드는_경고만():

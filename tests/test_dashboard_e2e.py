@@ -106,13 +106,13 @@ def test_대시보드의_s_가_진짜_감독을_돌려_사회자_say_와_발화_
     assert 대시보드_경고[1] == "[운영] 대시보드 s", 대시보드_경고
 
 
-def test_대시보드의_수준_버튼이_진짜_감독에서_대기로_보였다가_s_에서_적용된다():
-    """관람객 수준 전환의 페이지 계약 — `hello.levels`, `snapshot.level`/`level_pending`,
-    명령 `l <수준>`, 그리고 페이지 로그에 남는 경고 두 줄. 페이지가 읽는 바로 그 필드를
+def test_대시보드의_수준_버튼이_진짜_감독에서_바로_적용된다():
+    """관람객 수준 전환의 페이지 계약 — `hello.levels`, `snapshot.level`(`level_pending` 은 호환으로
+    늘 null), 명령 `l <수준>`, 그리고 페이지 로그에 남는 경고 한 줄. 페이지가 읽는 바로 그 필드를
     진짜 감독에서 뽑는다(가짜 감독과만 맞춘 필드 이름은 바뀌어도 아무도 모른다).
 
-    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③). 로봇은 붙이지 않는다 — `s` 의
-    say 는 "아직 붙지 않았다" 로 버려지지만 큐 시작(= 수준 적용)은 그대로 일어난다."""
+    ~~대기로 보였다가 `s` 에서 적용된다~~ — 2026-09-25 부터 바로(다음 발화부터) 적용한다.
+    처음 수준은 기본값("일반")이 아닌 "중고등"(함정 ③)."""
     hub = DashboardHub()
     warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
     훅: list[str] = []
@@ -138,15 +138,9 @@ def test_대시보드의_수준_버튼이_진짜_감독에서_대기로_보였�
         assert (hello["snapshot"]["level"], hello["snapshot"]["level_pending"]) == ("중고등", None)
 
         page.send(json.dumps({"cmd": "l 전문가"}))
-        w = _recv_until(page, lambda m: m["kind"] == "warn" and "다음 큐부터" in m["text"])
-        assert w["text"] == "관람객 수준 중고등 → 전문가 — 다음 큐부터 적용(바로 하려면 r)"
-        # 경고는 감독이 대기를 세운 **뒤** 락 안에서 실린다 — 그 뒤 첫 스냅샷은 대기를 보인다.
-        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
-        assert (snap["level"], snap["level_pending"]) == ("중고등", "전문가")
-
-        page.send(json.dumps({"cmd": "s"}))
-        w = _recv_until(page, lambda m: m["kind"] == "warn" and "바꿨다" in m["text"])
-        assert w["text"] == "관람객 수준을 전문가(으)로 바꿨다 — c1 부터"
+        w = _recv_until(page, lambda m: m["kind"] == "warn" and "바로 적용" in m["text"])
+        assert w["text"] == "관람객 수준 중고등 → 전문가 — 바로 적용(지금 문장은 끝까지, 다음 발화부터)"
+        # 경고는 감독이 수준을 바꾼 **뒤** 락 안에서 실린다 — 그 뒤 첫 스냅샷은 새 수준이다.
         snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
         assert (snap["level"], snap["level_pending"]) == ("전문가", None)
 

@@ -139,11 +139,14 @@ def test_hello의_levels_배열을_읽어_버튼을_짓는다():
     assert "msg.levels" in _src()
 
 
-def test_snapshot의_level_pending을_읽어_대기_표시를_한다():
-    """대기 중인 수준은 snapshot.level_pending 으로 온다(계약, 없으면 null). 이 필드를
-    실제로 읽어야 테두리 강조와 "→ 이름 (다음 큐부터)" 문구가 나타나고, null 일 때
-    감춘다."""
-    assert "s.level_pending" in _src()
+def test_수준_버튼은_snapshot의_level_로_적용_표시를_옮기고_대기_표시는_없다():
+    """적용된 수준은 snapshot.level 로 온다(계약). ~~대기 중인 수준(level_pending)을 테두리와
+    "→ 이름 (다음 큐부터)" 로 보였다~~ — 2026-09-25 부터 수준은 바로(다음 발화부터) 적용된다.
+    대기 문구가 남아 있으면 운영자가 "다음 큐까지 기다려야 하나" 로 읽는다."""
+    src = _src()
+    assert 'classList.toggle("applied", name === s.level)' in src
+    assert "다음 큐부터" not in src
+    assert "level-pending-text" not in src
 
 
 def test_레벨_버튼에는_키보드_단축키를_두지_않는다():
@@ -161,11 +164,11 @@ def test_레벨_버튼에는_키보드_단축키를_두지_않는다():
     assert key_cmd == {"KeyP": "p", "KeyR": "r", "KeyN": "n", "KeyS": "s", "KeyA": "a"}
 
 
-def test_좁은_폭에서는_수준_캡션과_대기_문구를_숨기고_cue_label은_말줄임한다():
-    """헤더 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 약 500px 로 늘어나면, 줄어들지
+def test_좁은_폭에서는_수준_캡션을_숨기고_cue_label은_말줄임한다():
+    """헤더 오른쪽 묶음(수준 버튼+~~대기 문구~~+연결 배지)이 약 500px 로 늘어나면, 줄어들지
     못하는 `.cue-label`(nowrap)이 "관람객 수준" 캡션 위에 겹쳤다(1024px 실측, 수준
     리뷰 Minor 2). `.cue-label` 이 줄어들 수 있어야 하고(min-width:0 + 말줄임), 좁은
-    폭에서는 캡션·대기 문구를 접어 자리를 낸다 — 수준 버튼(조작)과 연결 배지(경고)는
+    폭에서는 캡션을 접어 자리를 낸다 — 수준 버튼(조작)과 연결 배지(경고)는
     시연 중 언제나 보여야 하므로 이 media 블록 안에서 숨기지 않는다."""
     src = _src()
     label_rule = _css_rule(src, ".cue-label")
@@ -175,7 +178,6 @@ def test_좁은_폭에서는_수준_캡션과_대기_문구를_숨기고_cue_lab
 
     media = _media_block(src, "max-width: 1180px")
     assert ".level-caption" in media and "display: none" in media
-    assert ".level-pending-text" in media
     # 버튼·연결 배지는 좁은 폭에서도 항상 보인다 — 이 media 블록에 그 선택자가
     # 등장하지 않는다는 것이 "숨기지 않는다" 는 뜻이다.
     assert ".level-btn" not in media
