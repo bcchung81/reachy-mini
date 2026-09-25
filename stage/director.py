@@ -203,8 +203,7 @@ class _Pending(NamedTuple):
     label: str           # 경고에 찍을 이름
     # 있으면 `_warn_if_short` 가 `role` 별 기본 하한
     # (`self._docent_min_chars`/`MIN_CHARS`) 대신 이 값으로 짧음을 잰다.
-    # 지금은 쓰는 곳이 없지만(해설이 고정 대본이 되면서 짧은 답을 기다릴 일이
-    # 없어졌다) 관람객 질문 답에 수준별 하한을 따로 걸 자리로 남겨 둔다.
+    # 단독 답(`SOLO_MIN_CHARS`)이 쓴다 — 인사 한 줄이 맞는 답이라 역할 기본 하한이면 헛경보다.
     min_chars: int | None = None
     # **말할 로봇의 대본 역할.** 없으면 `role` 과 같다. 단독 답은 생성 역할(`solo`, 페르소나)과 말하는
     # 역할(`mc`)이 다르다 — 둘을 한 칸에 두면 상태기계가 모르는 역할("solo")로 말하려다 TurnError 가 난다.
@@ -545,7 +544,7 @@ class Director:
             # **거절을 먼저 가른다 — 그래야 caps 를 한 자리에서 기억할 수 있다.**
             # 예전 순서(기대값 없음 → 반환, unit_id 없음 → 반환, 다르면 예외)에 caps 를
             # 끼우면 조기 반환 두 갈래마다 따로 적어야 하고, 하나를 빠뜨리면 그 갈래
-            # (시뮬은 늘 `unit_id is None` 이다)의 사회자는 단독을 영영 못 켠다. 거꾸로
+            # (시뮬은 늘 `unit_id is None` 이다)의 로봇은 연출 능력을 영영 못 알린다. 거꾸로
             # 맨 앞에 두면 `UnitMismatch` 로 거절된 로봇(붙은 적이 없다 — 서버가 그
             # 연결만 닫는다)이 자리에 남은 맞는 로봇의 능력을 덮는다.
             if expected is not None and unit_id is not None and unit_id != expected:
@@ -900,6 +899,9 @@ class Director:
                     f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
                 )
             self._sheet.reset()
+            # 새 관람객이다 — 종료 없이 처음 시작하는 경우(기동 직후·단독에서 돌아온 뒤)도 이력을 비운다
+            # (`_end_show_locked` 와 같은 이유). "이 큐 다시"(`start`)·모드 전환은 같은 관람객이라 두고 간다.
+            self.history.clear()
             self._begin_cue(self._sheet.current())
 
     def end_show(self) -> None:
@@ -990,6 +992,9 @@ class Director:
         self._question_opened_at = None
         self._sheet.reset()
         self._show_running = False
+        # **대화 이력도 비운다**(2026-09-25 리뷰). 다음 공연은 다른 관람객이다 — 이전 그룹의 질문·답이 이력에
+        # 남으면 새 그룹의 질문 답 생성이 "아까 말씀하신 타이타닉…" 처럼 들은 적 없는 대화를 잇는다.
+        self.history.clear()
         self._warn(message)
 
     def previous(self) -> None:
@@ -1697,9 +1702,14 @@ class Director:
         `role="mc"` 다 — 그래야 사회자가 도슨트 분량으로 떠들지 않는다.
         """
         token = self._bump_slot(slot)
+        # **이력 사본은 여기서 뜬다 — 락을 쥔 띄우는 쪽이.** ~~스레드가 돌기 시작할 때 `list(self.history)`~~
+        # 로 떴더니(2026-09-25 리뷰) 띄운 쪽이 곧이어 덧붙이는 확인 멘트("좋은 질문이네요…")가 생성 입력에
+        # 들어갈지가 스레드 순서에 달렸고, 공연 종료의 이력 비우기(`_end_show_locked`)와 겹치면 반쯤 지워진
+        # 이력을 볼 수 있었다 — 이 docstring 의 "이 시점의 사본" 이 거짓이었다.
+        history = list(self.history)
         threading.Thread(
             target=self._generate_pending,
-            args=(slot, role, brief, token, fallback, label),
+            args=(slot, role, brief, token, fallback, label, history),
             daemon=True,
         ).start()
 
@@ -1743,11 +1753,12 @@ class Director:
             return s["ready"], s["token"]
 
     def _generate_pending(
-        self, slot: str, role: str, brief: str, token: int, fallback: str, label: str
+        self, slot: str, role: str, brief: str, token: int, fallback: str, label: str,
+        history: list[dict],
     ) -> None:
         is_fallback = False
         try:
-            text = self._generate(role, brief, list(self.history))
+            text = self._generate(role, brief, history)
             if not text:
                 # 빈 문자열도 "아무 말도 안 하는 것"과 같다 — 조용히 넘기지 않는다.
                 self._warn(f"[{label}] 대사 생성이 빈 문자열을 내놓았다 — 폴백")

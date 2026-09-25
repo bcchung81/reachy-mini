@@ -3478,3 +3478,82 @@ def test_단독에서는_공연_시작도_종료도_거절한다():
     assert "단독 모드에서는 팟캐스트 진행(시작)을 하지 않는다 — 먼저 m podcast" in h.warnings
     assert "단독 모드에서는 팟캐스트 진행(종료)을 하지 않는다 — 먼저 m podcast" in h.warnings
     assert h.says() == []
+
+
+# ── 2026-09-25 리뷰: 공연마다 이력 · 생성 입력의 이력 사본 시점 ──────────────────
+
+
+def _질문_답까지_끝낸(h, question="왜요?"):
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard(question)
+    h.ended("mc", "c1:ack")
+    h.ended("docent", "c1:qa")
+
+
+def test_공연을_끝내면_대화_이력을_비운다():
+    """다음 공연은 다른 관람객이다 — 이전 그룹의 질문·답이 남으면 새 그룹의 답 생성이 들은 적 없는 대화를 잇는다."""
+    h = Harness(generate=lambda role, brief, hist: "도슨트 답이에요. 그렇게 정해져 있어요.")
+    h.d.start_show()
+    _질문_답까지_끝낸(h)
+    assert any(l["content"] == "관람객: 왜요?" for l in h.d.history)      # 전제: 이력이 쌓였다
+    h.d.abort()
+    h.d.end_show()
+    assert h.d.history == []
+
+
+def test_마지막_큐_침묵으로_끝나도_이력을_비운다():
+    h = Harness()
+    _마지막_큐_듣기까지(h)
+    assert h.d.history                                                     # 전제
+    h.clock.t = 8.1
+    h.d.tick()
+    assert h.d.history == []
+
+
+def test_공연을_시작하면_이전_관람객의_이력을_비우고_여는_대사만_남긴다():
+    """종료 없이 처음 시작하는 길(단독에서 돌아온 뒤 등)도 새 관람객이다."""
+    h = Harness()
+    h.d.history.append({"role": "user", "content": "관람객: 이전 그룹의 질문"})
+    h.d.start_show()
+    assert h.d.history == [{"role": "assistant", "content": "사회자: 사회자 첫 대사"}]
+
+
+def test_이_큐_다시는_같은_관람객이라_이력을_두고_간다():
+    h = Harness(generate=lambda role, brief, hist: "도슨트 답이에요. 그렇게 정해져 있어요.")
+    h.d.start_show()
+    _질문_답까지_끝낸(h)
+    h.d.abort()
+    h.d.start()                                                            # 콘솔 r
+    assert any(l["content"] == "관람객: 왜요?" for l in h.d.history)
+
+
+def test_생성_입력은_띄우는_순간의_이력_사본이다(monkeypatch):
+    """~~스레드가 돌기 시작할 때 이력을 복사했다~~ — 띄운 쪽이 곧이어 덧붙이는 확인 멘트가 들어갈지가 스레드
+    순서에 달렸다. 스레드 시작을 확인 멘트 뒤로 미뤄 옛 경합을 결정적으로 재현한다: 사본에 멘트가 없어야 한다."""
+    import types
+
+    import stage.director as director_mod
+
+    미룬: list = []
+
+    class _미룬스레드:
+        def __init__(self, target, args=(), daemon=None):
+            self._run = lambda: target(*args)
+
+        def start(self):
+            미룬.append(self._run)
+
+    monkeypatch.setattr(director_mod, "threading", types.SimpleNamespace(
+        Thread=_미룬스레드, Lock=threading.Lock, Event=threading.Event,
+    ))
+    본_이력: list = []
+    h = Harness(generate=lambda role, brief, hist: 본_이력.append(list(hist)) or "답이에요. 그래요.")
+    h.d.start_show()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("왜요?")
+    assert h.d.history[-1]["content"].startswith("사회자: ")               # 확인 멘트가 이미 붙었다
+    for run in 미룬:
+        run()
+    assert 본_이력[0][-1] == {"role": "user", "content": "관람객: 왜요?"}, 본_이력

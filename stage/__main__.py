@@ -80,6 +80,33 @@ def history_for(role: str, history: list[dict]) -> list[dict]:
     return out
 
 
+def reply_text(client, brief: str, clauses: list[str]) -> str:
+    """모델이 낸 답 **원문** — 문장·쉼표 뒤 띄어쓰기를 살린다.
+
+    ~~`"".join(c.chat_stream(...))`~~ 는 띄어쓰기를 잃었다(2026-09-25 실측: "되었어요.이 신호는",
+    "있지만,국제암연구소가"). `chat_stream` 은 로봇의 TTS 용으로 절마다 앞뒤 공백을 걷어 내보낸다(첫 절은
+    쉼표에서도 자른다). 소리에는 상관없지만 무대감독에서는 그 텍스트가 **대시보드 자막·관람객 보조 화면·
+    대화 이력**으로 간다 — 이력의 붙은 문장을 모델이 다시 따라 할 수도 있다. 절 사이에 무조건 공백을 넣으면
+    소수점("2.4GHz" → "2. 4GHz")이 깨지므로, 클라이언트가 이력에 남기는 원문(스트림 델타를 그대로 이은 것)을
+    쓴다. 줄바꿈·연속 공백은 한 칸으로 — TTS 와 자막이 같은 문장을 본다.
+
+    **이력 끝이 [이번 지시문(user), 답(assistant)] 한 쌍일 때만** 원문으로 인정한다. 넘겨준 이력 자체가
+    assistant 줄(예: "도슨트: 첫 해설" → 도슨트 시점의 자기 줄)로 끝날 수 있어서, 끝 한 줄만 보면 답을 이력에
+    남기지 않는 클라이언트에서 **이전 줄을 이번 답으로** 읽는다(테스트가 잡았다). 이번 지시문은 이력 끝으로
+    가기 전에 앞으로 접히므로(`build_generate`) 원래 이력이 그 user 줄로 끝날 수는 없다.
+
+    원문을 모르는 클라이언트(테스트의 가짜 등 — 이력에 답을 남기지 않는다)면 절을 이어 붙인다(옛 방식).
+    """
+    h = getattr(client, "history", None)
+    if (
+        h and len(h) >= 2
+        and h[-1].get("role") == "assistant" and isinstance(h[-1].get("content"), str)
+        and h[-2].get("role") == "user" and h[-2].get("content") == brief
+    ):
+        return " ".join(h[-1]["content"].split())
+    return "".join(clauses)
+
+
 # 경고에 싣는 잘린 조각의 최대 길이. 넘으면 **가운데를** 줄인다 — 앞만 남기면
 # 사회자 받아치기의 질문처럼 **마지막 문장**에 있는 것이 로그에서 빠진다. 그
 # 질문이 상한에 잘렸다는 것이, 감독의 "질문 유도가 없다" 경고의 원인을 가르는
@@ -164,7 +191,7 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
             if hist and hist[-1]["role"] == "user":
                 brief = hist.pop()["content"] + "\n\n" + brief
             c.history = hist
-            raw = "".join(c.chat_stream(brief, None))
+            raw = reply_text(c, brief, list(c.chat_stream(brief, None)))
         text, stripped = strip_speaker_labels(raw)
         # 경고는 **걷어낸 부분**을 보여 준다. 예전에는 `raw[:60]`(원문 앞)을 찍어,
         # 상대 턴이 60자 뒤에 붙은 실측 모양(docent:106)에서는 정작 새어 든 부분이

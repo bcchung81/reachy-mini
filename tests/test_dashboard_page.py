@@ -426,3 +426,12 @@ def test_단독에서는_런다운의_지금_큐를_ON_AIR_로_켜지_않는다(
     body = _media_block(_src(), "function refreshRundownTags()")
     assert ('var idle = latestSnapshot && (latestSnapshot.state === "idle" || latestSnapshot.mode === "solo");'
             in body)
+
+
+
+def test_단독에서는_자동_진행_영역이_없음을_알린다():
+    """단독에는 침묵 기한이 없다 — "대기 전" 이면 운영자가 곧 자동 진행이 시작될 줄 안다."""
+    src = _src()
+    assert "applyAutoProgress(s.question_wait_s, s.question_wait_total_s, s.mode);" in src
+    body = _media_block(src, "function applyAutoProgress(wait, total, mode)")
+    assert 'text.textContent = "단독 — 자동 진행 없음";' in body

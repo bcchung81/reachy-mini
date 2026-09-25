@@ -983,3 +983,33 @@ def test_단독_생성문은_수준_상한에서_자른다(기록LLM):
     generate = stage_main.build_generate(_레벨, warn=경고.append)
     assert generate("solo", "지시", []) == "하나요.둘이요.셋이요."
     assert any("[solo]" in w and "3문장/140자" in w for w in 경고), 경고
+
+
+
+class _원문LLM(_기록LLM):
+    """진짜 `LLMClient` 처럼 스트림은 절(앞뒤 공백을 걷은 것)로 주고, 원문은 이력 끝에 남긴다."""
+    원문 = ""
+
+    def chat_stream(self, brief, image):
+        type(self).본것.append((brief, list(self.history)))
+        yield from type(self).답
+        self.history += [{"role": "user", "content": brief},
+                         {"role": "assistant", "content": type(self).원문}]
+
+
+def test_생성문은_절을_붙이지_않고_모델_원문의_띄어쓰기를_살린다(monkeypatch):
+    """실측(2026-09-25): 절을 `"".join` 해서 "되었어요.이 신호는"·"있지만,국제암연구소가" 가 자막·이력에 갔다.
+    절 사이에 공백을 넣는 쪽은 소수점("2.4GHz")을 깨므로 원문을 쓴다. 줄바꿈은 한 칸으로."""
+    monkeypatch.setattr(stage_main, "LLMClient", _원문LLM)
+    _원문LLM.본것 = []
+    _원문LLM.답 = ["전자파 영향은 단정하기 어려워요.", "다만,", "기준이 있어요.", "2.", "4GHz 도 그래요."]
+    _원문LLM.원문 = "전자파 영향은 단정하기 어려워요. 다만, 기준이 있어요.\n\n2.4GHz 도 그래요."
+    generate = stage_main.build_generate(_레벨, warn=lambda m: None)
+    assert generate("docent", "지시", []) == "전자파 영향은 단정하기 어려워요. 다만, 기준이 있어요. 2.4GHz 도 그래요."
+
+
+def test_원문을_모르는_클라이언트면_절을_이어_붙인다(기록LLM):
+    """이력에 답을 남기지 않는 클라이언트(테스트 가짜)는 옛 방식 그대로다 — 기존 분량 테스트들의 전제."""
+    기록LLM.답 = ["하나요.", "둘이요."]
+    generate = stage_main.build_generate(_레벨)
+    assert generate("docent", "지시", []) == "하나요.둘이요."

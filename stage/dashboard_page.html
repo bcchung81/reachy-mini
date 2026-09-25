@@ -683,7 +683,7 @@ function renderSnapshot(s) {
 
   refreshRundownTags();
   refreshGotoBarForCurrent();
-  applyAutoProgress(s.question_wait_s, s.question_wait_total_s);
+  applyAutoProgress(s.question_wait_s, s.question_wait_total_s, s.mode);
 
   // 카메라 relay 가 있을 때만 snapshot.cameras 가 온다(계약, Task 7) — 없으면(구버전
   // 서버·relay 미장착) 아무것도 하지 않는다(never throw).
@@ -1249,10 +1249,17 @@ document.getElementById("wait-off").addEventListener("click", function () {
   sendCmd(waitNow === null ? "w " + waitLastOn : "w 끄기");
 });
 
-function applyAutoProgress(wait, total) {
+function applyAutoProgress(wait, total, mode) {
   var text = document.getElementById("auto-text");
   var bar = document.getElementById("auto-bar");
   renderWaitSetting(total);
+  if (mode === "solo") {
+    // 단독에는 넘길 큐가 없다 — 침묵 기한을 걸지 않는다(감독 `_arm_question_deadline`). "대기 전" 으로
+    // 두면 운영자가 곧 자동 진행이 시작될 줄 안다(2026-09-25 리뷰).
+    text.textContent = "단독 — 자동 진행 없음";
+    bar.style.width = "0%";
+    return;
+  }
   if (total === null) {
     text.textContent = "꺼짐 — 다음을 눌러 넘긴다";
     bar.style.width = "0%";
