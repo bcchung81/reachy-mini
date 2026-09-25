@@ -5,7 +5,7 @@ import re
 PAGE = pathlib.Path(__file__).parent.parent / "stage" / "dashboard_page.html"
 IDS = ["conn", "cue-label", "level", "mon-mc", "mon-docent", "tag-mc", "tag-docent",
        "cap-mc", "cap-docent", "rundown", "goto-bar", "goto-confirm", "goto-cancel",
-       "btn-prev", "btn-restart", "btn-next", "btn-start", "btn-abort",
+       "btn-prev", "btn-restart", "btn-next", "btn-show", "btn-abort",
        "auto-text", "auto-bar", "log",
        "vid-mc", "vid-docent", "cam-reason-mc", "cam-reason-docent",
        "cam-toggle-mc", "cam-toggle-docent", "standby-toggle-mc", "standby-toggle-docent"]
@@ -60,7 +60,7 @@ def test_HTML_삽입_API_를_전부_막는다():
 
 def test_콘솔과_같은_명령_문자열을_보낸다():
     src = _src()
-    for c in ['"p"', '"r"', '"n"', '"s"', '"a"', '"g "']:
+    for c in ['"p"', '"r"', '"n"', '"s"', '"e"', '"a"', '"g "']:
         assert c in src, c
 
 
@@ -155,13 +155,13 @@ def test_레벨_버튼에는_키보드_단축키를_두지_않는다():
 
     **긍정 단언으로 본다** — `'"l"' not in ...` 같은 부정 단언만 두면(수준 리뷰 Minor 4,
     함정 ④) KEY_CMD 에 아무 키나(예: 수준 단축키를 다른 글자로 붙여도) 걸리지 않는다.
-    지금 다섯 키(P/R/N/S/A)로 리터럴 통째 비교해, 키가 하나라도 더 붙으면(레벨이든
-    다른 무엇이든) 실패한다."""
+    지금 여섯 키(P/R/N/S/E/A)로 리터럴 통째 비교해, 키가 하나라도 더 붙으면(레벨이든
+    다른 무엇이든) 실패한다. E 는 공연 종료(2026-09-25)."""
     src = _src()
     m = re.search(r"var KEY_CMD = \{([^}]*)\}", src)
     assert m
     key_cmd = json.loads("{" + m.group(1) + "}")
-    assert key_cmd == {"KeyP": "p", "KeyR": "r", "KeyN": "n", "KeyS": "s", "KeyA": "a"}
+    assert key_cmd == {"KeyP": "p", "KeyR": "r", "KeyN": "n", "KeyS": "s", "KeyE": "e", "KeyA": "a"}
 
 
 def test_좁은_폭에서는_수준_캡션을_숨기고_cue_label은_말줄임한다():
@@ -388,3 +388,26 @@ def test_침묵_대기_버튼이_w_명령을_보내고_끔을_그린다():
     assert 'sendCmd("w " + (waitNow - 1))' in html and 'sendCmd("w " + (waitNow + 1))' in html
     assert '"w 끄기"' in html
     assert "question_wait_total_s" in html
+
+
+def test_공연_토글은_snapshot의_show_running으로_시작과_종료를_오간다():
+    """제어판의 한 버튼이 [공연 시작](s) ↔ [공연 종료](e) 로 바뀐다(2026-09-25 결정). 이 필드를 읽는
+    코드가 없으면 버튼이 늘 "공연 시작" 이라 운영자가 공연을 끝낼 손잡이를 못 찾는다."""
+    src = _src()
+    assert "s.show_running === true" in src
+    assert 'running ? "공연 종료" : "공연 시작"' in src
+    assert 'btn.dataset.cmd = running ? "e" : "s"' in src
+    assert "처음부터 시작" not in src          # 옛 버튼 문구가 남으면 두 버튼이 된 것으로 읽힌다
+
+
+def test_공연_토글은_누른_뒤_잠깐_잠가_종료_두_번이_재시작이_되지_않는다():
+    """[공연 종료] 를 빠르게 두 번 누르면 그 사이 도착한 스냅샷 때문에 두 번째가 [공연 시작] 이 된다 —
+    끝내려던 공연이 첫 큐부터 다시 시작한다. 감독은 두 명령이 각각 정당해서 이 교차를 못 막는다."""
+    src = _src()
+    assert "var SHOW_TOGGLE_LOCK_MS = 1000;" in src
+    assert "if (now < showToggleLockedUntil) return;" in src
+
+
+def test_단독에서는_공연_토글도_잠근다():
+    """단독에서 감독은 공연 시작·종료를 거절한다 — 버튼도 잠가야 거절 경고만 쌓이지 않는다."""
+    assert '["btn-prev", "btn-restart", "btn-next", "btn-show"].forEach' in _src()

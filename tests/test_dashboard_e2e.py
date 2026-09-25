@@ -147,6 +147,42 @@ def test_대시보드의_수준_버튼이_진짜_감독에서_바로_적용된�
     assert 훅 == ["전문가"]
 
 
+def test_대시보드의_공연_토글이_진짜_감독의_show_running_을_오간다():
+    """제어판 [공연 시작] ↔ [공연 종료] 의 페이지 계약(2026-09-25) — 명령 `s`/`e`, `snapshot.show_running`,
+    그리고 종료 경고 한 줄. 로봇은 붙이지 않는다 — say 는 "아직 붙지 않았다" 로 버려지지만 공연 상태는
+    그대로 오간다(페이지가 읽는 것은 그 상태다)."""
+    hub = DashboardHub()
+    warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
+    server = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 여는 대사", "도슨트 지시", "partner"),
+                  Cue("c2", "둘째", "사회자 둘째 대사", "도슨트 지시", "partner")]),
+        generate=lambda role, brief, history: "도슨트 해설",
+        warn=warn, hub=hub,
+    )
+    대시보드_경고: list[str] = []
+
+    with contextlib.ExitStack() as 정리:
+        dash = start_dashboard(hub, server.director, "127.0.0.1", 0, warn=대시보드_경고.append)
+        assert dash is not None, 대시보드_경고
+        정리.callback(dash.shutdown)
+        dport = dash.socket.getsockname()[1]
+        page = 정리.enter_context(connect(
+            f"ws://127.0.0.1:{dport}/ws", origin=f"http://127.0.0.1:{dport}", open_timeout=3,
+        ))
+        hello = json.loads(page.recv(timeout=3))
+        assert hello["snapshot"]["show_running"] is False
+
+        page.send(json.dumps({"cmd": "s"}))
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot" and m["show_running"] is True)
+        assert snap["cue_id"] == "c1"
+
+        page.send(json.dumps({"cmd": "e"}))
+        w = _recv_until(page, lambda m: m["kind"] == "warn" and "공연을 끝냈다" in m["text"])
+        assert w["text"] == "공연을 끝냈다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)"
+        snap = _recv_until(page, lambda m: m["kind"] == "snapshot")
+        assert (snap["show_running"], snap["cue_id"], snap["state"]) == (False, "c1", "idle")
+
+
 def test_단독을_아는_사회자가_붙으면_대시보드의_m_solo_가_진짜_감독의_모드를_바꾼다():
     """운영 모드의 페이지 계약 — `hello.modes`, `snapshot.mode`/`solo_available`, 명령
     `m solo`, 그리고 페이지 로그의 전환 경고. 로봇 hello 의 `caps` 가 서버 → 감독 →

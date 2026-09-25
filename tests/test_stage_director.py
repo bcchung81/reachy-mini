@@ -2948,8 +2948,9 @@ def test_공연이_침묵으로_끝나면_마이크를_닫고_첫_큐로_되감�
     assert h.mics() == [("mc", False), ("docent", False)]
     assert h.d.snapshot()["cue_id"] == "c1"
     assert any("공연이 끝났다" in w for w in h.warnings), h.warnings
+    assert h.d.snapshot()["show_running"] is False        # 제어판 토글이 [공연 시작] 으로 돌아온다
     h.clear()
-    h.d.start()                                           # 다음 관람객 — 첫 큐부터
+    h.d.start_show()                                      # 다음 관람객 — 첫 큐부터
     assert h.says() == [("mc", "사회자 첫 대사")]
 
 
@@ -3031,3 +3032,123 @@ def test_닫힌_질문_창의_시각으로_기한을_걸지_않는다():
     h.d.tick()
     assert h.d.snapshot()["cue_id"] == "c1", "닫힌 창의 시각으로 기한이 걸려 다음 큐로 넘어갔다"
     gate.set()
+
+
+# ── 공연 시작 ↔ 공연 종료(2026-09-25, 콘솔 `s`/`e`·제어판 토글) ─────────────────
+#
+# 결정: 시작 = 첫 큐부터. 종료 = 말 멈춤·마이크 닫음·첫 큐로 되감기(공연 끝 자동 처리와 같은 몸).
+# 즉시 중단(`a`)은 그대로 — 지금 큐에 머무는 비상정지다. 경고 문구는 페이지 로그에 뜨는 계약이다.
+
+
+def _진행_중(h):
+    return h.d.snapshot()["show_running"]
+
+
+def test_처음에는_공연이_진행_중이_아니다():
+    assert _진행_중(Harness()) is False
+
+
+def test_공연_시작은_커서가_어디_있든_첫_큐부터다():
+    """단독에서 돌아온 뒤처럼 커서가 중간 큐에 있어도 [공연 시작] 은 처음부터다 — 이어서 하려면 `r`."""
+    h = Harness()
+    h.d._sheet.seek(1)                                  # 진행 중이 아닌데 커서가 c2 에 있다
+    h.d.start_show()
+    assert h.says() == [("mc", "사회자 첫 대사")]
+    assert h.d.snapshot()["cue_id"] == "c1"
+    assert _진행_중(h) is True
+
+
+def test_진행_중에_공연_시작을_또_누르면_경고만_하고_되감지_않는다():
+    """"시작됐나? 한 번 더" — 두 번째가 공연을 첫 큐로 되감으면 여는 인사가 다시 나온다."""
+    h = Harness()
+    h.d.start_show()
+    h.d.abort(); h.d.next()                              # c2 진행 중
+    h.clear()
+    h.d.start_show()
+    assert h.warnings[-1] == "공연이 이미 진행 중이다 — 처음부터 다시 하려면 먼저 공연 종료(e)"
+    assert h.sent == []
+    assert (h.d.state, h.d.snapshot()["cue_id"]) == (State.MC_SPEAKING, "c2")
+
+
+def test_공연_종료는_멈추고_마이크를_닫고_첫_큐로_되감는다():
+    h = Harness()
+    h.d.start_show()
+    h.d.abort(); h.d.next()                              # c2 사회자가 말하는 중
+    h.clear()
+    h.d.end_show()
+    assert ("mc", "abort") in h.types()
+    assert h.mics() == [("mc", False), ("docent", False)]
+    assert h.d.state is State.IDLE
+    s = h.d.snapshot()
+    assert (s["cue_id"], s["show_running"]) == ("c1", False)
+    assert h.warnings[-1] == "공연을 끝냈다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)"
+
+
+def test_듣는_중에_끝내면_질문_창도_닫힌다():
+    """`_abort_locked` 는 발화 기한만 끈다 — 창의 연 시각이 남으면 다음 공연에서 대기 시간을 바꿀 때
+    옛 시각으로 기한이 걸린다(`set_question_wait`)."""
+    h = Harness()
+    h.d.start_show()
+    h.ended("mc", "c1"); h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING                  # 전제: 질문 창이 열렸다
+    h.d.end_show()
+    assert (h.d._question_deadline, h.d._question_opened_at) == (None, None)
+
+
+def test_진행_중이_아닐_때_종료는_경고만_한다():
+    h = Harness()
+    h.d.end_show()
+    assert h.warnings == ["공연이 진행 중이 아니다 — 끝낼 것이 없다"]
+    assert h.sent == []
+
+
+def test_즉시_중단은_공연을_끝내지_않는다():
+    """중단은 지금 큐에 머무는 비상정지다 — 토글이 [공연 시작] 으로 돌아가면 운영자가 "이 큐 다시" 대신
+    시작을 눌러 첫 큐부터 다시 하게 된다."""
+    h = Harness()
+    h.d.start_show()
+    h.d.abort(); h.d.next(); h.d.abort()
+    s = h.d.snapshot()
+    assert (s["show_running"], s["cue_id"], s["state"]) == (True, "c2", "idle")
+
+
+@pytest.mark.parametrize("길", [
+    lambda d: d.start(),
+    lambda d: d.next(),
+    lambda d: d.goto("c2"),
+], ids=["restart", "next", "goto"])
+def test_큐를_시작하는_어느_길로든_공연이_진행_중이_된다(길):
+    """켜는 자리는 `_begin_cue` 하나다 — 런다운 이동으로 공연을 연 운영자에게 [공연 종료] 가 떠야 한다."""
+    h = Harness()
+    길(h.d)
+    assert _진행_중(h) is True
+
+
+def test_거부된_역할이_있으면_공연_시작은_커서를_건드리지_않고_거절한다():
+    h = Harness()
+    h.d._sheet.seek(1)
+    h.d.reject("docent", "다른 로봇이다.")
+    with pytest.raises(TurnError, match="거부된 역할"):
+        h.d.start_show()
+    assert (h.d.snapshot()["cue_id"], _진행_중(h)) == ("c2", False)
+
+
+def test_단독으로_바꾸면_공연은_끝난_것으로_보고_커서는_그대로_둔다():
+    """돌아와서 [공연 시작] 이면 첫 큐부터, 이어서 하려면 `r` — 운영자가 이어 갈 자리를 잃지 않는다."""
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    h.d.start_show(); h.d.abort(); h.d.next()
+    _모드(h, "solo")
+    s = h.d.snapshot()
+    assert (s["show_running"], s["cue_id"]) == (False, "c2")
+
+
+def test_단독에서는_공연_시작도_종료도_거절한다():
+    h = Harness()
+    h.d.on_connect("mc"); h.d.on_hello("mc", None, "2.0.0", caps=["solo"])
+    _모드(h, "solo")
+    h.clear()
+    h.d.start_show(); h.d.end_show()
+    assert "단독 모드에서는 팟캐스트 진행(시작)을 하지 않는다 — 먼저 m podcast" in h.warnings
+    assert "단독 모드에서는 팟캐스트 진행(종료)을 하지 않는다 — 먼저 m podcast" in h.warnings
+    assert h.says() == []

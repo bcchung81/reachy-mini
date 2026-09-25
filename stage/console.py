@@ -9,8 +9,9 @@ import threading
 from stage.director import Director
 
 HELP = """
-  n  다음 큐로   |  p  이전 큐로     |  r  현재 큐 다시  |  s  시작
-  a  즉시 중단   |  ?  도움말        |  q  종료
+  s  공연 시작(첫 큐부터)  |  e  공연 종료(멈추고 첫 큐로 되감기)
+  n  다음 큐로   |  p  이전 큐로     |  r  현재 큐 다시
+  a  즉시 중단(지금 큐에 머문다)  |  ?  도움말  |  q  무대감독 끄기
   g <큐id>  그 큐로 이동
   l <수준>  관람객 수준 바꾸기(바로 — 다음 발화부터)
   w <초|끄기>  질문 창 침묵 대기 시간(3~60초, 지금 창에도 적용)
@@ -84,7 +85,12 @@ def _stop_first(director: Director) -> None:
 def dispatch(director: Director, cmd: str, out, camera=None) -> None:
     """콘솔 명령 하나 — **대시보드도 이 함수를 부른다**, 명령 경로를 하나로 둔다."""
     if cmd == "s":
-        director.start()
+        # [공연 시작] — 첫 큐부터(2026-09-25). ~~지금 커서의 큐를 시작~~ 은 `r` 이 한다. 먼저 멈추지
+        # 않는다: 진행 중이면 감독이 경고만 하고 아무것도 안 건드린다("시작됐나? 한 번 더").
+        director.start_show()
+    elif cmd == "e":
+        # [공연 종료] — 멈추고 첫 큐로 되감는다. 멈추는 일은 감독이 락 안에서 한다(`end_show`).
+        director.end_show()
     elif cmd == "n":
         # 콘솔은 STT 판정기를 거치지 않는다. `on_heard("다음")` 을 흉내내면
         # LISTENING 이 아닐 때(`a` 뒤, 발화 중) 거부된다 — `p`·`r` 과 같은

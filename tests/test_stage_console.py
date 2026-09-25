@@ -71,30 +71,36 @@ class Harness:
         return [(r, f["text"]) for r, t, f in self.sent if t == "say"]
 
 
-def test_s_를_두_번_눌러도_콘솔이_살아_있다():
+def test_s_를_두_번_눌러도_공연을_되감지_않고_콘솔이_살아_있다():
     """운영자가 가장 흔히 하는 행동이다 — "시작됐나? 한 번 더".
 
-    두 번째 `start()` 는 발화 중이라 TurnError 를 던진다. 예전에는 그 예외가
-    그대로 새서 무대감독 프로세스가 끝났다(리뷰 C3).
+    ~~두 번째 `start()` 는 발화 중이라 TurnError 를 던진다~~ — 2026-09-25 `s` 가 [공연 시작]
+    (`start_show`)이 되어, 진행 중이면 경고만 하고 아무것도 안 건드린다. 두 번째 `s` 가 공연을
+    첫 큐로 되감으면 관람객 앞에서 여는 인사가 다시 나온다.
     """
     h = Harness()
     h.run(["s", "s", "q"])
-    assert any("거절됨" in m for m in h.out)
+    assert "공연이 이미 진행 중이다 — 처음부터 다시 하려면 먼저 공연 종료(e)" in h.warnings
     assert h.d.state is State.MC_SPEAKING  # 첫 발화는 살아 있다
+    assert h.says() == [("mc", "사회자 첫 대사")]
 
 
 def test_거절_사유를_사람이_읽을_수_있게_보여준다():
+    """감독이 던진 거절(TurnError)은 콘솔이 삼키지 않고 사유를 보여 준다 — 무대감독이 죽지 않는다(리뷰 C3)."""
     h = Harness()
-    h.run(["s", "s", "q"])
+    h.d.reject("docent", "기대한 로봇이 아니다.")
+    h.run(["s", "q"])
     거절 = [m for m in h.out if "거절됨" in m]
-    assert 거절 and "말하는 중" in 거절[0]
+    assert 거절 and "거부된 역할" in 거절[0]
 
 
 def test_거절_뒤에도_다음_명령이_먹는다():
     """콘솔이 살아 있다는 말은 다음 키가 실제로 처리된다는 뜻이다."""
     h = Harness()
-    h.run(["s", "s", "a", "q"])
-    assert h.d.state is State.IDLE  # a 가 먹었다
+    h.d.reject("docent", "기대한 로봇이 아니다.")
+    h.run(["s", "e", "q"])
+    assert any("거절됨" in m for m in h.out)
+    assert "공연이 진행 중이 아니다 — 끝낼 것이 없다" in h.warnings   # e 가 먹었다
 
 
 def test_예상_못한_예외도_삼키지_않고_보여준다():
@@ -104,7 +110,7 @@ def test_예상_못한_예외도_삼키지_않고_보여준다():
     def 터진다():
         raise RuntimeError("감독이 터졌다")
 
-    h.d.start = 터진다
+    h.d.start_show = 터진다
     h.run(["s", "q"])
     assert any("감독이 터졌다" in m for m in h.out)
 

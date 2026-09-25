@@ -380,6 +380,12 @@ class Director:
 
         # 운영 모드(`MODES`). `set_mode` 만 바꾼다.
         self._mode = "podcast"
+        # **공연이 진행 중인가**(2026-09-25, 제어판 [공연 시작] ↔ [공연 종료] 토글). 큐를 시작하는
+        # 유일한 자리(`_begin_cue`)가 켜고, 끝내는 자리 셋(운영자 종료 `end_show`·마지막 큐 침묵
+        # 되감기·단독 전환)이 끈다. **즉시 중단(`a`)은 끄지 않는다** — 중단은 지금 큐에 머무는
+        # 비상정지라 이어서 "이 큐 다시" 로 돌아온다. 상태기계(IDLE/발화/듣기)로는 이 구분이 안 된다:
+        # 중단 뒤도, 공연 전도, 공연 끝도 전부 IDLE 이다.
+        self._show_running = False
         # 역할 → 그 로봇 앱이 hello 로 알린 능력(`caps`, 예: {"solo"}). **끊기면 지운다**
         # (`on_disconnect`) — 안 지우면 단독을 아는 앱이 나가고 모르는 앱이 다시 붙어도
         # 옛 능력이 남아 단독이 켜진다. 지금 로봇 앱은 `caps` 를 안 보내 늘 빈 집합이다.
@@ -806,7 +812,51 @@ class Director:
             self._warn(f"[{role}] {where} 에서 오류: {detail}")
 
     # ── 바깥에서 부르는 것 ────────────────────────────────────────
+    def start_show(self) -> None:
+        """[공연 시작] — **첫 큐부터**(콘솔 `s`, 제어판 토글, 2026-09-25).
+
+        ~~`s` = 지금 커서의 큐를 시작~~ — 커서가 어디 있든 첫 큐로 되감고 시작한다. 지금 큐를 다시
+        하려면 `r`(`start`)이다. **이미 진행 중이면 아무것도 안 한다** — "시작됐나? 한 번 더" 는
+        운영자가 가장 흔히 하는 행동인데(`test_s_를_두_번_눌러도_콘솔이_살아_있다`), 그것이 공연을
+        처음으로 되감으면 관람객 앞에서 여는 인사가 다시 나온다. 처음부터 다시 하려면 종료 뒤 시작.
+        """
+        with self._lock:
+            if self._refused_in_solo("시작"):
+                return
+            if self._show_running:
+                self._warn("공연이 이미 진행 중이다 — 처음부터 다시 하려면 먼저 공연 종료(e)")
+                return
+            if self._rejected:
+                raise TurnError(
+                    f"거부된 역할이 있다: {sorted(self._rejected)} — "
+                    "로봇을 바꿔 걸고 다시 붙인 뒤 시작한다"
+                )
+            # 진행 중이 아닌데 발화가 흐를 수는 없지만(끝내는 세 자리가 모두 멈춘다) 검사는
+            # `_begin_cue` 가 한다 — 커서를 되감은 뒤 거절되면 커서만 움직인 채 남으므로 먼저 본다.
+            if self._machine.state in SPEAKING:
+                raise TurnError(
+                    f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
+                )
+            self._sheet.reset()
+            self._begin_cue(self._sheet.current())
+
+    def end_show(self) -> None:
+        """[공연 종료] — 말 멈춤·마이크 닫음·첫 큐로 되감기(콘솔 `e`, 제어판 토글, 2026-09-25).
+
+        마지막 큐가 침묵으로 끝날 때와 같은 몸(`_end_show_locked`)이다. 즉시 중단(`a`)과 다른 점은
+        **되감는다**는 것 — 중단은 지금 큐에 머물러 "이 큐 다시" 로 돌아올 수 있다. 진행 중이 아니면
+        경고만 한다(눌러도 되감을 것이 없다 — 커서는 이미 첫 큐다).
+        """
+        with self._lock:
+            if self._refused_in_solo("종료"):
+                return
+            if not self._show_running:
+                self._warn("공연이 진행 중이 아니다 — 끝낼 것이 없다")
+                return
+            self._end_show_locked("공연을 끝냈다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)")
+
     def start(self) -> None:
+        """지금 커서의 큐를 시작한다 — 콘솔 `r`(abort 뒤)의 몸. ~~콘솔 `s`~~ 는 `start_show` 다."""
         with self._lock:
             if self._refused_in_solo("시작"):
                 return
@@ -861,11 +911,24 @@ class Director:
             # 닫고 IDLE 로 간 뒤 커서를 처음으로 돌린다. 공연마다 한 번뿐이라 한 줄 남긴다 —
             # 운영자가 로그에서 "한 바퀴 끝났다" 를 보는 자리다("마지막" 이라는 낱말은 안 쓴다:
             # 그것은 요청을 못 들어준 경고의 표지다).
-            self._abort_locked()
-            self._sheet.reset()
-            self._warn("공연이 끝났다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)")
+            self._end_show_locked("공연이 끝났다 — 마이크를 닫고 첫 큐로 되감았다(다음 관람객은 s)")
             return
         self._begin_cue(nxt)
+
+    def _end_show_locked(self, message: str) -> None:
+        """공연을 닫는다 — 말 멈춤·마이크 닫음·첫 큐로 되감기. **`self._lock` 을 쥔 채** 부른다.
+
+        마지막 큐 침묵(자동)과 운영자의 [공연 종료](`end_show`)가 **같은 몸**을 쓴다(결정 2026-09-25) —
+        둘이 따로 놀면 한쪽만 마이크를 안 닫거나 질문 창 기한을 남기는 자리가 생긴다. 질문 창을 여기서
+        닫는 이유: `_abort_locked` 는 발화 기한만 끄므로, 듣는 중에 끝내면 옛 창의 연 시각이 남아 다음
+        공연에서 대기 시간을 바꿀 때 그 시각으로 기한이 걸린다(`set_question_wait`).
+        """
+        self._abort_locked()
+        self._question_deadline = None
+        self._question_opened_at = None
+        self._sheet.reset()
+        self._show_running = False
+        self._warn(message)
 
     def previous(self) -> None:
         """이전 큐로 되돌려 다시 진행한다 — 수동 오버라이드(설계 §7).
@@ -1069,6 +1132,9 @@ class Director:
             # 버려지고, 생성을 기다리던 핸드오프는 깨어나 IDLE 을 보고 물러난다.
             # (`test_듣는_중에_단독으로_바꾸면_침묵_자동_진행도_관람객의_다음도_진행하지_않는다`)
             self._abort_locked()
+            # 단독으로 들어가면 팟캐스트 공연은 끝난 것이다 — 돌아와서 [공연 시작] 을 누르면 첫 큐부터다
+            # (이어서 하려면 `r`). 커서는 되감지 않는다: 운영자가 이어 갈 자리를 잃지 않게.
+            self._show_running = False
             old, self._mode = self._mode, name
             # 4단계: 여기서 로봇에게 mode 를 보낸다(앱이 단독 루프로 전환)
             self._warn(f"모드를 {old} → {name} 로 바꿨다")
@@ -1195,6 +1261,8 @@ class Director:
                 "cue_index": self._sheet.index,
                 "cue_id": self._sheet.current().id,
                 "cue_count": len(self._sheet.cues()),
+                # 제어판 토글의 근거 — true 면 [공연 종료], false 면 [공연 시작](2026-09-25).
+                "show_running": self._show_running,
                 "state": self._machine.state.value,
                 "speaking_role": self._machine.speaking_role,
                 "question_wait_s": wait,
@@ -1425,6 +1493,7 @@ class Director:
         # ~~`_invalidate_slot`~~ 은 받아치기 슬롯과 함께 지웠다 — 끊을 슬롯이
         # 하나뿐이라 `_bump_slot` 을 직접 부른다(세대를 올리고 대기자를 깨운다).
         self._bump_slot("docent")
+        self._show_running = True
         self._emit(self._speak("mc", cue.id, mc_text, gaze=cue.gaze, emotion=cue.mc_emotion))
 
     def _spawn_generate(
