@@ -512,6 +512,24 @@ _REPEAT_MIN_TIMES = 3
 _REPEAT_MIN_SHARE = 0.6
 
 
+# 질문으로 볼 낱말(물음말·요청). `looks_like_question` 이 쓴다.
+_QUESTION_WORDS = (
+    "뭐", "무엇", "무슨", "왜", "어떻게", "어떤", "어느", "누구", "누가", "언제", "어디", "몇", "얼마",
+    "알려", "설명", "궁금",
+)
+
+
+def looks_like_question(text: str) -> bool:
+    """관람객 말이 **질문(또는 설명 요청)** 처럼 보이는가 — 단독 모드가 확인 멘트를 붙일지 가른다.
+
+    틀려도 싼 쪽으로 기운다: 질문을 가벼운 말로 잘못 보면 멘트 없이 1~2초 쉬고 답한다(조금 느릴 뿐).
+    가벼운 말을 질문으로 잘못 보면 "감사합니다" 에 "잠깐 생각해 볼게요" 가 붙는다(어색함 — 실측으로 이
+    판정이 생겼다). 그래서 물음표(STT 가 붙인다)나 물음말·요청어가 **있을 때만** 질문이다.
+    """
+    t = text.strip()
+    return "?" in t or "？" in t or any(w in t for w in _QUESTION_WORDS)
+
+
 def noise_reason(text: str) -> str | None:
     """이 전사를 관람객 질문으로 **보지 않을** 이유. 질문으로 받아도 되면 None.
 

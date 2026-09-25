@@ -30,6 +30,7 @@ from stage.cues import (
     CueSheet,
     Point,
     is_advance,
+    looks_like_question,
     noise_reason,
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
@@ -709,10 +710,7 @@ class Director:
                 return
             elif cue_id == SOLO_ACK_ID:
                 # 단독 확인 멘트가 끝났다 — 그동안 만든 답을 **사회자가** 말한다(생성 역할은 `solo`).
-                pending = _Pending(
-                    "solo", "solo", SOLO_QA_ID, SOLO_FALLBACK, FB_SOLO, SOLO_QA_ID,
-                    min_chars=SOLO_MIN_CHARS, speaker="mc", react=SOLO_LISTENER_REACT,
-                )
+                pending = self._solo_pending()
             elif cue_id == cue.id and self._points:
                 # **오프닝이 끝났다 — 0턴 설명을 그대로 말한다.**
                 # 기다릴 것이 없다(생성하지 않는다). 해설은 검수한 고정 대본이고,
@@ -820,6 +818,16 @@ class Director:
             # 핸드오프 사이에 마이크가 깜빡이지 않는다. 취소되면 통째로 버린다
             # (끼어든 쪽이 이미 제 지시를 내보냈다).
 
+        self._deliver(pending, ready, token, cmds)
+
+    def _deliver(self, pending: "_Pending", ready: threading.Event, token: int, cmds: list) -> None:
+        """기다리던 생성 답을 **락 밖에서** 기다렸다가, 세상이 그대로면 말하게 한다.
+
+        `on_speaking_ended` 의 2구간이었다. 단독의 가벼운 말(확인 멘트 없이 바로 답, `_solo_answer`)이
+        같은 몸을 쓰려고 뺐다 — 상태·세대 재확인을 두 벌로 두면 한쪽만 고쳐진다(교훈 대장 「멈춘 뒤 곧바로
+        듣기로 가는 전환은 상태 검사만으로 늦은 생성을 못 막는다」). `cmds` 는 함께 내보낼 지시(핸드오프의
+        마이크 열기 — 곧바로 닫기에 덮인다)이고, 없으면 빈 목록이다.
+        """
         text = self._await_pending(pending, ready, token)
 
         with self._lock:
@@ -1463,29 +1471,35 @@ class Director:
         self._mode = "podcast"
 
     def _solo_brief(self, question: str) -> str:
-        """단독 답의 지시문 — 큐시트 **전체**에서 가장 가까운 섹션 하나를 근거로 싣는다.
+        """단독 답의 지시문 — 큐시트 **전체**에서 가까운 섹션(둘까지)을 근거로 싣는다.
 
         팟캐스트 질문 답(`_answer`)은 "지금 섹션" 을 기본 근거로 두지만 단독에는 지금 섹션이 없다. 가까운
         섹션이 없으면(인사·잡담) 근거를 싣지 않고 그렇게 말해 준다 — 없는 근거를 "확인된 내용" 으로 주면
         모델이 그것을 답에 섞는다. 금지 규칙(guard)도 그 섹션 것을 함께 싣는다(`_answer` 와 같은 이유).
         """
         parts = [f"관람객이 '{question}' 라고 말했다. 사회자로서 혼자 답한다."]
-        cue = self._index.best(question, self._level_name)
-        if cue is not None:
-            # **"전시에 대한 질문일 때만 쓴다" 를 붙인다.** 색인은 사회자 대사도 보므로 인사말이 섹션에 걸린다
-            # (실측: "고마워요"·"안녕하세요" → 개요, "감사합니다" → 전자파, "재미있어요" → 모스). 내용 필드만
-            # 색인하면 인사는 빠지지만 진짜 질문을 놓친다("전자파는 몸에 해로워요?" 가 문턱 아래로, "모스 부호는
-            # 누가…" 가 엉뚱한 섹션으로) — 재현율을 지키고, 인사에 해설을 얹지 않는 일은 지시문이 맡는다.
-            # 근거는 전부 검수한 브리프라 섞여도 사실이 틀리지는 않는다.
+        # 가까운 섹션 **둘까지**(`CueIndex.nearest` — 하나만 주면 엉뚱한 섹션이 잦았다, 실측 21/28 → 26/28).
+        near = self._index.nearest(question, self._level_name)
+        for cue in near:
             _, brief = cue.brief_for(self._level_name)
             parts.append(
-                f"관람객 말과 가장 가까운 전시 섹션('{cue.title}')에서 확인된 내용(전시에 대한 질문일 때만 "
-                f"쓴다): {brief.replace('**', '')}"
+                f"관람객 말과 가까운 전시 섹션('{cue.title}')에서 확인된 내용: {brief.replace('**', '')}"
             )
             guard = cue.guard_for(self._level_name)
             if guard:
                 parts.append(guard)
-            self._warn(f"[{SOLO_QA_ID}] '{cue.id}' 섹션을 근거로 싣는다")
+        if near:
+            # **질문이면 근거로 바로 답하고, 가벼운 말이면 근거를 꺼내지 않는다 — 둘 다 적는다.** 색인은 사회자
+            # 대사도 보므로 인사말이 섹션에 걸린다(실측: "안녕하세요"·"고마워요" → 개요, "감사합니다" → 전자파).
+            # ~~"(전시에 대한 질문일 때만 쓴다)" 만 붙였다~~ — 인사는 걸렀지만 질문에서도 근거를 머뭇거렸다.
+            # 이 두 문장으로 실측한 결과 질문은 근거대로, 인사·감사·잡담은 한두 문장으로 받았다.
+            parts.append(
+                "관람객 말이 전시에 대한 질문이면 위 확인된 내용으로 첫 문장에서 바로 답한다. "
+                "인사나 가벼운 말이면 위 내용은 꺼내지 않고 짧게 받는다."
+            )
+            self._warn(
+                f"[{SOLO_QA_ID}] {', '.join(repr(c.id) for c in near)} 섹션을 근거로 싣는다"
+            )
         else:
             parts.append(
                 "관련된 전시 섹션을 찾지 못했다. 인사나 가벼운 말이면 짧고 친근하게 답한다. "
@@ -1503,11 +1517,29 @@ class Director:
         """
         self._remember(f"관람객: {question}")
         self._spawn_generate("solo", "solo", self._solo_brief(question), SOLO_FALLBACK, SOLO_QA_ID)
+        if not looks_like_question(question):
+            # **인사·감사 같은 가벼운 말에는 확인 멘트를 붙이지 않는다**(실측 2026-09-25). "감사합니다" →
+            # "음, 잠깐 생각해 볼게요." → "천만에요." 가 나갔다 — 멘트가 인사를 질문처럼 받는다. 가벼운 답은
+            # 짧아 생성·합성이 빨리 끝나므로(실측 LLM 0.6초) 멘트 없이 잠깐 쉬고 답하는 편이 자연스럽다.
+            # 기다리는 동안 마이크는 열린 채다 — 관람객이 이어 말하면 새 생성이 이 답을 밀어낸다(세대).
+            ready, token = self._snapshot_slot("solo")
+            threading.Thread(
+                target=self._deliver, args=(self._solo_pending(), ready, token, []), daemon=True,
+            ).start()
+            return
         i = self._ack_i % len(SOLO_ACK_LINES)
         self._ack_i += 1
         ack = SOLO_ACK_LINES[i]
         self._remember(f"사회자: {ack}")
         self._emit(self._speak("mc", SOLO_ACK_ID, ack, gaze="audience", emotion=SOLO_ACK_EMOTIONS[i]))
+
+    @staticmethod
+    def _solo_pending() -> "_Pending":
+        """단독 답 한 건 — 생성 역할은 `solo`(페르소나), 말하는 것은 사회자, 듣는 도슨트는 끄덕인다."""
+        return _Pending(
+            "solo", "solo", SOLO_QA_ID, SOLO_FALLBACK, FB_SOLO, SOLO_QA_ID,
+            min_chars=SOLO_MIN_CHARS, speaker="mc", react=SOLO_LISTENER_REACT,
+        )
 
     def _say_answer(self, cue: Cue, i: int, cmds: list) -> None:
         """턴 i 의 도슨트 설명을 **그대로** 말한다. `self._lock` 을 쥔 채 부른다.

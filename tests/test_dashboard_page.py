@@ -401,13 +401,28 @@ def test_공연_토글은_snapshot의_show_running으로_시작과_종료를_오
 
 
 def test_공연_토글은_누른_뒤_잠깐_잠가_종료_두_번이_재시작이_되지_않는다():
-    """[공연 종료] 를 빠르게 두 번 누르면 그 사이 도착한 스냅샷 때문에 두 번째가 [공연 시작] 이 된다 —
-    끝내려던 공연이 첫 큐부터 다시 시작한다. 감독은 두 명령이 각각 정당해서 이 교차를 못 막는다."""
+    """[공연 종료] 를 두 번 누르면 그 사이 도착한 스냅샷 때문에 두 번째가 [공연 시작] 이 된다 —
+    끝내려던 공연이 첫 큐부터 다시 시작한다. 감독은 두 명령이 각각 정당해서 이 교차를 못 막는다.
+
+    ~~1000ms~~ 는 실측으로 뚫렸다(두 번 누른 간격 1005ms → `e` 뒤 `s`). 1500ms 로 늘리고 잠긴 동안
+    버튼을 흐리게 둔다 — 스냅샷마다 도는 단독 잠금(`applySoloLockdown`)이 그 잠금을 풀지 않아야 한다."""
     src = _src()
-    assert "var SHOW_TOGGLE_LOCK_MS = 1000;" in src
+    assert "var SHOW_TOGGLE_LOCK_MS = 1500;" in src
     assert "if (now < showToggleLockedUntil) return;" in src
+    assert "btn.disabled = true;" in src
+    lockdown = _media_block(src, "function applySoloLockdown(isSolo)")
+    assert 'if (showToggleLocked()) document.getElementById("btn-show").disabled = true;' in lockdown
 
 
 def test_단독에서는_공연_토글도_잠근다():
     """단독에서 감독은 공연 시작·종료를 거절한다 — 버튼도 잠가야 거절 경고만 쌓이지 않는다."""
     assert '["btn-prev", "btn-restart", "btn-next", "btn-show"].forEach' in _src()
+
+
+
+def test_단독에서는_런다운의_지금_큐를_ON_AIR_로_켜지_않는다():
+    """단독은 곧바로 LISTENING 이다 — state 만 보면 멈춰 둔 팟캐스트 큐가 ON AIR(빨강)로 켜져, 운영자가
+    팟캐스트가 도는 줄 안다(2026-09-25 화면 실측)."""
+    body = _media_block(_src(), "function refreshRundownTags()")
+    assert ('var idle = latestSnapshot && (latestSnapshot.state === "idle" || latestSnapshot.mode === "solo");'
+            in body)

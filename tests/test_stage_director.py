@@ -2485,12 +2485,12 @@ def test_단독에서_들은_말에_확인_멘트_뒤_사회자가_생성_답을
 
 def test_단독_확인_멘트는_돌아가며_쓴다():
     from stage.cues import SOLO_ACK_LINES
-    h = Harness(generate=lambda role, brief, hist: "네, 반가워요. 궁금한 전시 이야기가 있으면 물어봐 주세요.")
+    h = Harness(generate=lambda role, brief, hist: "전파는 눈에 보이지 않는 파동이에요. 빛과 같은 속도로 움직여요.")
     _단독(h)
     got = []
     for _ in range(len(SOLO_ACK_LINES)):
         h.clear()
-        h.d.on_heard("안녕하세요 반가워요")
+        h.d.on_heard("전파가 뭐예요?")
         got.append(h.says()[0][1])
         h.ended("mc", "solo:ack"); h.ended("mc", "solo:qa")
     assert got == list(SOLO_ACK_LINES)
@@ -2505,8 +2505,10 @@ def test_단독_답은_큐시트_전체에서_가까운_섹션을_근거로_싣�
     assert "마르코니가 1901년에 대서양 횡단 무선전신을 성공시켰다." in brief
     assert "'캐나다'라고 하지 않는다" in brief
     assert "전파의 원리" not in brief                        # 커서의 섹션(c1)을 끼우지 않는다
-    # 색인이 인사말에도 섹션을 거는 한계(`tests/test_stage_retrieval.py`)를 지시문이 막는다.
-    assert "전시에 대한 질문일 때만 쓴다" in brief
+    # 질문이면 근거로 바로 답하고, 색인이 인사말에도 섹션을 거는 한계(`tests/test_stage_retrieval.py`)는
+    # 지시문이 막는다 — 두 문장이 함께 있어야 한다(한쪽만이면 질문에서 머뭇거리거나 인사에 해설을 얹는다).
+    assert "관람객 말이 전시에 대한 질문이면 위 확인된 내용으로 첫 문장에서 바로 답한다." in brief
+    assert "인사나 가벼운 말이면 위 내용은 꺼내지 않고 짧게 받는다." in brief
     assert "[solo:qa] 'c2' 섹션을 근거로 싣는다" in h.warnings
 
 
@@ -2545,13 +2547,93 @@ def test_단독에서_도슨트는_사회자를_보고_끄덕인다():
     assert [r for r, t, _ in h.sent if t == "say"] == []    # 도슨트는 말하지 않는다
 
 
+def _말할_때까지(h, n=1, timeout=3.0):
+    """가벼운 말의 답은 스레드가 싣는다 — 사회자 say 가 n 개 나갈 때까지 기다린다."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if len(h.says()) >= n:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def test_단독_답이_짧아도_인사_한_줄은_경고하지_않는다():
     h = Harness(generate=lambda role, brief, hist: "안녕하세요, 반가워요.")
     _단독(h)
-    h.d.on_heard("안녕하세요 반가워요")
+    h.clear()
     h.warnings.clear()
-    h.ended("mc", "solo:ack")
+    h.d.on_heard("안녕하세요 반가워요")
+    assert _말할_때까지(h), h.sent
+    assert h.says() == [("mc", "안녕하세요, 반가워요.")]
     assert not any("너무 짧다" in w for w in h.warnings), h.warnings
+
+
+def test_단독에서_가벼운_말에는_확인_멘트_없이_답이_나오는_대로_말한다():
+    """실측(2026-09-25): "감사합니다" → "음, 잠깐 생각해 볼게요." → "천만에요." — 멘트가 인사를 질문처럼 받았다.
+    기다리는 동안 마이크는 열린 채다(아무도 말하지 않는다)."""
+    gate = threading.Event()
+
+    def slow(role, brief, hist):
+        gate.wait(3.0)
+        return "천만에요. 즐거운 관람 되세요."
+
+    h = Harness(generate=slow)
+    _단독(h)
+    h.clear()
+    h.d.on_heard("감사합니다")
+    time.sleep(0.05)
+    assert h.says() == []                                   # 확인 멘트가 없다
+    assert (h.d.state, h.mics()) == (State.LISTENING, [])   # 마이크를 건드리지 않았다(열린 채)
+    gate.set()
+    assert _말할_때까지(h), h.sent
+    qa = [f for _, t, f in h.sent if t == "say"][0]
+    assert (qa["cue_id"], qa["text"]) == ("solo:qa", "천만에요. 즐거운 관람 되세요.")
+    assert h.mics()[0] == ("mc", False)                     # 말하기 전에 닫는다(불변식 ①)
+    h.ended("mc", "solo:qa")
+    assert h.d.state is State.LISTENING and h.mics()[-1] == ("mc", True)
+
+
+def test_가벼운_말_답을_기다리는_중_관람객이_이어_말하면_새_답이_밀어낸다():
+    calls = []
+    gate = threading.Event()
+
+    def gen(role, brief, hist):
+        calls.append(brief)
+        if len(calls) == 1:
+            gate.wait(3.0)
+            return "첫 답"
+        return "둘째 답"
+
+    h = Harness(generate=gen)
+    _단독(h)
+    h.clear()
+    h.d.on_heard("안녕하세요")
+    h.d.on_heard("반가워요")                                 # 첫 답이 나오기 전에 이어 말한다
+    assert _말할_때까지(h), h.sent
+    gate.set()
+    time.sleep(0.1)
+    assert h.says() == [("mc", "둘째 답")], h.says()
+    # 버리는 사유는 두 대기 스레드가 락을 잡는 순서에 달렸다 — 세대(다음 턴) 또는 상태(둘째 답이 이미
+    # 말하는 중). 어느 쪽이든 "버렸다" 가 로그에 남으면 된다(비결정적인 순서는 단언하지 않는다).
+    assert any(w.startswith("[solo:qa] 기다리는 사이에") for w in h.warnings), h.warnings
+
+
+def test_가벼운_말_답을_기다리는_중_중단하면_그_답은_버린다():
+    gate = threading.Event()
+
+    def slow(role, brief, hist):
+        gate.wait(3.0)
+        return "늦은 답"
+
+    h = Harness(generate=slow)
+    _단독(h)
+    h.d.on_heard("안녕하세요")
+    h.d.abort()
+    h.clear()
+    gate.set()
+    time.sleep(0.2)
+    assert h.says() == []
+    assert h.d.state is State.LISTENING
 
 
 def test_단독_답_생성이_실패하면_다시_말해_달라고_한다():

@@ -1105,3 +1105,19 @@ def test_데이터_듣는_반응은_한_갈래로만_돌지_않는다():
     worst, n = tags.most_common(1)[0]
     assert n / total <= 0.5, f"{worst} 가 듣는 반응 {n}/{total}"
     assert len(tags) >= 6, tags
+
+
+
+@pytest.mark.parametrize("text", [
+    "마르코니가 누구예요?", "전파가 뭐예요", "왜 그래요", "어떻게 소리가 나요", "5G는 언제 시작됐어요",
+    "모스 부호 알려 주세요", "그거 설명해 주세요", "궁금한 게 있어요", "몇 년에 만들었어요",
+])
+def test_질문과_설명_요청은_질문으로_본다(text):
+    """단독 모드가 확인 멘트를 붙일지 가른다(2026-09-25) — 질문이면 멘트로 지연을 가린다."""
+    assert cues_mod.looks_like_question(text)
+
+
+@pytest.mark.parametrize("text", ["안녕하세요", "감사합니다", "고마워요", "재미있어요", "잘 가요", "반가워요"])
+def test_인사와_감사는_질문이_아니다(text):
+    """실측: "감사합니다" 에 "잠깐 생각해 볼게요" 가 붙어 어색했다 — 가벼운 말은 멘트 없이 답한다."""
+    assert not cues_mod.looks_like_question(text)

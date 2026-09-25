@@ -907,8 +907,9 @@ function refreshRundownTags() {
       row.btn.classList.add("now");
       // 시작 전(idle)에는 아직 방송 중이 아니다 — 여기서 ON AIR(빨강)를 켜면
       // 운영자가 이미 시작된 것으로 착각한다. idle 이 아니면(발화 중·LISTENING)
-      // 그대로 ON AIR.
-      var idle = latestSnapshot && latestSnapshot.state === "idle";
+      // 그대로 ON AIR. **단독도 방송 중이 아니다**(2026-09-25) — 단독은 곧바로 LISTENING
+      // 이라 state 만 보면 멈춰 둔 팟캐스트 큐가 ON AIR 로 켜진다(화면 실측).
+      var idle = latestSnapshot && (latestSnapshot.state === "idle" || latestSnapshot.mode === "solo");
       if (idle) row.btn.classList.add("ready");
       row.tag.textContent = idle ? "READY" : "ON AIR";
     } else {
@@ -1054,6 +1055,8 @@ function applySoloLockdown(isSolo) {
   ["btn-prev", "btn-restart", "btn-next", "btn-show"].forEach(function (id) {
     document.getElementById(id).disabled = isSolo;
   });
+  // 스냅샷마다 여기를 지나므로 공연 토글의 누른-뒤-잠금을 풀어 버리지 않게 다시 건다.
+  if (showToggleLocked()) document.getElementById("btn-show").disabled = true;
   document.getElementById("goto-confirm").disabled = isSolo;
   document.getElementById("goto-cancel").disabled = isSolo;
   rundownRows.forEach(function (row) { row.btn.disabled = isSolo; });
@@ -1136,11 +1139,18 @@ document.getElementById("btn-abort").addEventListener("click", function () { sen
 
 // ── 공연 시작 ↔ 공연 종료 토글 ──────────────────────────────────────
 // 한 버튼이 snapshot.show_running 에 따라 두 명령을 오간다. **누른 뒤 잠깐 잠근다**: 토글은 누른
-// 순간의 라벨로 명령을 고르는데, [공연 종료] 를 두 번 빠르게 누르면 그 사이 스냅샷이 도착해 두 번째
-// 누름이 [공연 시작] 이 된다 — 끝내려던 공연이 곧바로 첫 큐부터 다시 시작한다. 감독은 반대 방향
-// (진행 중인데 s)을 경고로 막지만 이 교차는 두 명령이 각각 정당해서 못 막는다.
-var SHOW_TOGGLE_LOCK_MS = 1000;
+// 순간의 라벨로 명령을 고르는데, [공연 종료] 를 두 번 누르면 그 사이 스냅샷이 도착해 두 번째 누름이
+// [공연 시작] 이 된다 — 끝내려던 공연이 곧바로 첫 큐부터 다시 시작한다. 감독은 반대 방향(진행 중인데
+// s)을 경고로 막지만 이 교차는 두 명령이 각각 정당해서 못 막는다.
+//
+// ~~1000ms~~ → **1500ms, 눈에 보이게 잠근다**(2026-09-25 실측): 브라우저 자동화로 두 번 누르니 간격이
+// 1005ms 라 1초 잠금을 5ms 차로 넘어 `e` 뒤에 `s` 가 나갔다. "눌렸나?" 하고 다시 누르는 사람의 간격도
+// 그쯤이다. 잠긴 동안 버튼을 흐리게(disabled) 두어 운영자가 "지금은 안 눌린다" 를 보고, 풀린 뒤에는
+// 바뀐 라벨을 읽고 누르게 한다.
+var SHOW_TOGGLE_LOCK_MS = 1500;
 var showToggleLockedUntil = 0;
+
+function showToggleLocked() { return Date.now() < showToggleLockedUntil; }
 
 function renderShowToggle(s) {
   // 구버전 서버(필드 없음)는 시작으로 둔다 — 그 서버의 s 는 "지금 큐 시작" 이라 같은 버튼이 통한다.
@@ -1156,7 +1166,13 @@ document.getElementById("btn-show").addEventListener("click", function () {
   var now = Date.now();
   if (now < showToggleLockedUntil) return;
   showToggleLockedUntil = now + SHOW_TOGGLE_LOCK_MS;
-  sendCmd(this.dataset.cmd === "e" ? "e" : "s");
+  var btn = this;
+  btn.disabled = true;
+  sendCmd(btn.dataset.cmd === "e" ? "e" : "s");
+  setTimeout(function () {
+    // 단독이면 계속 잠가 둔다 — 단독 잠금은 applySoloLockdown 몫이다.
+    btn.disabled = !!(latestSnapshot && latestSnapshot.mode === "solo");
+  }, SHOW_TOGGLE_LOCK_MS);
 });
 
 // 카메라 켜기/끄기·대기모드 버튼 — 콘솔(stage/console.py)과 같은 "c <role>"/"z <role>"

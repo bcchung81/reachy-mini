@@ -12,6 +12,9 @@
 
 원칙: **지금 섹션보다 확실히 더 가까울 때만** 다른 섹션을 붙이고, 붙여도 **하나만**이다.
 엉뚱한 근거는 없는 근거보다 나쁘다 — 모델이 그것을 답에 섞는다.
+
+단독 모드(2026-09-25, `nearest`)는 규칙이 다르다 — 지금 섹션이라는 기본 근거가 없어서 근거를 놓치면 곧바로
+"모른다" 나 환각이 된다. 둘까지 주고 문턱을 조금 낮췄다(근거와 수치는 `nearest` docstring).
 """
 
 import math
@@ -26,6 +29,10 @@ from stage.cues import Cue
 # 1.5 개 분량이면 19큐에서 약 4.4점: 흔한 말끝만 겹치는 질문("그건 왜 그런가요?" 2.3점)은
 # 떨어지고 고유명사 질문("마르코니가 누구…" 11.9점)은 넘는다(`tests/test_stage_retrieval.py`).
 MIN_RARE_GRAMS = 1.5
+# 단독 모드의 근거 검색(`CueIndex.nearest`) — 규칙과 수치의 근거는 그 docstring 에 있다(실측 2026-09-25).
+MIN_RARE_GRAMS_SOLO = 1.25
+SOLO_MAX_SECTIONS = 2
+SOLO_SECOND_MIN_SHARE = 0.5
 
 _KEEP = re.compile(r"[0-9A-Za-z가-힣]+")
 
@@ -69,23 +76,40 @@ class CueIndex:
         q = _grams(question)
         return [sum(idf.get(g, 0.0) for g in q & d) for d in docs]
 
-    def _threshold(self) -> float:
-        return MIN_RARE_GRAMS * math.log(len(self._cues)) if len(self._cues) > 1 else math.inf
+    def _threshold(self, rare_grams: float = MIN_RARE_GRAMS) -> float:
+        return rare_grams * math.log(len(self._cues)) if len(self._cues) > 1 else math.inf
 
-    def best(self, question: str, level: str) -> Cue | None:
-        """큐시트 **전체**에서 질문에 가장 가까운 섹션 하나 — 문턱을 못 넘으면 None.
+    def nearest(self, question: str, level: str) -> list[Cue]:
+        """큐시트 **전체**에서 질문에 가까운 섹션 — 많아야 `SOLO_MAX_SECTIONS` 개, 가까운 순.
 
         단독 모드(2026-09-25)의 근거다. 거기에는 "지금 섹션" 이 없다 — 사회자가 혼자 관람객 말을 받으므로
-        무엇을 물을지 모른다. 인사·잡담은 문턱을 못 넘어 None 이 되고, 그때 감독은 근거 없이 짧게 답하라고
-        한다(엉뚱한 섹션을 붙이면 "안녕하세요" 에 전시 해설이 나온다). 동점이면 앞 섹션이다(결정적).
+        무엇을 물을지 모른다. `related`(하나, 지금 섹션보다 확실히 가까울 때만)와 규칙이 다른 이유는 실측이다
+        (`tests/test_stage_retrieval.py` 의 단독 재현율 묶음, 28문항):
+
+        - **하나만 주면 엉뚱한 섹션이 잦다** — "헤르츠가 뭐예요?" 가 헤르츠 실험을 체험하는 모스 섹션으로,
+          "1세대 이동통신은 언제예요?" 가 사물인터넷으로 갔다(맞음 21/28). 둘째까지 주면 정답이 근거 안에
+          드는 것이 26/28 이다. 둘째는 첫째 점수의 `SOLO_SECOND_MIN_SHARE` 이상일 때만 — 멀리 떨어진
+          둘째는 근거가 아니라 소음이다.
+        - **문턱을 조금 낮춘다**(`MIN_RARE_GRAMS_SOLO`). "전자파는 몸에 해로워요?"(4.3점)가 1.5 개 분량
+          문턱(4.4점) 바로 아래라 근거 없이 "모른다" 로 답했다. 인사말 오탐은 늘지만 지시문이 걸러 낸다
+          (`Director._solo_brief`) — 근거는 전부 검수한 브리프라 섞여도 사실이 틀리지 않고, 놓치면 환각이나
+          "모른다" 가 된다(교훈 대장 「글자 2-gram 검색은 사회자 인사말에도 걸린다」).
+
+        동점이면 앞 섹션이 먼저다(결정적).
         """
         scores = self.scores(question, level)
         if not scores:
-            return None
-        i = max(range(len(scores)), key=scores.__getitem__)
-        if scores[i] < self._threshold():
-            return None
-        return self._cues[i]
+            return []
+        threshold = self._threshold(MIN_RARE_GRAMS_SOLO)
+        order = sorted(range(len(scores)), key=lambda i: (-scores[i], i))
+        out: list[Cue] = []
+        for i in order[:SOLO_MAX_SECTIONS]:
+            if scores[i] < threshold:
+                break
+            if out and scores[i] < SOLO_SECOND_MIN_SHARE * scores[order[0]]:
+                break
+            out.append(self._cues[i])
+        return out
 
     def related(self, question: str, level: str, current_id: str) -> Cue | None:
         """지금 섹션보다 질문에 **확실히 더 가까운** 다른 섹션 하나. 없으면 None."""
