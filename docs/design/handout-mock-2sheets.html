@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>교육자료 시안 — 두 장</title>
+<style>
+:root{--ink:#0E2433;--sig:#0B7FB5;--mist:#E8F3F8;--rule:#C3D9E6;--paper:#fff;--bg:#E6EDF2;
+  --mc:#0A6F84;--mcbg:#DDF1F5;--doc:#8F5300;--docbg:#FFEFD6;--amber:#B96F00;--muted:#52636F}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;line-height:1.7;
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+.vh{position:absolute;opacity:0;pointer-events:none}
+.top{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;padding:10px 16px;display:flex;flex-wrap:wrap;
+  gap:10px 18px;align-items:center;justify-content:center}
+.top p{margin:0;font-size:14px;opacity:.9}
+.levels{display:flex;border:1px solid rgba(255,255,255,.45);border-radius:999px;overflow:hidden}
+.levels label{padding:6px 16px;font-size:15px;cursor:pointer;user-select:none}
+.levels label+label{border-left:1px solid rgba(255,255,255,.3)}
+#l1:checked~.top label[for=l1],#l2:checked~.top label[for=l2],#l3:checked~.top label[for=l3],#l4:checked~.top label[for=l4]
+  {background:#fff;color:var(--ink);font-weight:700}
+#l1:focus-visible~.top label[for=l1],#l2:focus-visible~.top label[for=l2],#l3:focus-visible~.top label[for=l3],#l4:focus-visible~.top label[for=l4]
+  {outline:3px solid #7FD3F5;outline-offset:-3px}
+.top button{font:inherit;font-size:14px;padding:6px 14px;border-radius:6px;border:1px solid #fff;background:transparent;color:#fff;cursor:pointer}
+main .lv{display:none}
+#l1:checked~main .lv.l1,#l2:checked~main .lv.l2,#l3:checked~main .lv.l3,#l4:checked~main .lv.l4{display:var(--d,block)}
+main{max-width:780px;margin:0 auto;padding:22px 14px 280px}
+.note-top{font-size:13px;color:var(--muted);margin:0 0 16px}
+.sheet{background:var(--paper);border:1px solid var(--rule);padding:26px 30px 28px;margin:0 0 26px}
+.sheet-h{display:flex;align-items:baseline;gap:14px}
+.no{font-size:15px;font-weight:700;color:var(--sig);font-variant-numeric:tabular-nums}
+h2{font-size:17px;margin:0;font-weight:700;color:var(--muted)}
+.dial{height:14px;margin:8px 0 14px;opacity:.5;
+  background:repeating-linear-gradient(90deg,var(--ink) 0 1px,transparent 1px 9px) left bottom/100% 7px no-repeat,
+             repeating-linear-gradient(90deg,var(--ink) 0 2px,transparent 2px 45px) left bottom/100% 14px no-repeat}
+.headline{font-size:30px;line-height:1.3;font-weight:800;letter-spacing:-.025em;margin:0 0 6px;max-width:19em;text-wrap:balance}
+.hero{margin:8px 0 6px}
+.hero-svg{display:block;width:100%;height:auto}
+.hero-svg text{font-size:15px;fill:var(--ink)}
+.hero-svg text.cap{font-weight:700;font-size:15px}
+.hero-svg text.note{font-size:11px;fill:var(--muted)}
+.hero-svg .sea{fill:#DCEDF5}
+.hero-svg .route{fill:none;stroke:var(--sig);stroke-width:2.5;stroke-dasharray:3 7;stroke-linecap:round}
+.hero-svg .rip{fill:none;stroke:var(--sig);stroke-width:2;opacity:.7}
+.hero-svg .node{fill:var(--ink);stroke:#fff;stroke-width:3}
+.hero-svg .node.end{fill:var(--amber)}
+.hero-svg .wave{fill:none;stroke-width:3.2;stroke-linejoin:round}
+.hero-svg .wave.a{stroke:var(--sig)} .hero-svg .wave.b{stroke:var(--amber)}
+.hero-svg .br{fill:none;stroke:var(--sig);stroke-width:2}
+.hero-svg .br.b{stroke:var(--amber)}
+.formula{margin:2px 0 14px;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;
+  padding:8px 14px;background:var(--mist);--d:inline-block}
+.chain,.defs{list-style:none;margin:18px 0 6px;padding:0;--d:grid}
+.chain{grid-template-columns:repeat(3,1fr);counter-reset:s}
+.chain li{counter-increment:s;position:relative;border-top:3px solid var(--sig);padding:22px 18px 4px 0}
+.chain li::before{content:counter(s);position:absolute;top:-15px;left:0;width:27px;height:27px;border-radius:50%;
+  background:var(--ink);color:#fff;font-size:14px;font-weight:700;display:grid;place-items:center}
+.defs{grid-template-columns:repeat(3,1fr)}
+.defs li{border-left:1px solid var(--rule);padding:0 16px}
+.defs li:first-child{border-left:none;padding-left:0}
+.chain strong,.defs strong{display:block;font-size:19px;line-height:1.35;font-weight:800;margin-bottom:5px}
+.chain span,.defs span{font-size:15px;color:#27394A;display:block}
+.remember{margin:20px 0 4px;padding:13px 18px;background:var(--mist);border-left:6px solid var(--sig);
+  font-size:18px;font-weight:700;line-height:1.55}
+.tag{display:inline-block;font-size:12px;font-weight:700;background:var(--ink);color:#fff;border-radius:999px;
+  padding:1px 10px;margin-right:10px;vertical-align:2px}
+.talk{margin-top:18px;border-top:1px solid var(--rule);padding-top:12px}
+.talk summary{cursor:pointer;font-size:15px;font-weight:700;color:var(--sig)}
+.chat{margin-top:14px}
+.row{display:flex;gap:10px;align-items:flex-start;margin:0 0 12px}
+.row.docent{flex-direction:row-reverse}
+.av{flex:0 0 58px;text-align:center;line-height:1.25}
+.av svg{width:44px;height:44px;display:block;margin:0 auto 2px}
+.av .who{display:block;font-size:12px;font-weight:700}
+.av .emo{display:block;font-size:12px;color:var(--muted)}
+.av.mc svg{color:var(--mc)} .av.docent svg{color:var(--amber)}
+.bub{margin:0;padding:10px 14px;font-size:15px;max-width:min(560px,calc(100% - 70px));border-radius:14px}
+.row.mc .bub{background:var(--mcbg);border-top-left-radius:3px}
+.row.docent .bub{background:var(--docbg);border-top-right-radius:3px;margin-left:auto}
+.src{margin:14px 0 0;font-size:13px;color:var(--muted)}
+.foot{font-size:13px;color:var(--muted);margin:6px 2px 0}
+.hero-svg .pulse{fill:var(--sig);stroke:#fff;stroke-width:2.5;opacity:0}
+.hero-svg .pulse.go{opacity:1}
+.hero-svg .ping{fill:none;stroke:var(--amber);stroke-width:3;opacity:0;transform-box:fill-box;transform-origin:center}
+.hero-svg .ping.on{animation:ping 1.1s ease-out 1}
+.hero-svg.send .rip{animation:rip 1.2s ease-out 1}
+@keyframes ping{0%{opacity:.9;transform:scale(1)}100%{opacity:0;transform:scale(3.4)}}
+@keyframes rip{0%{opacity:0}35%{opacity:1}100%{opacity:.7}}
+@media (prefers-reduced-motion:reduce){.hero-svg .ping.on,.hero-svg.send .rip{animation:none}.hero-svg .ping.on{opacity:.9}}
+.tool{display:flex;gap:6px 16px;align-items:center;flex-wrap:wrap;margin:8px 0 10px}
+.btn{font:inherit;font-weight:700;font-size:15px;padding:9px 20px;min-height:44px;border-radius:999px;border:2px solid var(--ink);
+  background:var(--ink);color:#fff;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--ink)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn:focus-visible,.freq:focus-visible,.mini:focus-visible{outline:3px solid #7FD3F5;outline-offset:3px}
+.arrive p{margin:0;font-weight:700;font-size:16px}
+.dialbox{margin:12px 0 6px;padding:14px 16px 12px;background:var(--mist);border-top:3px solid var(--ink)}
+.dh{margin:0 0 4px;font-weight:800;font-size:17px}
+.dw{margin:0 0 2px}
+.dw text{font-size:15px;fill:var(--ink);font-weight:700}
+.freq{-webkit-appearance:none;appearance:none;display:block;width:100%;height:44px;margin:0;background:transparent;cursor:pointer}
+.freq::-webkit-slider-runnable-track{height:10px;border-radius:5px;background:linear-gradient(90deg,var(--sig),var(--amber))}
+.freq::-moz-range-track{height:10px;border-radius:5px;background:linear-gradient(90deg,var(--sig),var(--amber))}
+.freq::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:40px;margin-top:-15px;border-radius:7px;background:var(--ink);border:3px solid #fff;box-shadow:0 0 0 1.5px var(--ink)}
+.freq::-moz-range-thumb{width:16px;height:34px;border-radius:7px;background:var(--ink);border:3px solid #fff;box-shadow:0 0 0 1.5px var(--ink)}
+.ticks{position:relative;height:50px;margin:0 14px}
+.tick{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:var(--muted);white-space:nowrap;text-align:center;line-height:1.3}
+.tick::before{content:"";display:block;width:1px;height:6px;background:var(--ink);margin:0 auto 2px}
+.tick.row2{top:24px}
+.tick.hl{color:var(--ink);font-weight:700}
+.out{display:flex;flex-wrap:wrap;gap:2px 28px;margin:2px 0 0;font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.dyn{margin:2px 0 0;min-height:1.7em;font-size:15px;font-weight:700;color:var(--amber)}
+.dnote{margin:4px 0 0;font-size:13px;color:var(--muted)}
+[data-turns]{transition:background-color .35s,opacity .35s}
+.livebadge{display:none;margin-left:auto;font-size:12px;font-weight:700;color:#fff;background:#C23B2E;border-radius:999px;padding:2px 10px}
+.sheet.live .livebadge{display:inline-block}
+.sheet.live{border-color:var(--sig);box-shadow:0 0 0 3px rgba(11,127,181,.22)}
+.sheet.live [data-turns]:not(.now):not(.seen){opacity:.72}
+.chain li.now,.defs li.now{background:var(--mist)}
+.chain li.now strong,.defs li.now strong{color:var(--sig)}
+.headline.now{box-shadow:inset 0 -8px 0 rgba(11,127,181,.22)}
+.remember.now{outline:2px solid var(--sig)}
+.row.now .bub{outline:2px solid var(--sig)}
+.row.now .av svg{animation:talk 1s ease-in-out infinite alternate}
+@keyframes talk{to{transform:translateY(-2px)}}
+@media (prefers-reduced-motion:reduce){.row.now .av svg{animation:none}}
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.dock>*{pointer-events:auto}
+.nowbar{width:min(780px,100%);display:flex;gap:12px;align-items:flex-start;padding:10px 16px;background:#fff;
+  border-top:3px solid var(--mc);box-shadow:0 -4px 14px rgba(14,36,51,.12)}
+.nowbar[hidden]{display:none}
+.nowbar.docent{border-top-color:var(--amber)}
+.nowbar svg{flex:0 0 40px;width:40px;height:40px;color:var(--mc)}
+.nowbar.docent svg{color:var(--amber)}
+.nb-h{margin:0;font-size:12px;color:var(--muted);display:flex;gap:10px}
+.nb-h b{color:var(--ink)}
+#nb-text{margin:0;font-size:16px;font-weight:700;line-height:1.5;max-height:4.6em;overflow:auto}
+.follow,.sim{width:min(780px,100%);display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 16px;background:var(--ink);color:#fff;font-size:13px}
+.sim{background:#1B3A4F;border-top:1px dashed rgba(255,255,255,.35)}
+.mini{font:inherit;font-size:13px;padding:5px 14px;border-radius:999px;border:1px solid #fff;background:transparent;color:#fff;cursor:pointer;min-height:36px}
+.follow .mini{min-height:44px;font-weight:700}
+.sim select{font:inherit;font-size:13px;padding:3px 6px;border-radius:6px}
+.rec{width:9px;height:9px;border-radius:50%;background:#E5534B}
+.simtag{background:#fff;color:var(--ink);border-radius:4px;padding:0 6px;font-weight:700}
+@media (max-width:640px){
+  .sheet{padding:20px 16px}
+  .headline{font-size:25px}
+  .chain,.defs{grid-template-columns:1fr}
+  .chain li{border-top:none;border-left:3px solid var(--sig);padding:0 0 18px 26px}
+  .chain li::before{top:0;left:-15px}
+  .defs li{border-left:none;border-top:1px solid var(--rule);padding:12px 0}
+  .defs li:first-child{border-top:none;padding-top:0}
+  .hero-svg text{font-size:23px}
+  .hero-svg text.cap{font-size:23px}
+  .hero-svg text.note{font-size:15px}
+  .tick{font-size:11px}
+  .out{font-size:18px}
+}
+@media print{
+  @page{size:A4;margin:14mm}
+  body{background:#fff}
+  .top,.note-top,.talk,.foot,.interact,.dock,.livebadge{display:none !important}
+  [data-turns]{opacity:1 !important;background:none !important}
+  .sheet.live{box-shadow:none}
+  main{padding:0;max-width:none}
+  .sheet{border:none;padding:0;margin:0;break-after:page;page-break-after:always}
+  .sheet:last-of-type{break-after:auto;page-break-after:auto}
+}
+</style></head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="face-neutral" viewBox="0 0 48 48"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <path d="M17 12 L14 5 M31 12 L34 5"/><rect x="6" y="12" width="36" height="28" rx="12"/></g>
+    <circle cx="14" cy="4.5" r="2.4" fill="currentColor"/><circle cx="34" cy="4.5" r="2.4" fill="currentColor"/>
+    <circle cx="18" cy="26" r="3" fill="currentColor"/><circle cx="30" cy="26" r="3" fill="currentColor"/></symbol>
+  <symbol id="face-happy" viewBox="0 0 48 48"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <path d="M17 12 L14 5 M31 12 L34 5"/><rect x="6" y="12" width="36" height="28" rx="12"/>
+    <path d="M13.5 28 q4.5 -7 9 0 M25.5 28 q4.5 -7 9 0"/></g>
+    <circle cx="14" cy="4.5" r="2.4" fill="currentColor"/><circle cx="34" cy="4.5" r="2.4" fill="currentColor"/></symbol>
+  <symbol id="face-surprised" viewBox="0 0 48 48"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <path d="M17 12 L14 3 M31 12 L34 3"/><rect x="6" y="12" width="36" height="28" rx="12"/>
+    <circle cx="18" cy="26" r="4.4"/><circle cx="30" cy="26" r="4.4"/></g>
+    <circle cx="14" cy="2.5" r="2.4" fill="currentColor"/><circle cx="34" cy="2.5" r="2.4" fill="currentColor"/></symbol>
+  <symbol id="face-curious" viewBox="0 0 48 48"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <path d="M17 12 L14 5 M31 12 L37 7"/><rect x="6" y="12" width="36" height="28" rx="12"/>
+    <circle cx="30" cy="26" r="4.4"/></g>
+    <circle cx="14" cy="4.5" r="2.4" fill="currentColor"/><circle cx="37.5" cy="6.5" r="2.4" fill="currentColor"/>
+    <circle cx="18" cy="26" r="3" fill="currentColor"/></symbol>
+</defs></svg>
+<input class="vh" type="radio" name="lv" id="l1" aria-label="초등">
+<input class="vh" type="radio" name="lv" id="l2" aria-label="중고등">
+<input class="vh" type="radio" name="lv" id="l3" aria-label="일반" checked>
+<input class="vh" type="radio" name="lv" id="l4" aria-label="전문가">
+<div class="top">
+  <p>관람객 수준</p>
+  <nav class="levels" aria-label="관람객 수준"><label for="l1">초등</label><label for="l2">중고등</label><label for="l3">일반</label><label for="l4">전문가</label></nav>
+  <button type="button" onclick="window.print()">인쇄하기 (장당 A4 한 면)</button>
+</div>
+<main>
+  <p class="note-top">시안(목업) — 교육자료 1번안(핵심 카드 + 말풍선) + <strong>공연 따라가기</strong>. 아래 ‘시안용’ 막대의 ▶ 로 공연을 시뮬레이션해 보세요. 큐가 바뀌면 그 장이 저절로 열리고, 도슨트가 말하는 대목에 맞춰 카드가 켜지고 그림이 움직여요. 직접 스크롤하면 따라가기가 멈춰요. 인터랙션은 화면에서만 동작하고, 인쇄하면 장마다 요약 한 면이 나와요.</p>
+  
+<article class="sheet" id="02-history" data-points="3">
+  <header class="sheet-h"><span class="no">02</span><h2>전파의 발견 역사</h2><span class="livebadge">● 지금 이야기 중</span></header>
+  <div class="dial" aria-hidden="true"></div>
+  <h3 class="headline lv l1" data-turns="open docent0">전파는 누가 만든 게 아니라, 원래 있던 걸 찾아낸 거예요</h3><h3 class="headline lv l2" data-turns="open docent0">전파는 발명이 아니라 발견이에요</h3><h3 class="headline lv l3" data-turns="open docent0">예언한 사람, 증명한 사람, 써먹은 사람이 따로 있었어요</h3><h3 class="headline lv l4" data-turns="open docent0">전파를 발견한 사람을 한 명으로 꼽기는 어렵다</h3>
+  <figure class="hero">
+<svg id="hero-history" class="hero-svg" viewBox="0 0 680 210" role="img" aria-label="영국에서 대서양 건너편으로 신호를 보내는 개념도">
+  <path d="M0.0,186.0 L0.5,185.9 L1.0,185.8 L1.5,185.7 L2.0,185.6 L2.5,185.5 L3.0,185.4 L3.5,185.4 L4.0,185.3 L4.5,185.2 L5.0,185.1 L5.5,185.0 L6.0,184.9 L6.5,184.8 L7.0,184.7 L7.5,184.6 L8.0,184.5 L8.5,184.5 L9.0,184.4 L9.5,184.3 L10.0,184.2 L10.5,184.1 L11.0,184.0 L11.5,183.9 L12.0,183.9 L12.5,183.8 L13.0,183.7 L13.5,183.6 L14.0,183.5 L14.5,183.4 L15.0,183.4 L15.5,183.3 L16.0,183.2 L16.5,183.1 L17.0,183.1 L17.5,183.0 L18.0,182.9 L18.5,182.8 L19.0,182.8 L19.5,182.7 L20.0,182.6 L20.5,182.6 L21.0,182.5 L21.5,182.4 L22.0,182.4 L22.5,182.3 L23.0,182.2 L23.5,182.2 L24.0,182.1 L24.5,182.1 L25.0,182.0 L25.5,182.0 L26.0,181.9 L26.5,181.8 L27.0,181.8 L27.5,181.7 L28.0,181.7 L28.5,181.7 L29.0,181.6 L29.5,181.6 L30.0,181.5 L30.5,181.5 L31.0,181.4 L31.5,181.4 L32.0,181.4 L32.5,181.3 L33.0,181.3 L33.5,181.3 L34.0,181.2 L34.5,181.2 L35.0,181.2 L35.5,181.2 L36.0,181.1 L36.5,181.1 L37.0,181.1 L37.5,181.1 L38.0,181.1 L38.5,181.1 L39.0,181.0 L39.5,181.0 L40.0,181.0 L40.5,181.0 L41.0,181.0 L41.5,181.0 L42.0,181.0 L42.5,181.0 L43.0,181.0 L43.5,181.0 L44.0,181.0 L44.5,181.0 L45.0,181.0 L45.5,181.0 L46.0,181.0 L46.5,181.1 L47.0,181.1 L47.5,181.1 L48.0,181.1 L48.5,181.1 L49.0,181.1 L49.5,181.2 L50.0,181.2 L50.5,181.2 L51.0,181.2 L51.5,181.3 L52.0,181.3 L52.5,181.3 L53.0,181.4 L53.5,181.4 L54.0,181.4 L54.5,181.5 L55.0,181.5 L55.5,181.6 L56.0,181.6 L56.5,181.7 L57.0,181.7 L57.5,181.7 L58.0,181.8 L58.5,181.8 L59.0,181.9 L59.5,182.0 L60.0,182.0 L60.5,182.1 L61.0,182.1 L61.5,182.2 L62.0,182.2 L62.5,182.3 L63.0,182.4 L63.5,182.4 L64.0,182.5 L64.5,182.6 L65.0,182.6 L65.5,182.7 L66.0,182.8 L66.5,182.8 L67.0,182.9 L67.5,183.0 L68.0,183.1 L68.5,183.1 L69.0,183.2 L69.5,183.3 L70.0,183.4 L70.5,183.4 L71.0,183.5 L71.5,183.6 L72.0,183.7 L72.5,183.8 L73.0,183.9 L73.5,183.9 L74.0,184.0 L74.5,184.1 L75.0,184.2 L75.5,184.3 L76.0,184.4 L76.5,184.5 L77.0,184.5 L77.5,184.6 L78.0,184.7 L78.5,184.8 L79.0,184.9 L79.5,185.0 L80.0,185.1 L80.5,185.2 L81.0,185.3 L81.5,185.4 L82.0,185.4 L82.5,185.5 L83.0,185.6 L83.5,185.7 L84.0,185.8 L84.5,185.9 L85.0,186.0 L85.5,186.1 L86.0,186.2 L86.5,186.3 L87.0,186.4 L87.5,186.5 L88.0,186.6 L88.5,186.6 L89.0,186.7 L89.5,186.8 L90.0,186.9 L90.5,187.0 L91.0,187.1 L91.5,187.2 L92.0,187.3 L92.5,187.4 L93.0,187.5 L93.5,187.5 L94.0,187.6 L94.5,187.7 L95.0,187.8 L95.5,187.9 L96.0,188.0 L96.5,188.1 L97.0,188.1 L97.5,188.2 L98.0,188.3 L98.5,188.4 L99.0,188.5 L99.5,188.6 L100.0,188.6 L100.5,188.7 L101.0,188.8 L101.5,188.9 L102.0,188.9 L102.5,189.0 L103.0,189.1 L103.5,189.2 L104.0,189.2 L104.5,189.3 L105.0,189.4 L105.5,189.4 L106.0,189.5 L106.5,189.6 L107.0,189.6 L107.5,189.7 L108.0,189.8 L108.5,189.8 L109.0,189.9 L109.5,189.9 L110.0,190.0 L110.5,190.0 L111.0,190.1 L111.5,190.2 L112.0,190.2 L112.5,190.3 L113.0,190.3 L113.5,190.3 L114.0,190.4 L114.5,190.4 L115.0,190.5 L115.5,190.5 L116.0,190.6 L116.5,190.6 L117.0,190.6 L117.5,190.7 L118.0,190.7 L118.5,190.7 L119.0,190.8 L119.5,190.8 L120.0,190.8 L120.5,190.8 L121.0,190.9 L121.5,190.9 L122.0,190.9 L122.5,190.9 L123.0,190.9 L123.5,190.9 L124.0,191.0 L124.5,191.0 L125.0,191.0 L125.5,191.0 L126.0,191.0 L126.5,191.0 L127.0,191.0 L127.5,191.0 L128.0,191.0 L128.5,191.0 L129.0,191.0 L129.5,191.0 L130.0,191.0 L130.5,191.0 L131.0,191.0 L131.5,190.9 L132.0,190.9 L132.5,190.9 L133.0,190.9 L133.5,190.9 L134.0,190.9 L134.5,190.8 L135.0,190.8 L135.5,190.8 L136.0,190.8 L136.5,190.7 L137.0,190.7 L137.5,190.7 L138.0,190.6 L138.5,190.6 L139.0,190.6 L139.5,190.5 L140.0,190.5 L140.5,190.4 L141.0,190.4 L141.5,190.3 L142.0,190.3 L142.5,190.3 L143.0,190.2 L143.5,190.2 L144.0,190.1 L144.5,190.0 L145.0,190.0 L145.5,189.9 L146.0,189.9 L146.5,189.8 L147.0,189.8 L147.5,189.7 L148.0,189.6 L148.5,189.6 L149.0,189.5 L149.5,189.4 L150.0,189.4 L150.5,189.3 L151.0,189.2 L151.5,189.2 L152.0,189.1 L152.5,189.0 L153.0,188.9 L153.5,188.9 L154.0,188.8 L154.5,188.7 L155.0,188.6 L155.5,188.6 L156.0,188.5 L156.5,188.4 L157.0,188.3 L157.5,188.2 L158.0,188.1 L158.5,188.1 L159.0,188.0 L159.5,187.9 L160.0,187.8 L160.5,187.7 L161.0,187.6 L161.5,187.5 L162.0,187.5 L162.5,187.4 L163.0,187.3 L163.5,187.2 L164.0,187.1 L164.5,187.0 L165.0,186.9 L165.5,186.8 L166.0,186.7 L166.5,186.6 L167.0,186.6 L167.5,186.5 L168.0,186.4 L168.5,186.3 L169.0,186.2 L169.5,186.1 L170.0,186.0 L170.5,185.9 L171.0,185.8 L171.5,185.7 L172.0,185.6 L172.5,185.5 L173.0,185.4 L173.5,185.4 L174.0,185.3 L174.5,185.2 L175.0,185.1 L175.5,185.0 L176.0,184.9 L176.5,184.8 L177.0,184.7 L177.5,184.6 L178.0,184.5 L178.5,184.5 L179.0,184.4 L179.5,184.3 L180.0,184.2 L180.5,184.1 L181.0,184.0 L181.5,183.9 L182.0,183.9 L182.5,183.8 L183.0,183.7 L183.5,183.6 L184.0,183.5 L184.5,183.4 L185.0,183.4 L185.5,183.3 L186.0,183.2 L186.5,183.1 L187.0,183.1 L187.5,183.0 L188.0,182.9 L188.5,182.8 L189.0,182.8 L189.5,182.7 L190.0,182.6 L190.5,182.6 L191.0,182.5 L191.5,182.4 L192.0,182.4 L192.5,182.3 L193.0,182.2 L193.5,182.2 L194.0,182.1 L194.5,182.1 L195.0,182.0 L195.5,182.0 L196.0,181.9 L196.5,181.8 L197.0,181.8 L197.5,181.7 L198.0,181.7 L198.5,181.7 L199.0,181.6 L199.5,181.6 L200.0,181.5 L200.5,181.5 L201.0,181.4 L201.5,181.4 L202.0,181.4 L202.5,181.3 L203.0,181.3 L203.5,181.3 L204.0,181.2 L204.5,181.2 L205.0,181.2 L205.5,181.2 L206.0,181.1 L206.5,181.1 L207.0,181.1 L207.5,181.1 L208.0,181.1 L208.5,181.1 L209.0,181.0 L209.5,181.0 L210.0,181.0 L210.5,181.0 L211.0,181.0 L211.5,181.0 L212.0,181.0 L212.5,181.0 L213.0,181.0 L213.5,181.0 L214.0,181.0 L214.5,181.0 L215.0,181.0 L215.5,181.0 L216.0,181.0 L216.5,181.1 L217.0,181.1 L217.5,181.1 L218.0,181.1 L218.5,181.1 L219.0,181.1 L219.5,181.2 L220.0,181.2 L220.5,181.2 L221.0,181.2 L221.5,181.3 L222.0,181.3 L222.5,181.3 L223.0,181.4 L223.5,181.4 L224.0,181.4 L224.5,181.5 L225.0,181.5 L225.5,181.6 L226.0,181.6 L226.5,181.7 L227.0,181.7 L227.5,181.7 L228.0,181.8 L228.5,181.8 L229.0,181.9 L229.5,182.0 L230.0,182.0 L230.5,182.1 L231.0,182.1 L231.5,182.2 L232.0,182.2 L232.5,182.3 L233.0,182.4 L233.5,182.4 L234.0,182.5 L234.5,182.6 L235.0,182.6 L235.5,182.7 L236.0,182.8 L236.5,182.8 L237.0,182.9 L237.5,183.0 L238.0,183.1 L238.5,183.1 L239.0,183.2 L239.5,183.3 L240.0,183.4 L240.5,183.4 L241.0,183.5 L241.5,183.6 L242.0,183.7 L242.5,183.8 L243.0,183.9 L243.5,183.9 L244.0,184.0 L244.5,184.1 L245.0,184.2 L245.5,184.3 L246.0,184.4 L246.5,184.5 L247.0,184.5 L247.5,184.6 L248.0,184.7 L248.5,184.8 L249.0,184.9 L249.5,185.0 L250.0,185.1 L250.5,185.2 L251.0,185.3 L251.5,185.4 L252.0,185.4 L252.5,185.5 L253.0,185.6 L253.5,185.7 L254.0,185.8 L254.5,185.9 L255.0,186.0 L255.5,186.1 L256.0,186.2 L256.5,186.3 L257.0,186.4 L257.5,186.5 L258.0,186.6 L258.5,186.6 L259.0,186.7 L259.5,186.8 L260.0,186.9 L260.5,187.0 L261.0,187.1 L261.5,187.2 L262.0,187.3 L262.5,187.4 L263.0,187.5 L263.5,187.5 L264.0,187.6 L264.5,187.7 L265.0,187.8 L265.5,187.9 L266.0,188.0 L266.5,188.1 L267.0,188.1 L267.5,188.2 L268.0,188.3 L268.5,188.4 L269.0,188.5 L269.5,188.6 L270.0,188.6 L270.5,188.7 L271.0,188.8 L271.5,188.9 L272.0,188.9 L272.5,189.0 L273.0,189.1 L273.5,189.2 L274.0,189.2 L274.5,189.3 L275.0,189.4 L275.5,189.4 L276.0,189.5 L276.5,189.6 L277.0,189.6 L277.5,189.7 L278.0,189.8 L278.5,189.8 L279.0,189.9 L279.5,189.9 L280.0,190.0 L280.5,190.0 L281.0,190.1 L281.5,190.2 L282.0,190.2 L282.5,190.3 L283.0,190.3 L283.5,190.3 L284.0,190.4 L284.5,190.4 L285.0,190.5 L285.5,190.5 L286.0,190.6 L286.5,190.6 L287.0,190.6 L287.5,190.7 L288.0,190.7 L288.5,190.7 L289.0,190.8 L289.5,190.8 L290.0,190.8 L290.5,190.8 L291.0,190.9 L291.5,190.9 L292.0,190.9 L292.5,190.9 L293.0,190.9 L293.5,190.9 L294.0,191.0 L294.5,191.0 L295.0,191.0 L295.5,191.0 L296.0,191.0 L296.5,191.0 L297.0,191.0 L297.5,191.0 L298.0,191.0 L298.5,191.0 L299.0,191.0 L299.5,191.0 L300.0,191.0 L300.5,191.0 L301.0,191.0 L301.5,190.9 L302.0,190.9 L302.5,190.9 L303.0,190.9 L303.5,190.9 L304.0,190.9 L304.5,190.8 L305.0,190.8 L305.5,190.8 L306.0,190.8 L306.5,190.7 L307.0,190.7 L307.5,190.7 L308.0,190.6 L308.5,190.6 L309.0,190.6 L309.5,190.5 L310.0,190.5 L310.5,190.4 L311.0,190.4 L311.5,190.3 L312.0,190.3 L312.5,190.3 L313.0,190.2 L313.5,190.2 L314.0,190.1 L314.5,190.0 L315.0,190.0 L315.5,189.9 L316.0,189.9 L316.5,189.8 L317.0,189.8 L317.5,189.7 L318.0,189.6 L318.5,189.6 L319.0,189.5 L319.5,189.4 L320.0,189.4 L320.5,189.3 L321.0,189.2 L321.5,189.2 L322.0,189.1 L322.5,189.0 L323.0,188.9 L323.5,188.9 L324.0,188.8 L324.5,188.7 L325.0,188.6 L325.5,188.6 L326.0,188.5 L326.5,188.4 L327.0,188.3 L327.5,188.2 L328.0,188.1 L328.5,188.1 L329.0,188.0 L329.5,187.9 L330.0,187.8 L330.5,187.7 L331.0,187.6 L331.5,187.5 L332.0,187.5 L332.5,187.4 L333.0,187.3 L333.5,187.2 L334.0,187.1 L334.5,187.0 L335.0,186.9 L335.5,186.8 L336.0,186.7 L336.5,186.6 L337.0,186.6 L337.5,186.5 L338.0,186.4 L338.5,186.3 L339.0,186.2 L339.5,186.1 L340.0,186.0 L340.5,185.9 L341.0,185.8 L341.5,185.7 L342.0,185.6 L342.5,185.5 L343.0,185.4 L343.5,185.4 L344.0,185.3 L344.5,185.2 L345.0,185.1 L345.5,185.0 L346.0,184.9 L346.5,184.8 L347.0,184.7 L347.5,184.6 L348.0,184.5 L348.5,184.5 L349.0,184.4 L349.5,184.3 L350.0,184.2 L350.5,184.1 L351.0,184.0 L351.5,183.9 L352.0,183.9 L352.5,183.8 L353.0,183.7 L353.5,183.6 L354.0,183.5 L354.5,183.4 L355.0,183.4 L355.5,183.3 L356.0,183.2 L356.5,183.1 L357.0,183.1 L357.5,183.0 L358.0,182.9 L358.5,182.8 L359.0,182.8 L359.5,182.7 L360.0,182.6 L360.5,182.6 L361.0,182.5 L361.5,182.4 L362.0,182.4 L362.5,182.3 L363.0,182.2 L363.5,182.2 L364.0,182.1 L364.5,182.1 L365.0,182.0 L365.5,182.0 L366.0,181.9 L366.5,181.8 L367.0,181.8 L367.5,181.7 L368.0,181.7 L368.5,181.7 L369.0,181.6 L369.5,181.6 L370.0,181.5 L370.5,181.5 L371.0,181.4 L371.5,181.4 L372.0,181.4 L372.5,181.3 L373.0,181.3 L373.5,181.3 L374.0,181.2 L374.5,181.2 L375.0,181.2 L375.5,181.2 L376.0,181.1 L376.5,181.1 L377.0,181.1 L377.5,181.1 L378.0,181.1 L378.5,181.1 L379.0,181.0 L379.5,181.0 L380.0,181.0 L380.5,181.0 L381.0,181.0 L381.5,181.0 L382.0,181.0 L382.5,181.0 L383.0,181.0 L383.5,181.0 L384.0,181.0 L384.5,181.0 L385.0,181.0 L385.5,181.0 L386.0,181.0 L386.5,181.1 L387.0,181.1 L387.5,181.1 L388.0,181.1 L388.5,181.1 L389.0,181.1 L389.5,181.2 L390.0,181.2 L390.5,181.2 L391.0,181.2 L391.5,181.3 L392.0,181.3 L392.5,181.3 L393.0,181.4 L393.5,181.4 L394.0,181.4 L394.5,181.5 L395.0,181.5 L395.5,181.6 L396.0,181.6 L396.5,181.7 L397.0,181.7 L397.5,181.7 L398.0,181.8 L398.5,181.8 L399.0,181.9 L399.5,182.0 L400.0,182.0 L400.5,182.1 L401.0,182.1 L401.5,182.2 L402.0,182.2 L402.5,182.3 L403.0,182.4 L403.5,182.4 L404.0,182.5 L404.5,182.6 L405.0,182.6 L405.5,182.7 L406.0,182.8 L406.5,182.8 L407.0,182.9 L407.5,183.0 L408.0,183.1 L408.5,183.1 L409.0,183.2 L409.5,183.3 L410.0,183.4 L410.5,183.4 L411.0,183.5 L411.5,183.6 L412.0,183.7 L412.5,183.8 L413.0,183.9 L413.5,183.9 L414.0,184.0 L414.5,184.1 L415.0,184.2 L415.5,184.3 L416.0,184.4 L416.5,184.5 L417.0,184.5 L417.5,184.6 L418.0,184.7 L418.5,184.8 L419.0,184.9 L419.5,185.0 L420.0,185.1 L420.5,185.2 L421.0,185.3 L421.5,185.4 L422.0,185.4 L422.5,185.5 L423.0,185.6 L423.5,185.7 L424.0,185.8 L424.5,185.9 L425.0,186.0 L425.5,186.1 L426.0,186.2 L426.5,186.3 L427.0,186.4 L427.5,186.5 L428.0,186.6 L428.5,186.6 L429.0,186.7 L429.5,186.8 L430.0,186.9 L430.5,187.0 L431.0,187.1 L431.5,187.2 L432.0,187.3 L432.5,187.4 L433.0,187.5 L433.5,187.5 L434.0,187.6 L434.5,187.7 L435.0,187.8 L435.5,187.9 L436.0,188.0 L436.5,188.1 L437.0,188.1 L437.5,188.2 L438.0,188.3 L438.5,188.4 L439.0,188.5 L439.5,188.6 L440.0,188.6 L440.5,188.7 L441.0,188.8 L441.5,188.9 L442.0,188.9 L442.5,189.0 L443.0,189.1 L443.5,189.2 L444.0,189.2 L444.5,189.3 L445.0,189.4 L445.5,189.4 L446.0,189.5 L446.5,189.6 L447.0,189.6 L447.5,189.7 L448.0,189.8 L448.5,189.8 L449.0,189.9 L449.5,189.9 L450.0,190.0 L450.5,190.0 L451.0,190.1 L451.5,190.2 L452.0,190.2 L452.5,190.3 L453.0,190.3 L453.5,190.3 L454.0,190.4 L454.5,190.4 L455.0,190.5 L455.5,190.5 L456.0,190.6 L456.5,190.6 L457.0,190.6 L457.5,190.7 L458.0,190.7 L458.5,190.7 L459.0,190.8 L459.5,190.8 L460.0,190.8 L460.5,190.8 L461.0,190.9 L461.5,190.9 L462.0,190.9 L462.5,190.9 L463.0,190.9 L463.5,190.9 L464.0,191.0 L464.5,191.0 L465.0,191.0 L465.5,191.0 L466.0,191.0 L466.5,191.0 L467.0,191.0 L467.5,191.0 L468.0,191.0 L468.5,191.0 L469.0,191.0 L469.5,191.0 L470.0,191.0 L470.5,191.0 L471.0,191.0 L471.5,190.9 L472.0,190.9 L472.5,190.9 L473.0,190.9 L473.5,190.9 L474.0,190.9 L474.5,190.8 L475.0,190.8 L475.5,190.8 L476.0,190.8 L476.5,190.7 L477.0,190.7 L477.5,190.7 L478.0,190.6 L478.5,190.6 L479.0,190.6 L479.5,190.5 L480.0,190.5 L480.5,190.4 L481.0,190.4 L481.5,190.3 L482.0,190.3 L482.5,190.3 L483.0,190.2 L483.5,190.2 L484.0,190.1 L484.5,190.0 L485.0,190.0 L485.5,189.9 L486.0,189.9 L486.5,189.8 L487.0,189.8 L487.5,189.7 L488.0,189.6 L488.5,189.6 L489.0,189.5 L489.5,189.4 L490.0,189.4 L490.5,189.3 L491.0,189.2 L491.5,189.2 L492.0,189.1 L492.5,189.0 L493.0,188.9 L493.5,188.9 L494.0,188.8 L494.5,188.7 L495.0,188.6 L495.5,188.6 L496.0,188.5 L496.5,188.4 L497.0,188.3 L497.5,188.2 L498.0,188.1 L498.5,188.1 L499.0,188.0 L499.5,187.9 L500.0,187.8 L500.5,187.7 L501.0,187.6 L501.5,187.5 L502.0,187.5 L502.5,187.4 L503.0,187.3 L503.5,187.2 L504.0,187.1 L504.5,187.0 L505.0,186.9 L505.5,186.8 L506.0,186.7 L506.5,186.6 L507.0,186.6 L507.5,186.5 L508.0,186.4 L508.5,186.3 L509.0,186.2 L509.5,186.1 L510.0,186.0 L510.5,185.9 L511.0,185.8 L511.5,185.7 L512.0,185.6 L512.5,185.5 L513.0,185.4 L513.5,185.4 L514.0,185.3 L514.5,185.2 L515.0,185.1 L515.5,185.0 L516.0,184.9 L516.5,184.8 L517.0,184.7 L517.5,184.6 L518.0,184.5 L518.5,184.5 L519.0,184.4 L519.5,184.3 L520.0,184.2 L520.5,184.1 L521.0,184.0 L521.5,183.9 L522.0,183.9 L522.5,183.8 L523.0,183.7 L523.5,183.6 L524.0,183.5 L524.5,183.4 L525.0,183.4 L525.5,183.3 L526.0,183.2 L526.5,183.1 L527.0,183.1 L527.5,183.0 L528.0,182.9 L528.5,182.8 L529.0,182.8 L529.5,182.7 L530.0,182.6 L530.5,182.6 L531.0,182.5 L531.5,182.4 L532.0,182.4 L532.5,182.3 L533.0,182.2 L533.5,182.2 L534.0,182.1 L534.5,182.1 L535.0,182.0 L535.5,182.0 L536.0,181.9 L536.5,181.8 L537.0,181.8 L537.5,181.7 L538.0,181.7 L538.5,181.7 L539.0,181.6 L539.5,181.6 L540.0,181.5 L540.5,181.5 L541.0,181.4 L541.5,181.4 L542.0,181.4 L542.5,181.3 L543.0,181.3 L543.5,181.3 L544.0,181.2 L544.5,181.2 L545.0,181.2 L545.5,181.2 L546.0,181.1 L546.5,181.1 L547.0,181.1 L547.5,181.1 L548.0,181.1 L548.5,181.1 L549.0,181.0 L549.5,181.0 L550.0,181.0 L550.5,181.0 L551.0,181.0 L551.5,181.0 L552.0,181.0 L552.5,181.0 L553.0,181.0 L553.5,181.0 L554.0,181.0 L554.5,181.0 L555.0,181.0 L555.5,181.0 L556.0,181.0 L556.5,181.1 L557.0,181.1 L557.5,181.1 L558.0,181.1 L558.5,181.1 L559.0,181.1 L559.5,181.2 L560.0,181.2 L560.5,181.2 L561.0,181.2 L561.5,181.3 L562.0,181.3 L562.5,181.3 L563.0,181.4 L563.5,181.4 L564.0,181.4 L564.5,181.5 L565.0,181.5 L565.5,181.6 L566.0,181.6 L566.5,181.7 L567.0,181.7 L567.5,181.7 L568.0,181.8 L568.5,181.8 L569.0,181.9 L569.5,182.0 L570.0,182.0 L570.5,182.1 L571.0,182.1 L571.5,182.2 L572.0,182.2 L572.5,182.3 L573.0,182.4 L573.5,182.4 L574.0,182.5 L574.5,182.6 L575.0,182.6 L575.5,182.7 L576.0,182.8 L576.5,182.8 L577.0,182.9 L577.5,183.0 L578.0,183.1 L578.5,183.1 L579.0,183.2 L579.5,183.3 L580.0,183.4 L580.5,183.4 L581.0,183.5 L581.5,183.6 L582.0,183.7 L582.5,183.8 L583.0,183.9 L583.5,183.9 L584.0,184.0 L584.5,184.1 L585.0,184.2 L585.5,184.3 L586.0,184.4 L586.5,184.5 L587.0,184.5 L587.5,184.6 L588.0,184.7 L588.5,184.8 L589.0,184.9 L589.5,185.0 L590.0,185.1 L590.5,185.2 L591.0,185.3 L591.5,185.4 L592.0,185.4 L592.5,185.5 L593.0,185.6 L593.5,185.7 L594.0,185.8 L594.5,185.9 L595.0,186.0 L595.5,186.1 L596.0,186.2 L596.5,186.3 L597.0,186.4 L597.5,186.5 L598.0,186.6 L598.5,186.6 L599.0,186.7 L599.5,186.8 L600.0,186.9 L600.5,187.0 L601.0,187.1 L601.5,187.2 L602.0,187.3 L602.5,187.4 L603.0,187.5 L603.5,187.5 L604.0,187.6 L604.5,187.7 L605.0,187.8 L605.5,187.9 L606.0,188.0 L606.5,188.1 L607.0,188.1 L607.5,188.2 L608.0,188.3 L608.5,188.4 L609.0,188.5 L609.5,188.6 L610.0,188.6 L610.5,188.7 L611.0,188.8 L611.5,188.9 L612.0,188.9 L612.5,189.0 L613.0,189.1 L613.5,189.2 L614.0,189.2 L614.5,189.3 L615.0,189.4 L615.5,189.4 L616.0,189.5 L616.5,189.6 L617.0,189.6 L617.5,189.7 L618.0,189.8 L618.5,189.8 L619.0,189.9 L619.5,189.9 L620.0,190.0 L620.5,190.0 L621.0,190.1 L621.5,190.2 L622.0,190.2 L622.5,190.3 L623.0,190.3 L623.5,190.3 L624.0,190.4 L624.5,190.4 L625.0,190.5 L625.5,190.5 L626.0,190.6 L626.5,190.6 L627.0,190.6 L627.5,190.7 L628.0,190.7 L628.5,190.7 L629.0,190.8 L629.5,190.8 L630.0,190.8 L630.5,190.8 L631.0,190.9 L631.5,190.9 L632.0,190.9 L632.5,190.9 L633.0,190.9 L633.5,190.9 L634.0,191.0 L634.5,191.0 L635.0,191.0 L635.5,191.0 L636.0,191.0 L636.5,191.0 L637.0,191.0 L637.5,191.0 L638.0,191.0 L638.5,191.0 L639.0,191.0 L639.5,191.0 L640.0,191.0 L640.5,191.0 L641.0,191.0 L641.5,190.9 L642.0,190.9 L642.5,190.9 L643.0,190.9 L643.5,190.9 L644.0,190.9 L644.5,190.8 L645.0,190.8 L645.5,190.8 L646.0,190.8 L646.5,190.7 L647.0,190.7 L647.5,190.7 L648.0,190.6 L648.5,190.6 L649.0,190.6 L649.5,190.5 L650.0,190.5 L650.5,190.4 L651.0,190.4 L651.5,190.3 L652.0,190.3 L652.5,190.3 L653.0,190.2 L653.5,190.2 L654.0,190.1 L654.5,190.0 L655.0,190.0 L655.5,189.9 L656.0,189.9 L656.5,189.8 L657.0,189.8 L657.5,189.7 L658.0,189.6 L658.5,189.6 L659.0,189.5 L659.5,189.4 L660.0,189.4 L660.5,189.3 L661.0,189.2 L661.5,189.2 L662.0,189.1 L662.5,189.0 L663.0,188.9 L663.5,188.9 L664.0,188.8 L664.5,188.7 L665.0,188.6 L665.5,188.6 L666.0,188.5 L666.5,188.4 L667.0,188.3 L667.5,188.2 L668.0,188.1 L668.5,188.1 L669.0,188.0 L669.5,187.9 L670.0,187.8 L670.5,187.7 L671.0,187.6 L671.5,187.5 L672.0,187.5 L672.5,187.4 L673.0,187.3 L673.5,187.2 L674.0,187.1 L674.5,187.0 L675.0,186.9 L675.5,186.8 L676.0,186.7 L676.5,186.6 L677.0,186.6 L677.5,186.5 L678.0,186.4 L678.5,186.3 L679.0,186.2 L679.5,186.1 L680.0,186.0 L680,210 L0,210 Z" class="sea"/>
+  <path d="M78 132 Q339 8 600 104" class="route"/>
+  <path d="M91.4 117.1 A20 20 0 0 1 91.4 146.9" class="rip" style="animation-delay:0.00s"/><path d="M100.8 106.7 A34 34 0 0 1 100.8 157.3" class="rip" style="animation-delay:0.12s"/><path d="M110.1 96.3 A48 48 0 0 1 110.1 167.7" class="rip" style="animation-delay:0.24s"/>
+  <circle id="ping" class="ping" cx="600" cy="104" r="9"/>
+  <circle id="pulse" class="pulse" cx="78" cy="132" r="7"/>
+  <circle cx="78" cy="132" r="8" class="node"/>
+  <circle cx="600" cy="104" r="8" class="node end"/>
+  <text class="lv l1 " x="48" y="80" style="--d:inline" >여기서 보내면</text><text class="lv l2 " x="48" y="80" style="--d:inline" >송신</text><text class="lv l3 " x="48" y="80" style="--d:inline" >폴듀 (영국)</text><text class="lv l4 " x="48" y="80" style="--d:inline" >폴듀 (영국 콘월)</text>
+  <text class="lv l1 " x="630" y="140" style="--d:inline" text-anchor="end">저기서 받았어요</text><text class="lv l2 " x="630" y="140" style="--d:inline" text-anchor="end">수신</text><text class="lv l3 " x="630" y="140" style="--d:inline" text-anchor="end">뉴펀들랜드</text><text class="lv l4 " x="630" y="140" style="--d:inline" text-anchor="end">세인트존스 (뉴펀들랜드)</text>
+  <text class="lv l1 cap" x="339" y="42" style="--d:inline" text-anchor="middle">넓은 바다 건너편까지</text><text class="lv l2 cap" x="339" y="42" style="--d:inline" text-anchor="middle">대서양 건너 약 3,500km</text><text class="lv l3 cap" x="339" y="42" style="--d:inline" text-anchor="middle">약 3,500km · 1901.12.12</text><text class="lv l4 cap" x="339" y="42" style="--d:inline" text-anchor="middle">약 3,500km (2,200마일)</text>
+  <text x="676" y="204" text-anchor="end" class="note">개념도 — 실제 지도·축척이 아니에요</text>
+</svg></figure>
+  <div class="tool interact"><button type="button" class="btn" id="send">신호 보내 보기</button><div class="arrive" id="arrive" hidden aria-live="polite"><p class="lv l1">받았어요! 전파가 넓은 바다를 건너갔어요.</p><p class="lv l2">수신! 대서양 건너 약 3,500km에서 모스 부호를 받았다고 발표했어요.</p><p class="lv l3">받았어요 — 1901년 12월 12일, 약 3,500km 떨어진 뉴펀들랜드에서요.</p><p class="lv l4">수신 보고 — 약 3,500km. 이 수신은 지금도 기술적 논쟁의 대상이다.</p></div></div>
+  
+  <ol class="chain lv l1"><li data-turns="ask1 docent1"><strong>계산</strong><span>한 과학자가 계산해 보고 ‘이런 게 있을 거야!’ 하고 알아냈어요.</span></li><li data-turns="ask1 docent1"><strong>실험</strong><span>다른 과학자가 실험으로 진짜 있다는 걸 보여 줬어요.</span></li><li data-turns="ask2 docent2"><strong>신호 보내기</strong><span>전파에 신호를 실어 넓은 바다 건너편까지 보냈어요.</span></li></ol><ol class="chain lv l2"><li data-turns="ask1 docent1"><strong>맥스웰 · 예언</strong><span>수식만으로 이런 파동이 있을 거라고 내다봤어요.</span></li><li data-turns="ask1 docent1"><strong>헤르츠 · 증명</strong><span>실험으로 처음 증명했어요.</span></li><li data-turns="ask2 docent2"><strong>마르코니 · 실용화</strong><span>무선전신을 실용화했어요. 1901년에는 대서양 건너 약 3,500km에서 모스 부호를 받았다고 발표했어요.</span></li></ol><ol class="chain lv l3"><li data-turns="ask1 docent1"><strong>맥스웰 · 이론</strong><span>전기·자기·빛이 한 가지 현상이라는 이론을 세웠고, 그 방정식이 전자기파를 예언했어요.</span></li><li data-turns="ask1 docent1"><strong>헤르츠 · 증명</strong><span>그 전자기파를 실험으로 처음 확실하게 증명했어요.</span></li><li data-turns="ask2 docent2"><strong>마르코니 · 무선전신</strong><span>1901년 12월 12일, 영국 폴듀에서 보낸 모스 부호를 약 3,500km 떨어진 대서양 건너 뉴펀들랜드에서 받았대요. 그때 뉴펀들랜드는 영국 식민지였어요.</span></li></ol><ol class="chain lv l4"><li data-turns="ask1 docent1"><strong>맥스웰 방정식 · 이론적 예언</strong><span>전자기파의 존재를 예언했다.</span></li><li data-turns="ask1 docent1"><strong>헤르츠 · 실험적 증명</strong><span>처음으로 결정적인 실험으로 증명했다. 흔히 드는 1785년은 쿨롱 법칙이 나온 해로, 전자기학의 출발점이지 전파의 발견은 아니다.</span></li><li data-turns="ask2 docent2"><strong>마르코니 · 실용화</strong><span>1909년 브라운과 노벨 물리학상을 공동 수상했다. 1901년 폴듀에서 세인트존스까지 약 3,500km 수신은 지금도 논쟁거리다.</span></li></ol>
+  <p class="remember lv l1" data-turns="after"><span class="tag">기억해 두기</span>눈에 안 보여도 전파는 원래 있었고, 과학자들이 찾아냈어요.</p><p class="remember lv l2" data-turns="after"><span class="tag">기억해 두기</span>발명은 없던 걸 새로 만드는 것, 발견은 원래 있던 걸 알아내는 것이에요.</p><p class="remember lv l3" data-turns="after"><span class="tag">기억해 두기</span>전파는 발명이 아니라 발견이에요.</p><p class="remember lv l4" data-turns="after"><span class="tag">기억해 두기</span>이론적 예언, 실험적 증명, 실용화는 각각 다른 사람의 일이었다.</p>
+  <details class="talk">
+    <summary>해설 전문 보기 — 사회자와 도슨트의 대화</summary>
+    <div class="chat lv l1"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">놀랍게도 전파는 누가 만든 게 아니에요! 원래 우리 주변에 있었는데, 눈에 안 보여서 아무도 몰랐던 거예요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">사회자</span><span class="emo">감탄</span></div><p class="bub">와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">신남</span></div><p class="bub">먼저 한 과학자가 계산을 해 보고 &#x27;이런 게 있을 거야&#x27; 하고 알아냈어요. 그다음에 다른 과학자가 실험으로 진짜 있다는 걸 보여 줬답니다.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-surprised"/></svg><span class="who">도슨트</span><span class="emo">놀람</span></div><p class="bub">전파에 신호를 실어서 멀리 보내는 데 처음 쓰였어요. 글쎄, 넓은 바다 건너편까지 신호가 닿았대요!</p></div></div><div class="chat lv l2"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">사실 전파는 누가 만든 게 아니라 찾아낸 거예요. 없던 걸 새로 만드는 게 발명이라면, 전파는 원래 있던 걸 알아낸 거라서 발견이라고 부르거든요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">사회자</span><span class="emo">감탄</span></div><p class="bub">와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">신남</span></div><p class="bub">그게 재밌는 부분이에요. 맥스웰이라는 과학자가 먼저 수식만으로 이런 파동이 있을 거라고 예언했거든요. 그리고 헤르츠가 실험으로 처음 증명했죠.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-surprised"/></svg><span class="who">도슨트</span><span class="emo">놀람</span></div><p class="bub">마르코니가 전파로 신호를 주고받는 무선전신을 실용화했어요. 1901년에는 무려 대서양 건너 약 3,500킬로미터 떨어진 곳에서 모스 부호를 받았다고 발표했죠.</p></div></div><div class="chat lv l3"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">재밌게도 전파는 발명이 아니라 발견이에요. 머리로 예언한 사람, 실험으로 증명한 사람, 통신에 쓴 사람이 다 따로 있었다는 게 이 이야기의 재미거든요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">사회자</span><span class="emo">감탄</span></div><p class="bub">와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">신남</span></div><p class="bub">맥스웰은 전기와 자기, 빛이 한 가지 현상이라는 이론을 세웠는데요, 그 방정식이 전자기파가 있다고 예언했어요. 그걸 실험으로 처음 확실하게 증명한 사람이 헤르츠예요.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-surprised"/></svg><span class="who">도슨트</span><span class="emo">놀람</span></div><p class="bub">마르코니가 만든 무선전신이에요. 1901년 12월 12일 영국 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 대서양 건너 뉴펀들랜드에서 받았대요. 그때 뉴펀들랜드는 영국 식민지였고요.</p></div></div><div class="chat lv l4"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">발명이 아니라 발견이에요. 다만 발견한 사람을 딱 한 명으로 꼽기는 어렵습니다. 이론적 예언, 실험적 증명, 실용화가 각각 다른 사람의 일이었거든요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">사회자</span><span class="emo">감탄</span></div><p class="bub">와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">신남</span></div><p class="bub">맥스웰 방정식이 전자기파의 존재를 예언했고, 헤르츠가 처음으로 결정적인 실험으로 증명했어요. 흔히 출발점으로 꼽는 1785년은 쿨롱 법칙이 나온 해라서, 전자기학의 출발점이지 전파의 발견은 아니에요.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-surprised"/></svg><span class="who">도슨트</span><span class="emo">놀람</span></div><p class="bub">마르코니의 실용 무선전신이에요. 그는 1909년 브라운과 함께 노벨 물리학상도 받았죠. 1901년 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 세인트존스에서 받았다고 했는데, 그 수신은 지금도 논쟁거리예요.</p></div></div>
+  </details>
+  <p class="src lv l4">근거 · Wikipedia — James Clerk Maxwell · Heinrich Hertz · Guglielmo Marconi · Coulomb’s law (신뢰 등급 B)</p>
+</article>
+  
+<article class="sheet" id="03-theory" data-points="3">
+  <header class="sheet-h"><span class="no">03</span><h2>전파 이론 — 주파수와 파장</h2><span class="livebadge">● 지금 이야기 중</span></header>
+  <div class="dial" aria-hidden="true"></div>
+  <h3 class="headline lv l1" data-turns="open">전파는 눈에 안 보이는 물결이에요</h3><h3 class="headline lv l2" data-turns="open">주파수가 높을수록 파장은 짧아져요</h3><h3 class="headline lv l3" data-turns="open">파장은 빛의 속도를 주파수로 나눈 값이에요</h3><h3 class="headline lv l4" data-turns="open">전파는 3,000GHz보다 낮은 주파수의 전자기파다</h3>
+  <figure class="hero">
+<svg class="hero-svg" viewBox="0 0 680 228" role="img" aria-label="주파수가 낮으면 파장이 길고, 높으면 파장이 짧다는 비교 그림">
+  <text class="lv l1 cap" x="8" y="20" style="--d:inline" >천천히 출렁여요</text><text class="lv l2 l3 l4 cap" x="8" y="20" style="--d:inline" >주파수 낮음</text>
+  <path d="M8.0,62.0 L8.5,61.8 L9.0,61.6 L9.5,61.4 L10.0,61.2 L10.5,61.0 L11.0,60.7 L11.5,60.5 L12.0,60.3 L12.5,60.1 L13.0,59.9 L13.5,59.7 L14.0,59.5 L14.5,59.3 L15.0,59.1 L15.5,58.9 L16.0,58.7 L16.5,58.5 L17.0,58.2 L17.5,58.0 L18.0,57.8 L18.5,57.6 L19.0,57.4 L19.5,57.2 L20.0,57.0 L20.5,56.8 L21.0,56.6 L21.5,56.4 L22.0,56.2 L22.5,56.0 L23.0,55.8 L23.5,55.6 L24.0,55.4 L24.5,55.2 L25.0,55.0 L25.5,54.8 L26.0,54.6 L26.5,54.4 L27.0,54.2 L27.5,54.0 L28.0,53.8 L28.5,53.6 L29.0,53.4 L29.5,53.2 L30.0,53.1 L30.5,52.9 L31.0,52.7 L31.5,52.5 L32.0,52.3 L32.5,52.1 L33.0,51.9 L33.5,51.7 L34.0,51.5 L34.5,51.4 L35.0,51.2 L35.5,51.0 L36.0,50.8 L36.5,50.6 L37.0,50.5 L37.5,50.3 L38.0,50.1 L38.5,49.9 L39.0,49.8 L39.5,49.6 L40.0,49.4 L40.5,49.2 L41.0,49.1 L41.5,48.9 L42.0,48.7 L42.5,48.6 L43.0,48.4 L43.5,48.2 L44.0,48.1 L44.5,47.9 L45.0,47.8 L45.5,47.6 L46.0,47.4 L46.5,47.3 L47.0,47.1 L47.5,47.0 L48.0,46.8 L48.5,46.7 L49.0,46.5 L49.5,46.4 L50.0,46.2 L50.5,46.1 L51.0,45.9 L51.5,45.8 L52.0,45.7 L52.5,45.5 L53.0,45.4 L53.5,45.2 L54.0,45.1 L54.5,45.0 L55.0,44.8 L55.5,44.7 L56.0,44.6 L56.5,44.5 L57.0,44.3 L57.5,44.2 L58.0,44.1 L58.5,44.0 L59.0,43.8 L59.5,43.7 L60.0,43.6 L60.5,43.5 L61.0,43.4 L61.5,43.3 L62.0,43.2 L62.5,43.1 L63.0,42.9 L63.5,42.8 L64.0,42.7 L64.5,42.6 L65.0,42.5 L65.5,42.4 L66.0,42.4 L66.5,42.3 L67.0,42.2 L67.5,42.1 L68.0,42.0 L68.5,41.9 L69.0,41.8 L69.5,41.7 L70.0,41.7 L70.5,41.6 L71.0,41.5 L71.5,41.4 L72.0,41.4 L72.5,41.3 L73.0,41.2 L73.5,41.1 L74.0,41.1 L74.5,41.0 L75.0,41.0 L75.5,40.9 L76.0,40.8 L76.5,40.8 L77.0,40.7 L77.5,40.7 L78.0,40.6 L78.5,40.6 L79.0,40.5 L79.5,40.5 L80.0,40.4 L80.5,40.4 L81.0,40.4 L81.5,40.3 L82.0,40.3 L82.5,40.3 L83.0,40.2 L83.5,40.2 L84.0,40.2 L84.5,40.1 L85.0,40.1 L85.5,40.1 L86.0,40.1 L86.5,40.1 L87.0,40.0 L87.5,40.0 L88.0,40.0 L88.5,40.0 L89.0,40.0 L89.5,40.0 L90.0,40.0 L90.5,40.0 L91.0,40.0 L91.5,40.0 L92.0,40.0 L92.5,40.0 L93.0,40.0 L93.5,40.0 L94.0,40.0 L94.5,40.1 L95.0,40.1 L95.5,40.1 L96.0,40.1 L96.5,40.1 L97.0,40.2 L97.5,40.2 L98.0,40.2 L98.5,40.3 L99.0,40.3 L99.5,40.3 L100.0,40.4 L100.5,40.4 L101.0,40.4 L101.5,40.5 L102.0,40.5 L102.5,40.6 L103.0,40.6 L103.5,40.7 L104.0,40.7 L104.5,40.8 L105.0,40.8 L105.5,40.9 L106.0,41.0 L106.5,41.0 L107.0,41.1 L107.5,41.1 L108.0,41.2 L108.5,41.3 L109.0,41.4 L109.5,41.4 L110.0,41.5 L110.5,41.6 L111.0,41.7 L111.5,41.7 L112.0,41.8 L112.5,41.9 L113.0,42.0 L113.5,42.1 L114.0,42.2 L114.5,42.3 L115.0,42.4 L115.5,42.4 L116.0,42.5 L116.5,42.6 L117.0,42.7 L117.5,42.8 L118.0,42.9 L118.5,43.1 L119.0,43.2 L119.5,43.3 L120.0,43.4 L120.5,43.5 L121.0,43.6 L121.5,43.7 L122.0,43.8 L122.5,44.0 L123.0,44.1 L123.5,44.2 L124.0,44.3 L124.5,44.5 L125.0,44.6 L125.5,44.7 L126.0,44.8 L126.5,45.0 L127.0,45.1 L127.5,45.2 L128.0,45.4 L128.5,45.5 L129.0,45.7 L129.5,45.8 L130.0,45.9 L130.5,46.1 L131.0,46.2 L131.5,46.4 L132.0,46.5 L132.5,46.7 L133.0,46.8 L133.5,47.0 L134.0,47.1 L134.5,47.3 L135.0,47.4 L135.5,47.6 L136.0,47.8 L136.5,47.9 L137.0,48.1 L137.5,48.2 L138.0,48.4 L138.5,48.6 L139.0,48.7 L139.5,48.9 L140.0,49.1 L140.5,49.2 L141.0,49.4 L141.5,49.6 L142.0,49.8 L142.5,49.9 L143.0,50.1 L143.5,50.3 L144.0,50.5 L144.5,50.6 L145.0,50.8 L145.5,51.0 L146.0,51.2 L146.5,51.4 L147.0,51.5 L147.5,51.7 L148.0,51.9 L148.5,52.1 L149.0,52.3 L149.5,52.5 L150.0,52.7 L150.5,52.9 L151.0,53.1 L151.5,53.2 L152.0,53.4 L152.5,53.6 L153.0,53.8 L153.5,54.0 L154.0,54.2 L154.5,54.4 L155.0,54.6 L155.5,54.8 L156.0,55.0 L156.5,55.2 L157.0,55.4 L157.5,55.6 L158.0,55.8 L158.5,56.0 L159.0,56.2 L159.5,56.4 L160.0,56.6 L160.5,56.8 L161.0,57.0 L161.5,57.2 L162.0,57.4 L162.5,57.6 L163.0,57.8 L163.5,58.0 L164.0,58.2 L164.5,58.5 L165.0,58.7 L165.5,58.9 L166.0,59.1 L166.5,59.3 L167.0,59.5 L167.5,59.7 L168.0,59.9 L168.5,60.1 L169.0,60.3 L169.5,60.5 L170.0,60.7 L170.5,61.0 L171.0,61.2 L171.5,61.4 L172.0,61.6 L172.5,61.8 L173.0,62.0 L173.5,62.2 L174.0,62.4 L174.5,62.6 L175.0,62.8 L175.5,63.0 L176.0,63.3 L176.5,63.5 L177.0,63.7 L177.5,63.9 L178.0,64.1 L178.5,64.3 L179.0,64.5 L179.5,64.7 L180.0,64.9 L180.5,65.1 L181.0,65.3 L181.5,65.5 L182.0,65.8 L182.5,66.0 L183.0,66.2 L183.5,66.4 L184.0,66.6 L184.5,66.8 L185.0,67.0 L185.5,67.2 L186.0,67.4 L186.5,67.6 L187.0,67.8 L187.5,68.0 L188.0,68.2 L188.5,68.4 L189.0,68.6 L189.5,68.8 L190.0,69.0 L190.5,69.2 L191.0,69.4 L191.5,69.6 L192.0,69.8 L192.5,70.0 L193.0,70.2 L193.5,70.4 L194.0,70.6 L194.5,70.8 L195.0,70.9 L195.5,71.1 L196.0,71.3 L196.5,71.5 L197.0,71.7 L197.5,71.9 L198.0,72.1 L198.5,72.3 L199.0,72.5 L199.5,72.6 L200.0,72.8 L200.5,73.0 L201.0,73.2 L201.5,73.4 L202.0,73.5 L202.5,73.7 L203.0,73.9 L203.5,74.1 L204.0,74.2 L204.5,74.4 L205.0,74.6 L205.5,74.8 L206.0,74.9 L206.5,75.1 L207.0,75.3 L207.5,75.4 L208.0,75.6 L208.5,75.8 L209.0,75.9 L209.5,76.1 L210.0,76.2 L210.5,76.4 L211.0,76.6 L211.5,76.7 L212.0,76.9 L212.5,77.0 L213.0,77.2 L213.5,77.3 L214.0,77.5 L214.5,77.6 L215.0,77.8 L215.5,77.9 L216.0,78.1 L216.5,78.2 L217.0,78.3 L217.5,78.5 L218.0,78.6 L218.5,78.8 L219.0,78.9 L219.5,79.0 L220.0,79.2 L220.5,79.3 L221.0,79.4 L221.5,79.5 L222.0,79.7 L222.5,79.8 L223.0,79.9 L223.5,80.0 L224.0,80.2 L224.5,80.3 L225.0,80.4 L225.5,80.5 L226.0,80.6 L226.5,80.7 L227.0,80.8 L227.5,80.9 L228.0,81.1 L228.5,81.2 L229.0,81.3 L229.5,81.4 L230.0,81.5 L230.5,81.6 L231.0,81.6 L231.5,81.7 L232.0,81.8 L232.5,81.9 L233.0,82.0 L233.5,82.1 L234.0,82.2 L234.5,82.3 L235.0,82.3 L235.5,82.4 L236.0,82.5 L236.5,82.6 L237.0,82.6 L237.5,82.7 L238.0,82.8 L238.5,82.9 L239.0,82.9 L239.5,83.0 L240.0,83.0 L240.5,83.1 L241.0,83.2 L241.5,83.2 L242.0,83.3 L242.5,83.3 L243.0,83.4 L243.5,83.4 L244.0,83.5 L244.5,83.5 L245.0,83.6 L245.5,83.6 L246.0,83.6 L246.5,83.7 L247.0,83.7 L247.5,83.7 L248.0,83.8 L248.5,83.8 L249.0,83.8 L249.5,83.9 L250.0,83.9 L250.5,83.9 L251.0,83.9 L251.5,83.9 L252.0,84.0 L252.5,84.0 L253.0,84.0 L253.5,84.0 L254.0,84.0 L254.5,84.0 L255.0,84.0 L255.5,84.0 L256.0,84.0 L256.5,84.0 L257.0,84.0 L257.5,84.0 L258.0,84.0 L258.5,84.0 L259.0,84.0 L259.5,83.9 L260.0,83.9 L260.5,83.9 L261.0,83.9 L261.5,83.9 L262.0,83.8 L262.5,83.8 L263.0,83.8 L263.5,83.7 L264.0,83.7 L264.5,83.7 L265.0,83.6 L265.5,83.6 L266.0,83.6 L266.5,83.5 L267.0,83.5 L267.5,83.4 L268.0,83.4 L268.5,83.3 L269.0,83.3 L269.5,83.2 L270.0,83.2 L270.5,83.1 L271.0,83.0 L271.5,83.0 L272.0,82.9 L272.5,82.9 L273.0,82.8 L273.5,82.7 L274.0,82.6 L274.5,82.6 L275.0,82.5 L275.5,82.4 L276.0,82.3 L276.5,82.3 L277.0,82.2 L277.5,82.1 L278.0,82.0 L278.5,81.9 L279.0,81.8 L279.5,81.7 L280.0,81.6 L280.5,81.6 L281.0,81.5 L281.5,81.4 L282.0,81.3 L282.5,81.2 L283.0,81.1 L283.5,80.9 L284.0,80.8 L284.5,80.7 L285.0,80.6 L285.5,80.5 L286.0,80.4 L286.5,80.3 L287.0,80.2 L287.5,80.0 L288.0,79.9 L288.5,79.8 L289.0,79.7 L289.5,79.5 L290.0,79.4 L290.5,79.3 L291.0,79.2 L291.5,79.0 L292.0,78.9 L292.5,78.8 L293.0,78.6 L293.5,78.5 L294.0,78.3 L294.5,78.2 L295.0,78.1 L295.5,77.9 L296.0,77.8 L296.5,77.6 L297.0,77.5 L297.5,77.3 L298.0,77.2 L298.5,77.0 L299.0,76.9 L299.5,76.7 L300.0,76.6 L300.5,76.4 L301.0,76.2 L301.5,76.1 L302.0,75.9 L302.5,75.8 L303.0,75.6 L303.5,75.4 L304.0,75.3 L304.5,75.1 L305.0,74.9 L305.5,74.8 L306.0,74.6 L306.5,74.4 L307.0,74.2 L307.5,74.1 L308.0,73.9 L308.5,73.7 L309.0,73.5 L309.5,73.4 L310.0,73.2 L310.5,73.0 L311.0,72.8 L311.5,72.6 L312.0,72.5 L312.5,72.3 L313.0,72.1 L313.5,71.9 L314.0,71.7 L314.5,71.5 L315.0,71.3 L315.5,71.1 L316.0,70.9 L316.5,70.8 L317.0,70.6 L317.5,70.4 L318.0,70.2 L318.5,70.0 L319.0,69.8 L319.5,69.6 L320.0,69.4 L320.5,69.2 L321.0,69.0 L321.5,68.8 L322.0,68.6 L322.5,68.4 L323.0,68.2 L323.5,68.0 L324.0,67.8 L324.5,67.6 L325.0,67.4 L325.5,67.2 L326.0,67.0 L326.5,66.8 L327.0,66.6 L327.5,66.4 L328.0,66.2 L328.5,66.0 L329.0,65.8 L329.5,65.5 L330.0,65.3 L330.5,65.1 L331.0,64.9 L331.5,64.7 L332.0,64.5 L332.5,64.3 L333.0,64.1 L333.5,63.9 L334.0,63.7 L334.5,63.5 L335.0,63.3 L335.5,63.0 L336.0,62.8 L336.5,62.6 L337.0,62.4 L337.5,62.2 L338.0,62.0 L338.5,61.8 L339.0,61.6 L339.5,61.4 L340.0,61.2 L340.5,61.0 L341.0,60.7 L341.5,60.5 L342.0,60.3 L342.5,60.1 L343.0,59.9 L343.5,59.7 L344.0,59.5 L344.5,59.3 L345.0,59.1 L345.5,58.9 L346.0,58.7 L346.5,58.5 L347.0,58.2 L347.5,58.0 L348.0,57.8 L348.5,57.6 L349.0,57.4 L349.5,57.2 L350.0,57.0 L350.5,56.8 L351.0,56.6 L351.5,56.4 L352.0,56.2 L352.5,56.0 L353.0,55.8 L353.5,55.6 L354.0,55.4 L354.5,55.2 L355.0,55.0 L355.5,54.8 L356.0,54.6 L356.5,54.4 L357.0,54.2 L357.5,54.0 L358.0,53.8 L358.5,53.6 L359.0,53.4 L359.5,53.2 L360.0,53.1 L360.5,52.9 L361.0,52.7 L361.5,52.5 L362.0,52.3 L362.5,52.1 L363.0,51.9 L363.5,51.7 L364.0,51.5 L364.5,51.4 L365.0,51.2 L365.5,51.0 L366.0,50.8 L366.5,50.6 L367.0,50.5 L367.5,50.3 L368.0,50.1 L368.5,49.9 L369.0,49.8 L369.5,49.6 L370.0,49.4 L370.5,49.2 L371.0,49.1 L371.5,48.9 L372.0,48.7 L372.5,48.6 L373.0,48.4 L373.5,48.2 L374.0,48.1 L374.5,47.9 L375.0,47.8 L375.5,47.6 L376.0,47.4 L376.5,47.3 L377.0,47.1 L377.5,47.0 L378.0,46.8 L378.5,46.7 L379.0,46.5 L379.5,46.4 L380.0,46.2 L380.5,46.1 L381.0,45.9 L381.5,45.8 L382.0,45.7 L382.5,45.5 L383.0,45.4 L383.5,45.2 L384.0,45.1 L384.5,45.0 L385.0,44.8 L385.5,44.7 L386.0,44.6 L386.5,44.5 L387.0,44.3 L387.5,44.2 L388.0,44.1 L388.5,44.0 L389.0,43.8 L389.5,43.7 L390.0,43.6 L390.5,43.5 L391.0,43.4 L391.5,43.3 L392.0,43.2 L392.5,43.1 L393.0,42.9 L393.5,42.8 L394.0,42.7 L394.5,42.6 L395.0,42.5 L395.5,42.4 L396.0,42.4 L396.5,42.3 L397.0,42.2 L397.5,42.1 L398.0,42.0 L398.5,41.9 L399.0,41.8 L399.5,41.7 L400.0,41.7 L400.5,41.6 L401.0,41.5 L401.5,41.4 L402.0,41.4 L402.5,41.3 L403.0,41.2 L403.5,41.1 L404.0,41.1 L404.5,41.0 L405.0,41.0 L405.5,40.9 L406.0,40.8 L406.5,40.8 L407.0,40.7 L407.5,40.7 L408.0,40.6 L408.5,40.6 L409.0,40.5 L409.5,40.5 L410.0,40.4 L410.5,40.4 L411.0,40.4 L411.5,40.3 L412.0,40.3 L412.5,40.3 L413.0,40.2 L413.5,40.2 L414.0,40.2 L414.5,40.1 L415.0,40.1 L415.5,40.1 L416.0,40.1 L416.5,40.1 L417.0,40.0 L417.5,40.0 L418.0,40.0 L418.5,40.0 L419.0,40.0 L419.5,40.0 L420.0,40.0 L420.5,40.0 L421.0,40.0 L421.5,40.0 L422.0,40.0 L422.5,40.0 L423.0,40.0 L423.5,40.0 L424.0,40.0 L424.5,40.1 L425.0,40.1 L425.5,40.1 L426.0,40.1 L426.5,40.1 L427.0,40.2 L427.5,40.2 L428.0,40.2 L428.5,40.3 L429.0,40.3 L429.5,40.3 L430.0,40.4 L430.5,40.4 L431.0,40.4 L431.5,40.5 L432.0,40.5 L432.5,40.6 L433.0,40.6 L433.5,40.7 L434.0,40.7 L434.5,40.8 L435.0,40.8 L435.5,40.9 L436.0,41.0 L436.5,41.0 L437.0,41.1 L437.5,41.1 L438.0,41.2 L438.5,41.3 L439.0,41.4 L439.5,41.4 L440.0,41.5 L440.5,41.6 L441.0,41.7 L441.5,41.7 L442.0,41.8 L442.5,41.9 L443.0,42.0 L443.5,42.1 L444.0,42.2 L444.5,42.3 L445.0,42.4 L445.5,42.4 L446.0,42.5 L446.5,42.6 L447.0,42.7 L447.5,42.8 L448.0,42.9 L448.5,43.1 L449.0,43.2 L449.5,43.3 L450.0,43.4 L450.5,43.5 L451.0,43.6 L451.5,43.7 L452.0,43.8 L452.5,44.0 L453.0,44.1 L453.5,44.2 L454.0,44.3 L454.5,44.5 L455.0,44.6 L455.5,44.7 L456.0,44.8 L456.5,45.0 L457.0,45.1 L457.5,45.2 L458.0,45.4 L458.5,45.5 L459.0,45.7 L459.5,45.8 L460.0,45.9 L460.5,46.1 L461.0,46.2 L461.5,46.4 L462.0,46.5 L462.5,46.7 L463.0,46.8 L463.5,47.0 L464.0,47.1 L464.5,47.3 L465.0,47.4 L465.5,47.6 L466.0,47.8 L466.5,47.9 L467.0,48.1 L467.5,48.2 L468.0,48.4 L468.5,48.6 L469.0,48.7 L469.5,48.9 L470.0,49.1 L470.5,49.2 L471.0,49.4 L471.5,49.6 L472.0,49.8 L472.5,49.9 L473.0,50.1 L473.5,50.3 L474.0,50.5 L474.5,50.6 L475.0,50.8 L475.5,51.0 L476.0,51.2 L476.5,51.4 L477.0,51.5 L477.5,51.7 L478.0,51.9 L478.5,52.1 L479.0,52.3 L479.5,52.5 L480.0,52.7 L480.5,52.9 L481.0,53.1 L481.5,53.2 L482.0,53.4 L482.5,53.6 L483.0,53.8 L483.5,54.0 L484.0,54.2 L484.5,54.4 L485.0,54.6 L485.5,54.8 L486.0,55.0 L486.5,55.2 L487.0,55.4 L487.5,55.6 L488.0,55.8 L488.5,56.0 L489.0,56.2 L489.5,56.4 L490.0,56.6 L490.5,56.8 L491.0,57.0 L491.5,57.2 L492.0,57.4 L492.5,57.6 L493.0,57.8 L493.5,58.0 L494.0,58.2 L494.5,58.5 L495.0,58.7 L495.5,58.9 L496.0,59.1 L496.5,59.3 L497.0,59.5 L497.5,59.7 L498.0,59.9 L498.5,60.1 L499.0,60.3 L499.5,60.5 L500.0,60.7 L500.5,61.0 L501.0,61.2 L501.5,61.4 L502.0,61.6 L502.5,61.8 L503.0,62.0 L503.5,62.2 L504.0,62.4 L504.5,62.6 L505.0,62.8 L505.5,63.0 L506.0,63.3 L506.5,63.5 L507.0,63.7 L507.5,63.9 L508.0,64.1 L508.5,64.3 L509.0,64.5 L509.5,64.7 L510.0,64.9 L510.5,65.1 L511.0,65.3 L511.5,65.5 L512.0,65.8 L512.5,66.0 L513.0,66.2 L513.5,66.4 L514.0,66.6 L514.5,66.8 L515.0,67.0 L515.5,67.2 L516.0,67.4 L516.5,67.6 L517.0,67.8 L517.5,68.0 L518.0,68.2 L518.5,68.4 L519.0,68.6 L519.5,68.8 L520.0,69.0 L520.5,69.2 L521.0,69.4 L521.5,69.6 L522.0,69.8 L522.5,70.0 L523.0,70.2 L523.5,70.4 L524.0,70.6 L524.5,70.8 L525.0,70.9 L525.5,71.1 L526.0,71.3 L526.5,71.5 L527.0,71.7 L527.5,71.9 L528.0,72.1 L528.5,72.3 L529.0,72.5 L529.5,72.6 L530.0,72.8 L530.5,73.0 L531.0,73.2 L531.5,73.4 L532.0,73.5 L532.5,73.7 L533.0,73.9 L533.5,74.1 L534.0,74.2 L534.5,74.4 L535.0,74.6 L535.5,74.8 L536.0,74.9 L536.5,75.1 L537.0,75.3 L537.5,75.4 L538.0,75.6 L538.5,75.8 L539.0,75.9 L539.5,76.1 L540.0,76.2 L540.5,76.4 L541.0,76.6 L541.5,76.7 L542.0,76.9 L542.5,77.0 L543.0,77.2 L543.5,77.3 L544.0,77.5 L544.5,77.6 L545.0,77.8 L545.5,77.9 L546.0,78.1 L546.5,78.2 L547.0,78.3 L547.5,78.5 L548.0,78.6 L548.5,78.8 L549.0,78.9 L549.5,79.0 L550.0,79.2 L550.5,79.3 L551.0,79.4 L551.5,79.5 L552.0,79.7 L552.5,79.8 L553.0,79.9 L553.5,80.0 L554.0,80.2 L554.5,80.3 L555.0,80.4 L555.5,80.5 L556.0,80.6 L556.5,80.7 L557.0,80.8 L557.5,80.9 L558.0,81.1 L558.5,81.2 L559.0,81.3 L559.5,81.4 L560.0,81.5 L560.5,81.6 L561.0,81.6 L561.5,81.7 L562.0,81.8 L562.5,81.9 L563.0,82.0 L563.5,82.1 L564.0,82.2 L564.5,82.3 L565.0,82.3 L565.5,82.4 L566.0,82.5 L566.5,82.6 L567.0,82.6 L567.5,82.7 L568.0,82.8 L568.5,82.9 L569.0,82.9 L569.5,83.0 L570.0,83.0 L570.5,83.1 L571.0,83.2 L571.5,83.2 L572.0,83.3 L572.5,83.3 L573.0,83.4 L573.5,83.4 L574.0,83.5 L574.5,83.5 L575.0,83.6 L575.5,83.6 L576.0,83.6 L576.5,83.7 L577.0,83.7 L577.5,83.7 L578.0,83.8 L578.5,83.8 L579.0,83.8 L579.5,83.9 L580.0,83.9 L580.5,83.9 L581.0,83.9 L581.5,83.9 L582.0,84.0 L582.5,84.0 L583.0,84.0 L583.5,84.0 L584.0,84.0 L584.5,84.0 L585.0,84.0 L585.5,84.0 L586.0,84.0 L586.5,84.0 L587.0,84.0 L587.5,84.0 L588.0,84.0 L588.5,84.0 L589.0,84.0 L589.5,83.9 L590.0,83.9 L590.5,83.9 L591.0,83.9 L591.5,83.9 L592.0,83.8 L592.5,83.8 L593.0,83.8 L593.5,83.7 L594.0,83.7 L594.5,83.7 L595.0,83.6 L595.5,83.6 L596.0,83.6 L596.5,83.5 L597.0,83.5 L597.5,83.4 L598.0,83.4 L598.5,83.3 L599.0,83.3 L599.5,83.2 L600.0,83.2 L600.5,83.1 L601.0,83.0 L601.5,83.0 L602.0,82.9 L602.5,82.9 L603.0,82.8 L603.5,82.7 L604.0,82.6 L604.5,82.6 L605.0,82.5 L605.5,82.4 L606.0,82.3 L606.5,82.3 L607.0,82.2 L607.5,82.1 L608.0,82.0 L608.5,81.9 L609.0,81.8 L609.5,81.7 L610.0,81.6 L610.5,81.6 L611.0,81.5 L611.5,81.4 L612.0,81.3 L612.5,81.2 L613.0,81.1 L613.5,80.9 L614.0,80.8 L614.5,80.7 L615.0,80.6 L615.5,80.5 L616.0,80.4 L616.5,80.3 L617.0,80.2 L617.5,80.0 L618.0,79.9 L618.5,79.8 L619.0,79.7 L619.5,79.5 L620.0,79.4 L620.5,79.3 L621.0,79.2 L621.5,79.0 L622.0,78.9 L622.5,78.8 L623.0,78.6 L623.5,78.5 L624.0,78.3 L624.5,78.2 L625.0,78.1 L625.5,77.9 L626.0,77.8 L626.5,77.6 L627.0,77.5 L627.5,77.3 L628.0,77.2 L628.5,77.0 L629.0,76.9 L629.5,76.7 L630.0,76.6 L630.5,76.4 L631.0,76.2 L631.5,76.1 L632.0,75.9 L632.5,75.8 L633.0,75.6 L633.5,75.4 L634.0,75.3 L634.5,75.1 L635.0,74.9 L635.5,74.8 L636.0,74.6 L636.5,74.4 L637.0,74.2 L637.5,74.1 L638.0,73.9 L638.5,73.7 L639.0,73.5 L639.5,73.4 L640.0,73.2 L640.5,73.0 L641.0,72.8 L641.5,72.6 L642.0,72.5 L642.5,72.3 L643.0,72.1 L643.5,71.9 L644.0,71.7 L644.5,71.5 L645.0,71.3 L645.5,71.1 L646.0,70.9 L646.5,70.8 L647.0,70.6 L647.5,70.4 L648.0,70.2 L648.5,70.0 L649.0,69.8 L649.5,69.6 L650.0,69.4 L650.5,69.2 L651.0,69.0 L651.5,68.8 L652.0,68.6 L652.5,68.4 L653.0,68.2 L653.5,68.0 L654.0,67.8 L654.5,67.6 L655.0,67.4 L655.5,67.2 L656.0,67.0 L656.5,66.8 L657.0,66.6 L657.5,66.4 L658.0,66.2 L658.5,66.0 L659.0,65.8 L659.5,65.5 L660.0,65.3 L660.5,65.1 L661.0,64.9 L661.5,64.7 L662.0,64.5 L662.5,64.3 L663.0,64.1 L663.5,63.9 L664.0,63.7 L664.5,63.5 L665.0,63.3 L665.5,63.0 L666.0,62.8 L666.5,62.6 L667.0,62.4 L667.5,62.2 L668.0,62.0" class="wave a"/>
+  <path d="M8 94 v8 M8 98 H338 M338 94 v8" class="br"/>
+  <text class="lv l1 " x="350" y="103" style="--d:inline" >물결 하나 — 길어요</text><text class="lv l2 l3 l4 " x="350" y="103" style="--d:inline" >파장 길다</text>
+  <text class="lv l1 cap" x="8" y="134" style="--d:inline" >빠르게 출렁여요</text><text class="lv l2 l3 l4 cap" x="8" y="134" style="--d:inline" >주파수 높음</text>
+  <path d="M8.0,170.0 L8.5,169.2 L9.0,168.3 L9.5,167.5 L10.0,166.7 L10.5,165.8 L11.0,165.0 L11.5,164.2 L12.0,163.4 L12.5,162.6 L13.0,161.8 L13.5,161.1 L14.0,160.3 L14.5,159.5 L15.0,158.8 L15.5,158.1 L16.0,157.4 L16.5,156.7 L17.0,156.1 L17.5,155.4 L18.0,154.8 L18.5,154.2 L19.0,153.7 L19.5,153.1 L20.0,152.6 L20.5,152.1 L21.0,151.6 L21.5,151.2 L22.0,150.7 L22.5,150.4 L23.0,150.0 L23.5,149.7 L24.0,149.4 L24.5,149.1 L25.0,148.8 L25.5,148.6 L26.0,148.4 L26.5,148.3 L27.0,148.2 L27.5,148.1 L28.0,148.0 L28.5,148.0 L29.0,148.0 L29.5,148.0 L30.0,148.1 L30.5,148.2 L31.0,148.4 L31.5,148.5 L32.0,148.7 L32.5,149.0 L33.0,149.2 L33.5,149.5 L34.0,149.8 L34.5,150.2 L35.0,150.5 L35.5,150.9 L36.0,151.4 L36.5,151.8 L37.0,152.3 L37.5,152.8 L38.0,153.4 L38.5,153.9 L39.0,154.5 L39.5,155.1 L40.0,155.8 L40.5,156.4 L41.0,157.1 L41.5,157.8 L42.0,158.5 L42.5,159.2 L43.0,159.9 L43.5,160.7 L44.0,161.4 L44.5,162.2 L45.0,163.0 L45.5,163.8 L46.0,164.6 L46.5,165.4 L47.0,166.2 L47.5,167.1 L48.0,167.9 L48.5,168.7 L49.0,169.6 L49.5,170.4 L50.0,171.3 L50.5,172.1 L51.0,172.9 L51.5,173.8 L52.0,174.6 L52.5,175.4 L53.0,176.2 L53.5,177.0 L54.0,177.8 L54.5,178.6 L55.0,179.3 L55.5,180.1 L56.0,180.8 L56.5,181.5 L57.0,182.2 L57.5,182.9 L58.0,183.6 L58.5,184.2 L59.0,184.9 L59.5,185.5 L60.0,186.1 L60.5,186.6 L61.0,187.2 L61.5,187.7 L62.0,188.2 L62.5,188.6 L63.0,189.1 L63.5,189.5 L64.0,189.8 L64.5,190.2 L65.0,190.5 L65.5,190.8 L66.0,191.0 L66.5,191.3 L67.0,191.5 L67.5,191.6 L68.0,191.8 L68.5,191.9 L69.0,192.0 L69.5,192.0 L70.0,192.0 L70.5,192.0 L71.0,191.9 L71.5,191.8 L72.0,191.7 L72.5,191.6 L73.0,191.4 L73.5,191.2 L74.0,190.9 L74.5,190.6 L75.0,190.3 L75.5,190.0 L76.0,189.6 L76.5,189.3 L77.0,188.8 L77.5,188.4 L78.0,187.9 L78.5,187.4 L79.0,186.9 L79.5,186.3 L80.0,185.8 L80.5,185.2 L81.0,184.6 L81.5,183.9 L82.0,183.3 L82.5,182.6 L83.0,181.9 L83.5,181.2 L84.0,180.5 L84.5,179.7 L85.0,178.9 L85.5,178.2 L86.0,177.4 L86.5,176.6 L87.0,175.8 L87.5,175.0 L88.0,174.2 L88.5,173.3 L89.0,172.5 L89.5,171.7 L90.0,170.8 L90.5,170.0 L91.0,169.2 L91.5,168.3 L92.0,167.5 L92.5,166.7 L93.0,165.8 L93.5,165.0 L94.0,164.2 L94.5,163.4 L95.0,162.6 L95.5,161.8 L96.0,161.1 L96.5,160.3 L97.0,159.5 L97.5,158.8 L98.0,158.1 L98.5,157.4 L99.0,156.7 L99.5,156.1 L100.0,155.4 L100.5,154.8 L101.0,154.2 L101.5,153.7 L102.0,153.1 L102.5,152.6 L103.0,152.1 L103.5,151.6 L104.0,151.2 L104.5,150.7 L105.0,150.4 L105.5,150.0 L106.0,149.7 L106.5,149.4 L107.0,149.1 L107.5,148.8 L108.0,148.6 L108.5,148.4 L109.0,148.3 L109.5,148.2 L110.0,148.1 L110.5,148.0 L111.0,148.0 L111.5,148.0 L112.0,148.0 L112.5,148.1 L113.0,148.2 L113.5,148.4 L114.0,148.5 L114.5,148.7 L115.0,149.0 L115.5,149.2 L116.0,149.5 L116.5,149.8 L117.0,150.2 L117.5,150.5 L118.0,150.9 L118.5,151.4 L119.0,151.8 L119.5,152.3 L120.0,152.8 L120.5,153.4 L121.0,153.9 L121.5,154.5 L122.0,155.1 L122.5,155.8 L123.0,156.4 L123.5,157.1 L124.0,157.8 L124.5,158.5 L125.0,159.2 L125.5,159.9 L126.0,160.7 L126.5,161.4 L127.0,162.2 L127.5,163.0 L128.0,163.8 L128.5,164.6 L129.0,165.4 L129.5,166.2 L130.0,167.1 L130.5,167.9 L131.0,168.7 L131.5,169.6 L132.0,170.4 L132.5,171.3 L133.0,172.1 L133.5,172.9 L134.0,173.8 L134.5,174.6 L135.0,175.4 L135.5,176.2 L136.0,177.0 L136.5,177.8 L137.0,178.6 L137.5,179.3 L138.0,180.1 L138.5,180.8 L139.0,181.5 L139.5,182.2 L140.0,182.9 L140.5,183.6 L141.0,184.2 L141.5,184.9 L142.0,185.5 L142.5,186.1 L143.0,186.6 L143.5,187.2 L144.0,187.7 L144.5,188.2 L145.0,188.6 L145.5,189.1 L146.0,189.5 L146.5,189.8 L147.0,190.2 L147.5,190.5 L148.0,190.8 L148.5,191.0 L149.0,191.3 L149.5,191.5 L150.0,191.6 L150.5,191.8 L151.0,191.9 L151.5,192.0 L152.0,192.0 L152.5,192.0 L153.0,192.0 L153.5,191.9 L154.0,191.8 L154.5,191.7 L155.0,191.6 L155.5,191.4 L156.0,191.2 L156.5,190.9 L157.0,190.6 L157.5,190.3 L158.0,190.0 L158.5,189.6 L159.0,189.3 L159.5,188.8 L160.0,188.4 L160.5,187.9 L161.0,187.4 L161.5,186.9 L162.0,186.3 L162.5,185.8 L163.0,185.2 L163.5,184.6 L164.0,183.9 L164.5,183.3 L165.0,182.6 L165.5,181.9 L166.0,181.2 L166.5,180.5 L167.0,179.7 L167.5,178.9 L168.0,178.2 L168.5,177.4 L169.0,176.6 L169.5,175.8 L170.0,175.0 L170.5,174.2 L171.0,173.3 L171.5,172.5 L172.0,171.7 L172.5,170.8 L173.0,170.0 L173.5,169.2 L174.0,168.3 L174.5,167.5 L175.0,166.7 L175.5,165.8 L176.0,165.0 L176.5,164.2 L177.0,163.4 L177.5,162.6 L178.0,161.8 L178.5,161.1 L179.0,160.3 L179.5,159.5 L180.0,158.8 L180.5,158.1 L181.0,157.4 L181.5,156.7 L182.0,156.1 L182.5,155.4 L183.0,154.8 L183.5,154.2 L184.0,153.7 L184.5,153.1 L185.0,152.6 L185.5,152.1 L186.0,151.6 L186.5,151.2 L187.0,150.7 L187.5,150.4 L188.0,150.0 L188.5,149.7 L189.0,149.4 L189.5,149.1 L190.0,148.8 L190.5,148.6 L191.0,148.4 L191.5,148.3 L192.0,148.2 L192.5,148.1 L193.0,148.0 L193.5,148.0 L194.0,148.0 L194.5,148.0 L195.0,148.1 L195.5,148.2 L196.0,148.4 L196.5,148.5 L197.0,148.7 L197.5,149.0 L198.0,149.2 L198.5,149.5 L199.0,149.8 L199.5,150.2 L200.0,150.5 L200.5,150.9 L201.0,151.4 L201.5,151.8 L202.0,152.3 L202.5,152.8 L203.0,153.4 L203.5,153.9 L204.0,154.5 L204.5,155.1 L205.0,155.8 L205.5,156.4 L206.0,157.1 L206.5,157.8 L207.0,158.5 L207.5,159.2 L208.0,159.9 L208.5,160.7 L209.0,161.4 L209.5,162.2 L210.0,163.0 L210.5,163.8 L211.0,164.6 L211.5,165.4 L212.0,166.2 L212.5,167.1 L213.0,167.9 L213.5,168.7 L214.0,169.6 L214.5,170.4 L215.0,171.3 L215.5,172.1 L216.0,172.9 L216.5,173.8 L217.0,174.6 L217.5,175.4 L218.0,176.2 L218.5,177.0 L219.0,177.8 L219.5,178.6 L220.0,179.3 L220.5,180.1 L221.0,180.8 L221.5,181.5 L222.0,182.2 L222.5,182.9 L223.0,183.6 L223.5,184.2 L224.0,184.9 L224.5,185.5 L225.0,186.1 L225.5,186.6 L226.0,187.2 L226.5,187.7 L227.0,188.2 L227.5,188.6 L228.0,189.1 L228.5,189.5 L229.0,189.8 L229.5,190.2 L230.0,190.5 L230.5,190.8 L231.0,191.0 L231.5,191.3 L232.0,191.5 L232.5,191.6 L233.0,191.8 L233.5,191.9 L234.0,192.0 L234.5,192.0 L235.0,192.0 L235.5,192.0 L236.0,191.9 L236.5,191.8 L237.0,191.7 L237.5,191.6 L238.0,191.4 L238.5,191.2 L239.0,190.9 L239.5,190.6 L240.0,190.3 L240.5,190.0 L241.0,189.6 L241.5,189.3 L242.0,188.8 L242.5,188.4 L243.0,187.9 L243.5,187.4 L244.0,186.9 L244.5,186.3 L245.0,185.8 L245.5,185.2 L246.0,184.6 L246.5,183.9 L247.0,183.3 L247.5,182.6 L248.0,181.9 L248.5,181.2 L249.0,180.5 L249.5,179.7 L250.0,178.9 L250.5,178.2 L251.0,177.4 L251.5,176.6 L252.0,175.8 L252.5,175.0 L253.0,174.2 L253.5,173.3 L254.0,172.5 L254.5,171.7 L255.0,170.8 L255.5,170.0 L256.0,169.2 L256.5,168.3 L257.0,167.5 L257.5,166.7 L258.0,165.8 L258.5,165.0 L259.0,164.2 L259.5,163.4 L260.0,162.6 L260.5,161.8 L261.0,161.1 L261.5,160.3 L262.0,159.5 L262.5,158.8 L263.0,158.1 L263.5,157.4 L264.0,156.7 L264.5,156.1 L265.0,155.4 L265.5,154.8 L266.0,154.2 L266.5,153.7 L267.0,153.1 L267.5,152.6 L268.0,152.1 L268.5,151.6 L269.0,151.2 L269.5,150.7 L270.0,150.4 L270.5,150.0 L271.0,149.7 L271.5,149.4 L272.0,149.1 L272.5,148.8 L273.0,148.6 L273.5,148.4 L274.0,148.3 L274.5,148.2 L275.0,148.1 L275.5,148.0 L276.0,148.0 L276.5,148.0 L277.0,148.0 L277.5,148.1 L278.0,148.2 L278.5,148.4 L279.0,148.5 L279.5,148.7 L280.0,149.0 L280.5,149.2 L281.0,149.5 L281.5,149.8 L282.0,150.2 L282.5,150.5 L283.0,150.9 L283.5,151.4 L284.0,151.8 L284.5,152.3 L285.0,152.8 L285.5,153.4 L286.0,153.9 L286.5,154.5 L287.0,155.1 L287.5,155.8 L288.0,156.4 L288.5,157.1 L289.0,157.8 L289.5,158.5 L290.0,159.2 L290.5,159.9 L291.0,160.7 L291.5,161.4 L292.0,162.2 L292.5,163.0 L293.0,163.8 L293.5,164.6 L294.0,165.4 L294.5,166.2 L295.0,167.1 L295.5,167.9 L296.0,168.7 L296.5,169.6 L297.0,170.4 L297.5,171.3 L298.0,172.1 L298.5,172.9 L299.0,173.8 L299.5,174.6 L300.0,175.4 L300.5,176.2 L301.0,177.0 L301.5,177.8 L302.0,178.6 L302.5,179.3 L303.0,180.1 L303.5,180.8 L304.0,181.5 L304.5,182.2 L305.0,182.9 L305.5,183.6 L306.0,184.2 L306.5,184.9 L307.0,185.5 L307.5,186.1 L308.0,186.6 L308.5,187.2 L309.0,187.7 L309.5,188.2 L310.0,188.6 L310.5,189.1 L311.0,189.5 L311.5,189.8 L312.0,190.2 L312.5,190.5 L313.0,190.8 L313.5,191.0 L314.0,191.3 L314.5,191.5 L315.0,191.6 L315.5,191.8 L316.0,191.9 L316.5,192.0 L317.0,192.0 L317.5,192.0 L318.0,192.0 L318.5,191.9 L319.0,191.8 L319.5,191.7 L320.0,191.6 L320.5,191.4 L321.0,191.2 L321.5,190.9 L322.0,190.6 L322.5,190.3 L323.0,190.0 L323.5,189.6 L324.0,189.3 L324.5,188.8 L325.0,188.4 L325.5,187.9 L326.0,187.4 L326.5,186.9 L327.0,186.3 L327.5,185.8 L328.0,185.2 L328.5,184.6 L329.0,183.9 L329.5,183.3 L330.0,182.6 L330.5,181.9 L331.0,181.2 L331.5,180.5 L332.0,179.7 L332.5,178.9 L333.0,178.2 L333.5,177.4 L334.0,176.6 L334.5,175.8 L335.0,175.0 L335.5,174.2 L336.0,173.3 L336.5,172.5 L337.0,171.7 L337.5,170.8 L338.0,170.0 L338.5,169.2 L339.0,168.3 L339.5,167.5 L340.0,166.7 L340.5,165.8 L341.0,165.0 L341.5,164.2 L342.0,163.4 L342.5,162.6 L343.0,161.8 L343.5,161.1 L344.0,160.3 L344.5,159.5 L345.0,158.8 L345.5,158.1 L346.0,157.4 L346.5,156.7 L347.0,156.1 L347.5,155.4 L348.0,154.8 L348.5,154.2 L349.0,153.7 L349.5,153.1 L350.0,152.6 L350.5,152.1 L351.0,151.6 L351.5,151.2 L352.0,150.7 L352.5,150.4 L353.0,150.0 L353.5,149.7 L354.0,149.4 L354.5,149.1 L355.0,148.8 L355.5,148.6 L356.0,148.4 L356.5,148.3 L357.0,148.2 L357.5,148.1 L358.0,148.0 L358.5,148.0 L359.0,148.0 L359.5,148.0 L360.0,148.1 L360.5,148.2 L361.0,148.4 L361.5,148.5 L362.0,148.7 L362.5,149.0 L363.0,149.2 L363.5,149.5 L364.0,149.8 L364.5,150.2 L365.0,150.5 L365.5,150.9 L366.0,151.4 L366.5,151.8 L367.0,152.3 L367.5,152.8 L368.0,153.4 L368.5,153.9 L369.0,154.5 L369.5,155.1 L370.0,155.8 L370.5,156.4 L371.0,157.1 L371.5,157.8 L372.0,158.5 L372.5,159.2 L373.0,159.9 L373.5,160.7 L374.0,161.4 L374.5,162.2 L375.0,163.0 L375.5,163.8 L376.0,164.6 L376.5,165.4 L377.0,166.2 L377.5,167.1 L378.0,167.9 L378.5,168.7 L379.0,169.6 L379.5,170.4 L380.0,171.3 L380.5,172.1 L381.0,172.9 L381.5,173.8 L382.0,174.6 L382.5,175.4 L383.0,176.2 L383.5,177.0 L384.0,177.8 L384.5,178.6 L385.0,179.3 L385.5,180.1 L386.0,180.8 L386.5,181.5 L387.0,182.2 L387.5,182.9 L388.0,183.6 L388.5,184.2 L389.0,184.9 L389.5,185.5 L390.0,186.1 L390.5,186.6 L391.0,187.2 L391.5,187.7 L392.0,188.2 L392.5,188.6 L393.0,189.1 L393.5,189.5 L394.0,189.8 L394.5,190.2 L395.0,190.5 L395.5,190.8 L396.0,191.0 L396.5,191.3 L397.0,191.5 L397.5,191.6 L398.0,191.8 L398.5,191.9 L399.0,192.0 L399.5,192.0 L400.0,192.0 L400.5,192.0 L401.0,191.9 L401.5,191.8 L402.0,191.7 L402.5,191.6 L403.0,191.4 L403.5,191.2 L404.0,190.9 L404.5,190.6 L405.0,190.3 L405.5,190.0 L406.0,189.6 L406.5,189.3 L407.0,188.8 L407.5,188.4 L408.0,187.9 L408.5,187.4 L409.0,186.9 L409.5,186.3 L410.0,185.8 L410.5,185.2 L411.0,184.6 L411.5,183.9 L412.0,183.3 L412.5,182.6 L413.0,181.9 L413.5,181.2 L414.0,180.5 L414.5,179.7 L415.0,178.9 L415.5,178.2 L416.0,177.4 L416.5,176.6 L417.0,175.8 L417.5,175.0 L418.0,174.2 L418.5,173.3 L419.0,172.5 L419.5,171.7 L420.0,170.8 L420.5,170.0 L421.0,169.2 L421.5,168.3 L422.0,167.5 L422.5,166.7 L423.0,165.8 L423.5,165.0 L424.0,164.2 L424.5,163.4 L425.0,162.6 L425.5,161.8 L426.0,161.1 L426.5,160.3 L427.0,159.5 L427.5,158.8 L428.0,158.1 L428.5,157.4 L429.0,156.7 L429.5,156.1 L430.0,155.4 L430.5,154.8 L431.0,154.2 L431.5,153.7 L432.0,153.1 L432.5,152.6 L433.0,152.1 L433.5,151.6 L434.0,151.2 L434.5,150.7 L435.0,150.4 L435.5,150.0 L436.0,149.7 L436.5,149.4 L437.0,149.1 L437.5,148.8 L438.0,148.6 L438.5,148.4 L439.0,148.3 L439.5,148.2 L440.0,148.1 L440.5,148.0 L441.0,148.0 L441.5,148.0 L442.0,148.0 L442.5,148.1 L443.0,148.2 L443.5,148.4 L444.0,148.5 L444.5,148.7 L445.0,149.0 L445.5,149.2 L446.0,149.5 L446.5,149.8 L447.0,150.2 L447.5,150.5 L448.0,150.9 L448.5,151.4 L449.0,151.8 L449.5,152.3 L450.0,152.8 L450.5,153.4 L451.0,153.9 L451.5,154.5 L452.0,155.1 L452.5,155.8 L453.0,156.4 L453.5,157.1 L454.0,157.8 L454.5,158.5 L455.0,159.2 L455.5,159.9 L456.0,160.7 L456.5,161.4 L457.0,162.2 L457.5,163.0 L458.0,163.8 L458.5,164.6 L459.0,165.4 L459.5,166.2 L460.0,167.1 L460.5,167.9 L461.0,168.7 L461.5,169.6 L462.0,170.4 L462.5,171.3 L463.0,172.1 L463.5,172.9 L464.0,173.8 L464.5,174.6 L465.0,175.4 L465.5,176.2 L466.0,177.0 L466.5,177.8 L467.0,178.6 L467.5,179.3 L468.0,180.1 L468.5,180.8 L469.0,181.5 L469.5,182.2 L470.0,182.9 L470.5,183.6 L471.0,184.2 L471.5,184.9 L472.0,185.5 L472.5,186.1 L473.0,186.6 L473.5,187.2 L474.0,187.7 L474.5,188.2 L475.0,188.6 L475.5,189.1 L476.0,189.5 L476.5,189.8 L477.0,190.2 L477.5,190.5 L478.0,190.8 L478.5,191.0 L479.0,191.3 L479.5,191.5 L480.0,191.6 L480.5,191.8 L481.0,191.9 L481.5,192.0 L482.0,192.0 L482.5,192.0 L483.0,192.0 L483.5,191.9 L484.0,191.8 L484.5,191.7 L485.0,191.6 L485.5,191.4 L486.0,191.2 L486.5,190.9 L487.0,190.6 L487.5,190.3 L488.0,190.0 L488.5,189.6 L489.0,189.3 L489.5,188.8 L490.0,188.4 L490.5,187.9 L491.0,187.4 L491.5,186.9 L492.0,186.3 L492.5,185.8 L493.0,185.2 L493.5,184.6 L494.0,183.9 L494.5,183.3 L495.0,182.6 L495.5,181.9 L496.0,181.2 L496.5,180.5 L497.0,179.7 L497.5,178.9 L498.0,178.2 L498.5,177.4 L499.0,176.6 L499.5,175.8 L500.0,175.0 L500.5,174.2 L501.0,173.3 L501.5,172.5 L502.0,171.7 L502.5,170.8 L503.0,170.0 L503.5,169.2 L504.0,168.3 L504.5,167.5 L505.0,166.7 L505.5,165.8 L506.0,165.0 L506.5,164.2 L507.0,163.4 L507.5,162.6 L508.0,161.8 L508.5,161.1 L509.0,160.3 L509.5,159.5 L510.0,158.8 L510.5,158.1 L511.0,157.4 L511.5,156.7 L512.0,156.1 L512.5,155.4 L513.0,154.8 L513.5,154.2 L514.0,153.7 L514.5,153.1 L515.0,152.6 L515.5,152.1 L516.0,151.6 L516.5,151.2 L517.0,150.7 L517.5,150.4 L518.0,150.0 L518.5,149.7 L519.0,149.4 L519.5,149.1 L520.0,148.8 L520.5,148.6 L521.0,148.4 L521.5,148.3 L522.0,148.2 L522.5,148.1 L523.0,148.0 L523.5,148.0 L524.0,148.0 L524.5,148.0 L525.0,148.1 L525.5,148.2 L526.0,148.4 L526.5,148.5 L527.0,148.7 L527.5,149.0 L528.0,149.2 L528.5,149.5 L529.0,149.8 L529.5,150.2 L530.0,150.5 L530.5,150.9 L531.0,151.4 L531.5,151.8 L532.0,152.3 L532.5,152.8 L533.0,153.4 L533.5,153.9 L534.0,154.5 L534.5,155.1 L535.0,155.8 L535.5,156.4 L536.0,157.1 L536.5,157.8 L537.0,158.5 L537.5,159.2 L538.0,159.9 L538.5,160.7 L539.0,161.4 L539.5,162.2 L540.0,163.0 L540.5,163.8 L541.0,164.6 L541.5,165.4 L542.0,166.2 L542.5,167.1 L543.0,167.9 L543.5,168.7 L544.0,169.6 L544.5,170.4 L545.0,171.3 L545.5,172.1 L546.0,172.9 L546.5,173.8 L547.0,174.6 L547.5,175.4 L548.0,176.2 L548.5,177.0 L549.0,177.8 L549.5,178.6 L550.0,179.3 L550.5,180.1 L551.0,180.8 L551.5,181.5 L552.0,182.2 L552.5,182.9 L553.0,183.6 L553.5,184.2 L554.0,184.9 L554.5,185.5 L555.0,186.1 L555.5,186.6 L556.0,187.2 L556.5,187.7 L557.0,188.2 L557.5,188.6 L558.0,189.1 L558.5,189.5 L559.0,189.8 L559.5,190.2 L560.0,190.5 L560.5,190.8 L561.0,191.0 L561.5,191.3 L562.0,191.5 L562.5,191.6 L563.0,191.8 L563.5,191.9 L564.0,192.0 L564.5,192.0 L565.0,192.0 L565.5,192.0 L566.0,191.9 L566.5,191.8 L567.0,191.7 L567.5,191.6 L568.0,191.4 L568.5,191.2 L569.0,190.9 L569.5,190.6 L570.0,190.3 L570.5,190.0 L571.0,189.6 L571.5,189.3 L572.0,188.8 L572.5,188.4 L573.0,187.9 L573.5,187.4 L574.0,186.9 L574.5,186.3 L575.0,185.8 L575.5,185.2 L576.0,184.6 L576.5,183.9 L577.0,183.3 L577.5,182.6 L578.0,181.9 L578.5,181.2 L579.0,180.5 L579.5,179.7 L580.0,178.9 L580.5,178.2 L581.0,177.4 L581.5,176.6 L582.0,175.8 L582.5,175.0 L583.0,174.2 L583.5,173.3 L584.0,172.5 L584.5,171.7 L585.0,170.8 L585.5,170.0 L586.0,169.2 L586.5,168.3 L587.0,167.5 L587.5,166.7 L588.0,165.8 L588.5,165.0 L589.0,164.2 L589.5,163.4 L590.0,162.6 L590.5,161.8 L591.0,161.1 L591.5,160.3 L592.0,159.5 L592.5,158.8 L593.0,158.1 L593.5,157.4 L594.0,156.7 L594.5,156.1 L595.0,155.4 L595.5,154.8 L596.0,154.2 L596.5,153.7 L597.0,153.1 L597.5,152.6 L598.0,152.1 L598.5,151.6 L599.0,151.2 L599.5,150.7 L600.0,150.4 L600.5,150.0 L601.0,149.7 L601.5,149.4 L602.0,149.1 L602.5,148.8 L603.0,148.6 L603.5,148.4 L604.0,148.3 L604.5,148.2 L605.0,148.1 L605.5,148.0 L606.0,148.0 L606.5,148.0 L607.0,148.0 L607.5,148.1 L608.0,148.2 L608.5,148.4 L609.0,148.5 L609.5,148.7 L610.0,149.0 L610.5,149.2 L611.0,149.5 L611.5,149.8 L612.0,150.2 L612.5,150.5 L613.0,150.9 L613.5,151.4 L614.0,151.8 L614.5,152.3 L615.0,152.8 L615.5,153.4 L616.0,153.9 L616.5,154.5 L617.0,155.1 L617.5,155.8 L618.0,156.4 L618.5,157.1 L619.0,157.8 L619.5,158.5 L620.0,159.2 L620.5,159.9 L621.0,160.7 L621.5,161.4 L622.0,162.2 L622.5,163.0 L623.0,163.8 L623.5,164.6 L624.0,165.4 L624.5,166.2 L625.0,167.1 L625.5,167.9 L626.0,168.7 L626.5,169.6 L627.0,170.4 L627.5,171.3 L628.0,172.1 L628.5,172.9 L629.0,173.8 L629.5,174.6 L630.0,175.4 L630.5,176.2 L631.0,177.0 L631.5,177.8 L632.0,178.6 L632.5,179.3 L633.0,180.1 L633.5,180.8 L634.0,181.5 L634.5,182.2 L635.0,182.9 L635.5,183.6 L636.0,184.2 L636.5,184.9 L637.0,185.5 L637.5,186.1 L638.0,186.6 L638.5,187.2 L639.0,187.7 L639.5,188.2 L640.0,188.6 L640.5,189.1 L641.0,189.5 L641.5,189.8 L642.0,190.2 L642.5,190.5 L643.0,190.8 L643.5,191.0 L644.0,191.3 L644.5,191.5 L645.0,191.6 L645.5,191.8 L646.0,191.9 L646.5,192.0 L647.0,192.0 L647.5,192.0 L648.0,192.0 L648.5,191.9 L649.0,191.8 L649.5,191.7 L650.0,191.6 L650.5,191.4 L651.0,191.2 L651.5,190.9 L652.0,190.6 L652.5,190.3 L653.0,190.0 L653.5,189.6 L654.0,189.3 L654.5,188.8 L655.0,188.4 L655.5,187.9 L656.0,187.4 L656.5,186.9 L657.0,186.3 L657.5,185.8 L658.0,185.2 L658.5,184.6 L659.0,183.9 L659.5,183.3 L660.0,182.6 L660.5,181.9 L661.0,181.2 L661.5,180.5 L662.0,179.7 L662.5,178.9 L663.0,178.2 L663.5,177.4 L664.0,176.6 L664.5,175.8 L665.0,175.0 L665.5,174.2 L666.0,173.3 L666.5,172.5 L667.0,171.7 L667.5,170.8 L668.0,170.0" class="wave b"/>
+  <path d="M8 206 v8 M8 210 H90.5 M90.5 206 v8" class="br b"/>
+  <text class="lv l1 " x="102" y="215" style="--d:inline" >물결 하나 — 짧아요</text><text class="lv l2 l3 l4 " x="102" y="215" style="--d:inline" >파장 짧다</text>
+</svg></figure>
+  
+<div class="dialbox interact">
+  <p class="dh"><span class="lv l1">다이얼을 돌려 보세요. 물결이 어떻게 바뀔까요?</span><span class="lv l2 l3 l4">주파수 다이얼 — 돌려서 파장을 확인해 보세요</span></p>
+  <svg id="dw" class="hero-svg dw" viewBox="0 0 680 132" role="img" aria-label="다이얼 값에 따라 달라지는 물결 그림">
+    <path id="dw-w" class="wave"/><path id="dw-b" class="br"/><text id="dw-t" x="0" y="0"></text>
+  </svg>
+  <input id="freq" class="freq" type="range" min="3" max="13" step="0.01" value="8" aria-label="주파수 다이얼">
+  <div class="ticks"><span class="tick lv l1 " style="left:0%;--d:block">느리게</span><span class="tick lv l1 " style="left:100%;--d:block">빠르게</span><span class="tick lv l2 l3 l4 " style="left:0%;--d:block">1kHz</span><span class="tick lv l2 l3 l4 " style="left:30%;--d:block">1MHz</span><span class="tick lv l2 l3 l4 " style="left:60%;--d:block">1GHz</span><span class="tick lv l2 l3 l4 " style="left:90%;--d:block">1THz</span><span class="tick lv l3 l4 row2 hl" style="left:50%;--d:block">FM 라디오 100MHz</span><span class="tick lv l4 row2 hl" style="left:94.77%;--d:block">3,000GHz</span></div>
+  <p class="out" aria-live="polite"><span id="out-f"></span><span id="out-l"></span></p>
+  <p id="dyn" class="dyn" role="status"></p>
+  <div class="tool lv l3 l4"><button type="button" class="btn ghost" id="fm">FM 라디오 100MHz 로 맞추기</button></div>
+  <p class="dnote"><span class="lv l1">그림은 느낌만 보여 줘요.</span><span class="lv l2 l3 l4">그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요.</span></p>
+</div>
+  <p class="formula lv l2">주파수 ↑ → 파장 ↓ (반비례)</p><p class="formula lv l3">파장 = 빛의 속도 ÷ 주파수 · 예) 100MHz FM 라디오 → 약 3m</p><p class="formula lv l4">λ = c ÷ f · c = 299,792,458 m/s (정확값)</p>
+  <ol class="defs lv l1"><li data-turns="docent0"><strong>물결</strong><span>연못의 물결처럼 멀리 퍼져 가요. 전파는 물이 없는 텅 빈 곳도 지나가요.</span></li><li data-turns="ask1 docent1"><strong>주파수</strong><span>물결이 얼마나 빠르게 출렁이는지예요.</span></li><li data-turns="ask2 docent2"><strong>파장</strong><span>물결 하나의 길이예요. 빠르게 출렁일수록 짧아져요.</span></li></ol><ol class="defs lv l2"><li data-turns="docent0"><strong>전자기파</strong><span>전기와 자기가 서로를 밀어 주며 퍼져 나가요. 소리와 달리 텅 빈 우주 공간에서도 가요.</span></li><li data-turns="ask1 docent1"><strong>주파수 (Hz)</strong><span>1초에 몇 번 출렁이는지예요. 단위 헤르츠는 전파를 처음 증명한 헤르츠에서 왔어요.</span></li><li data-turns="ask2 docent2"><strong>파장</strong><span>한 번 출렁이는 동안 나아간 거리예요. 주파수와 반비례해요.</span></li></ol><ol class="defs lv l3"><li data-turns="docent0"><strong>전파</strong><span>빛과 같은 전자기파의 한 갈래예요. 진공에서도 가고, 그때는 빛의 속도로 달려요.</span></li><li data-turns="ask1 docent1"><strong>주파수</strong><span>1초 동안 진동하는 횟수예요. 1회가 1헤르츠, 1,000회가 1킬로헤르츠예요.</span></li><li data-turns="ask2 docent2"><strong>파장</strong><span>빛의 속도 ÷ 주파수예요. 100메가헤르츠 FM 라디오 전파의 파장은 약 3m예요.</span></li></ol><ol class="defs lv l4"><li data-turns="docent0"><strong>전파법상 정의</strong><span>인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것.</span></li><li data-turns="ask1 docent1"><strong>ITU 전파규칙</strong><span>그 범위를 3,000GHz보다 낮은 주파수로 잡는다.</span></li><li data-turns="ask2 docent2"><strong>빛의 속도 c</strong><span>299,792,458m/s. 측정값이 아니라 미터의 정의가 고정한 값이라 정확하다.</span></li></ol>
+  <p class="remember lv l1" data-turns="after"><span class="tag">기억해 두기</span>빠르게 출렁일수록 물결 하나는 짧아져요.</p><p class="remember lv l2" data-turns="after"><span class="tag">기억해 두기</span>주파수가 높아지면 파장은 짧아져요. 둘은 반비례예요.</p><p class="remember lv l3" data-turns="after"><span class="tag">기억해 두기</span>주파수가 높을수록 파장은 짧아져요.</p><p class="remember lv l4" data-turns="after"><span class="tag">기억해 두기</span>λ = c ÷ f 이고, c 는 근삿값이 아니라 정의로 고정된 정확한 값이다.</p>
+  <details class="talk">
+    <summary>해설 전문 보기 — 사회자와 도슨트의 대화</summary>
+    <div class="chat lv l1"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">골똘</span></div><p class="bub">이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">도슨트</span><span class="emo">설명</span></div><p class="bub">전파는 눈에 보이지도 않고 만져지지도 않는 물결 같은 거예요. 연못의 물결처럼 멀리 퍼져 가는데요, 전파는 물이 없는 텅 빈 곳도 지나가요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-neutral"/></svg><span class="who">사회자</span><span class="emo">끄덕</span></div><p class="bub">아하, 그렇군요! 그럼 주파수는 뭐예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">기쁨</span></div><p class="bub">주파수는 전파가 얼마나 빠르게 출렁이는지를 말해요. 아주 빠르게 출렁이는 전파도 있고, 느릿느릿 천천히 출렁이는 전파도 있답니다.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">파장은 물결 하나의 길이예요. 빠르게 출렁이는 전파일수록 물결 하나가 짧아지고, 천천히 출렁일수록 길어지거든요.</p></div></div><div class="chat lv l2"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">골똘</span></div><p class="bub">이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">도슨트</span><span class="emo">설명</span></div><p class="bub">전파는 전기와 자기가 서로를 밀어 주며 퍼져 나가는 전자기파의 한 갈래예요. 소리는 공기가 없으면 못 가잖아요? 그런데 전파는 텅 빈 우주 공간에서도 퍼져 나가요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-neutral"/></svg><span class="who">사회자</span><span class="emo">끄덕</span></div><p class="bub">아하, 그렇군요! 그럼 주파수는 뭐예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">기쁨</span></div><p class="bub">주파수는 전파가 1초에 몇 번 출렁이는지를 나타내는 양이고, 단위는 헤르츠예요. 재밌는 건 이 이름이 앞에서 전파를 처음 증명한 헤르츠에서 왔다는 거예요.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">파장은 전파가 한 번 출렁이는 동안 나아간 거리예요. 빨리 출렁일수록, 그러니까 주파수가 높을수록 파장은 짧아지죠. 둘은 서로 반비례하는 사이예요.</p></div></div><div class="chat lv l3"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">골똘</span></div><p class="bub">이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">도슨트</span><span class="emo">설명</span></div><p class="bub">전파는 빛과 같은 전자기파의 한 갈래로, 아무것도 없는 공간에서도 스스로 퍼져 나가요. 소리는 공기가 있어야 들리잖아요. 전파는 진공에서도 가고, 그때는 빛의 속도로 달려요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-neutral"/></svg><span class="who">사회자</span><span class="emo">끄덕</span></div><p class="bub">아하, 그렇군요! 그럼 주파수는 뭐예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">기쁨</span></div><p class="bub">주파수는 1초 동안 진동하는 횟수를 나타내는 물리량이고, 단위가 헤르츠예요. 1초에 한 번 진동하면 1헤르츠, 천 번이면 1킬로헤르츠라고 부르죠.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">파장은 파동이 한 번 진동하는 동안 나아간 거리로, 빛의 속도를 주파수로 나눈 값이에요. 그래서 주파수가 높을수록 짧아지는데요, 100메가헤르츠 FM 라디오 전파는 파장이 약 3미터나 돼요.</p></div></div><div class="chat lv l4"><div class="row mc" data-t="open"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">골똘</span></div><p class="bub">이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?</p></div><div class="row docent" data-t="docent0"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">도슨트</span><span class="emo">설명</span></div><p class="bub">전파법은 전파를 인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것으로 정의해요. 그 범위는 ITU 전파규칙이 3,000기가헤르츠보다 낮은 주파수로 잡고 있고요.</p></div><div class="row mc" data-t="ask1"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-neutral"/></svg><span class="who">사회자</span><span class="emo">끄덕</span></div><p class="bub">아하, 그렇군요! 그럼 주파수는 뭐예요?</p></div><div class="row docent" data-t="docent1"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">기쁨</span></div><p class="bub">주파수는 단위시간당 반복 횟수를 나타내는 물리량이고, 헤르츠는 그 SI 단위로 초의 역수예요. 주기적인 현상에만 쓰고, 이름은 전자기파를 처음 결정적으로 증명한 하인리히 헤르츠에서 왔습니다.</p></div><div class="row mc" data-t="ask2"><div class="av mc"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-curious"/></svg><span class="who">사회자</span><span class="emo">궁금</span></div><p class="bub">그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?</p></div><div class="row docent" data-t="docent2"><div class="av docent"><svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-happy"/></svg><span class="who">도슨트</span><span class="emo">뿌듯</span></div><p class="bub">파장은 빛의 속도를 주파수로 나눈 값이고, 진공에서 빛의 속도는 정확히 초속 299,792,458미터예요. 재밌는 건 이게 측정값이 아니라, 미터의 정의가 이 값을 고정해 뒀기 때문에 정확하다는 거예요.</p></div></div>
+  </details>
+  <p class="src lv l4">근거 · 전파법 제2조제1항제1호(A) · ITU 전파규칙 No. 1.5(A) · Wikipedia — Speed of light(B)</p>
+</article>
+  <p class="foot">이 자료는 체험관 해설 대본(사실 확인을 거친 고정 대본)에서 옮겼습니다. 관람 중 나눈 질문과 답은 담기지 않습니다.</p>
+</main>
+
+<div class="dock">
+  <div class="nowbar" id="nowbar" hidden aria-live="polite">
+    <svg viewBox="0 0 48 48" aria-hidden="true"><use href="#face-neutral"/></svg>
+    <div><p class="nb-h"><b id="nb-who"></b><span id="nb-badge"></span></p><p id="nb-text"></p></div>
+  </div>
+  <div class="follow"><span class="rec" aria-hidden="true"></span><span id="fstate">공연 따라가기 켜짐</span><button type="button" id="ftoggle" class="mini">일시정지</button></div>
+  <div class="sim" id="sim"><span class="simtag">시안용</span>
+    <button type="button" id="simgo" class="mini">▶ 공연 시뮬레이션</button>
+    <button type="button" id="simnext" class="mini">다음 발화 ⏭</button>
+    <label>속도 <select id="simspeed"><option value="1">1×</option><option value="6" selected>6×</option><option value="20">20×</option></select></label>
+    <label>감독 수준 <select id="simlevel"><option>초등</option><option>중고등</option><option selected>일반</option><option>전문가</option></select></label>
+    <button type="button" id="simqa" class="mini">질문 답 끼워 넣기</button>
+    <button type="button" id="simreset" class="mini">공연 종료</button>
+  </div>
+</div>
+<script type="application/json" id="perf-data">{"02-history": {"n": 3, "open": "자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?", "after": "발명이 아니라 발견이라니, 저도 처음엔 헷갈렸어요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "levels": {"l1": {"ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["놀랍게도 전파는 누가 만든 게 아니에요! 원래 우리 주변에 있었는데, 눈에 안 보여서 아무도 몰랐던 거예요.", "먼저 한 과학자가 계산을 해 보고 '이런 게 있을 거야' 하고 알아냈어요. 그다음에 다른 과학자가 실험으로 진짜 있다는 걸 보여 줬답니다.", "전파에 신호를 실어서 멀리 보내는 데 처음 쓰였어요. 글쎄, 넓은 바다 건너편까지 신호가 닿았대요!"]}, "l2": {"ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["사실 전파는 누가 만든 게 아니라 찾아낸 거예요. 없던 걸 새로 만드는 게 발명이라면, 전파는 원래 있던 걸 알아낸 거라서 발견이라고 부르거든요.", "그게 재밌는 부분이에요. 맥스웰이라는 과학자가 먼저 수식만으로 이런 파동이 있을 거라고 예언했거든요. 그리고 헤르츠가 실험으로 처음 증명했죠.", "마르코니가 전파로 신호를 주고받는 무선전신을 실용화했어요. 1901년에는 무려 대서양 건너 약 3,500킬로미터 떨어진 곳에서 모스 부호를 받았다고 발표했죠."]}, "l3": {"ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["재밌게도 전파는 발명이 아니라 발견이에요. 머리로 예언한 사람, 실험으로 증명한 사람, 통신에 쓴 사람이 다 따로 있었다는 게 이 이야기의 재미거든요.", "맥스웰은 전기와 자기, 빛이 한 가지 현상이라는 이론을 세웠는데요, 그 방정식이 전자기파가 있다고 예언했어요. 그걸 실험으로 처음 확실하게 증명한 사람이 헤르츠예요.", "마르코니가 만든 무선전신이에요. 1901년 12월 12일 영국 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 대서양 건너 뉴펀들랜드에서 받았대요. 그때 뉴펀들랜드는 영국 식민지였고요."]}, "l4": {"ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["발명이 아니라 발견이에요. 다만 발견한 사람을 딱 한 명으로 꼽기는 어렵습니다. 이론적 예언, 실험적 증명, 실용화가 각각 다른 사람의 일이었거든요.", "맥스웰 방정식이 전자기파의 존재를 예언했고, 헤르츠가 처음으로 결정적인 실험으로 증명했어요. 흔히 출발점으로 꼽는 1785년은 쿨롱 법칙이 나온 해라서, 전자기학의 출발점이지 전파의 발견은 아니에요.", "마르코니의 실용 무선전신이에요. 그는 1909년 브라운과 함께 노벨 물리학상도 받았죠. 1901년 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 세인트존스에서 받았다고 했는데, 그 수신은 지금도 논쟁거리예요."]}}}, "03-theory": {"n": 3, "open": "이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?", "after": "보이지 않는 것을 이렇게 풀어 주시니 훨씬 가깝게 느껴지네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "levels": {"l1": {"ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 눈에 보이지도 않고 만져지지도 않는 물결 같은 거예요. 연못의 물결처럼 멀리 퍼져 가는데요, 전파는 물이 없는 텅 빈 곳도 지나가요.", "주파수는 전파가 얼마나 빠르게 출렁이는지를 말해요. 아주 빠르게 출렁이는 전파도 있고, 느릿느릿 천천히 출렁이는 전파도 있답니다.", "파장은 물결 하나의 길이예요. 빠르게 출렁이는 전파일수록 물결 하나가 짧아지고, 천천히 출렁일수록 길어지거든요."]}, "l2": {"ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 전기와 자기가 서로를 밀어 주며 퍼져 나가는 전자기파의 한 갈래예요. 소리는 공기가 없으면 못 가잖아요? 그런데 전파는 텅 빈 우주 공간에서도 퍼져 나가요.", "주파수는 전파가 1초에 몇 번 출렁이는지를 나타내는 양이고, 단위는 헤르츠예요. 재밌는 건 이 이름이 앞에서 전파를 처음 증명한 헤르츠에서 왔다는 거예요.", "파장은 전파가 한 번 출렁이는 동안 나아간 거리예요. 빨리 출렁일수록, 그러니까 주파수가 높을수록 파장은 짧아지죠. 둘은 서로 반비례하는 사이예요."]}, "l3": {"ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 빛과 같은 전자기파의 한 갈래로, 아무것도 없는 공간에서도 스스로 퍼져 나가요. 소리는 공기가 있어야 들리잖아요. 전파는 진공에서도 가고, 그때는 빛의 속도로 달려요.", "주파수는 1초 동안 진동하는 횟수를 나타내는 물리량이고, 단위가 헤르츠예요. 1초에 한 번 진동하면 1헤르츠, 천 번이면 1킬로헤르츠라고 부르죠.", "파장은 파동이 한 번 진동하는 동안 나아간 거리로, 빛의 속도를 주파수로 나눈 값이에요. 그래서 주파수가 높을수록 짧아지는데요, 100메가헤르츠 FM 라디오 전파는 파장이 약 3미터나 돼요."]}, "l4": {"ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파법은 전파를 인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것으로 정의해요. 그 범위는 ITU 전파규칙이 3,000기가헤르츠보다 낮은 주파수로 잡고 있고요.", "주파수는 단위시간당 반복 횟수를 나타내는 물리량이고, 헤르츠는 그 SI 단위로 초의 역수예요. 주기적인 현상에만 쓰고, 이름은 전자기파를 처음 결정적으로 증명한 하인리히 헤르츠에서 왔습니다.", "파장은 빛의 속도를 주파수로 나눈 값이고, 진공에서 빛의 속도는 정확히 초속 299,792,458미터예요. 재밌는 건 이게 측정값이 아니라, 미터의 정의가 이 값을 고정해 뒀기 때문에 정확하다는 거예요."]}}}}</script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var DATA = JSON.parse($('#perf-data').textContent);
+  var radios = $$('input[name=lv]');
+  var LV_BY_NAME = { '초등': 'l1', '중고등': 'l2', '일반': 'l3', '전문가': 'l4' };
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var curLv = function () { var r = radios.filter(function (x) { return x.checked; })[0]; return r ? r.id : 'l3'; };
+  var follow = true, lvLocked = false, activeCue = null, seen = {};
+  var CPS = 4.0;                       // 감독의 CHARS_PER_SEC — 글자 수로 발화 길이를 어림한다
+  var estMs = function (t) { return Math.max(1200, (t || '').length / CPS * 1000); };
+  var sheetOf = function (c) { return document.getElementById(c); };
+
+  // 관람객이 직접 고른 수준은 감독의 수준 변경보다 우선한다(저장돼 있으면 직접 고른 것이다).
+  try {
+    var saved = localStorage.getItem('handout-lv'), el = saved && document.getElementById(saved);
+    if (el && el.name === 'lv') { el.checked = true; lvLocked = true; }
+  } catch (e) {}
+  $$('.levels label').forEach(function (l) {
+    l.addEventListener('click', function () {
+      lvLocked = true;
+      try { localStorage.setItem('handout-lv', l.getAttribute('for')); } catch (e) {}
+    });
+  });
+
+  // ── 02 신호 보내기 ───────────────────────────────────────────────
+  var send = $('#send'), svg = $('#hero-history'), pulse = $('#pulse'), ping = $('#ping'), box = $('#arrive');
+  var P0 = [78, 132], C = [339, 8], P1 = [600, 104], pulseRun = 0;
+  var at = function (t) {
+    var u = 1 - t;
+    return [u * u * P0[0] + 2 * u * t * C[0] + t * t * P1[0], u * u * P0[1] + 2 * u * t * C[1] + t * t * P1[1]];
+  };
+  function resetPulse() {
+    pulseRun++;
+    box.hidden = true; send.textContent = '신호 보내 보기'; send.disabled = false;
+    ping.classList.remove('on'); pulse.classList.remove('go'); svg.classList.remove('send');
+  }
+  function arrived() {
+    box.hidden = false;
+    ping.classList.remove('on'); void ping.getBoundingClientRect(); ping.classList.add('on');
+    send.textContent = '다시 보내기'; send.disabled = false;
+  }
+  function playPulse() {
+    var my = ++pulseRun;
+    send.disabled = true; box.hidden = true; ping.classList.remove('on');
+    svg.classList.remove('send'); void svg.getBoundingClientRect(); svg.classList.add('send');
+    if (reduce) { arrived(); return; }
+    pulse.classList.add('go');
+    var t0 = performance.now(), D = 2200;
+    (function step(now) {
+      if (my !== pulseRun) return;
+      var k = Math.min(1, (now - t0) / D), e = k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2, p = at(e);
+      pulse.setAttribute('cx', p[0]); pulse.setAttribute('cy', p[1]);
+      if (k < 1) requestAnimationFrame(step); else { pulse.classList.remove('go'); arrived(); }
+    })(t0);
+  }
+  send.addEventListener('click', playPulse);
+
+  // ── 03 주파수 다이얼 ─────────────────────────────────────────────
+  var fr = $('#freq'), W = $('#dw-w'), B = $('#dw-b'), T = $('#dw-t'), outF = $('#out-f'), outL = $('#out-l'), dyn = $('#dyn');
+  var X0 = 8, X1 = 668, CY = 58, AMP = 30, animRun = 0;
+  var sig = function (x, n) { return parseFloat(x.toPrecision(n)); };
+  var fmtF = function (f) {
+    var U = ['Hz', 'kHz', 'MHz', 'GHz', 'THz'], k = Math.min(4, Math.floor(Math.log10(f) / 3 + 1e-9)), m = sig(f / Math.pow(10, 3 * k), 3);
+    if (m >= 1000 && k < 4) { k++; m = sig(f / Math.pow(10, 3 * k), 3); }
+    return m + ' ' + U[k];
+  };
+  var fmtL = function (l, n) {
+    var U = [['km', 1e3], ['m', 1], ['cm', 1e-2], ['mm', 1e-3], ['µm', 1e-6]], u = U[U.length - 1];
+    for (var i = 0; i < U.length; i++) { if (l >= U[i][1] * 0.9995) { u = U[i]; break; } }
+    return sig(l / u[1], n) + ' ' + u[0];
+  };
+  var bucket = function (v) { return v < 5.5 ? 0 : v < 8 ? 1 : v < 10.5 ? 2 : 3; };
+  function drawWave(v, lv) {
+    var N = 1.5 + 12.5 * (v - 3) / 10, per = (X1 - X0) / N, steps = Math.max(240, Math.round(N * 40)), pts = [];
+    for (var i = 0; i <= steps; i++) {
+      var x = X0 + (X1 - X0) * i / steps;
+      pts.push(x.toFixed(1) + ',' + (CY - AMP * Math.sin(2 * Math.PI * (x - X0) / per)).toFixed(1));
+    }
+    var t = (v - 3) / 10, c0 = [11, 127, 181], c1 = [185, 111, 0],
+        col = 'rgb(' + c0.map(function (a, j) { return Math.round(a + (c1[j] - a) * t); }).join(',') + ')';
+    W.setAttribute('d', 'M' + pts.join(' L')); W.style.stroke = col;
+    B.setAttribute('d', 'M' + X0 + ' 108 v8 M' + X0 + ' 112 H' + (X0 + per) + ' M' + (X0 + per) + ' 108 v8'); B.style.stroke = col;
+    T.setAttribute('x', X0 + per + 12); T.setAttribute('y', 117);
+    T.textContent = lv === 'l1' ? '물결 하나' : '파장';
+  }
+  function renderDial() {
+    var lv = curLv(), v = parseFloat(fr.value), f = Math.pow(10, v), L = (lv === 'l4' ? 299792458 : 3e8) / f, note = '';
+    drawWave(v, lv);
+    if (lv === 'l1') {
+      var b = bucket(v);
+      outF.textContent = '물결이 ' + ['아주 천천히', '천천히', '빠르게', '아주 빠르게'][b] + ' 출렁여요';
+      outL.textContent = '물결 하나가 ' + ['아주 길어요', '길어요', '짧아요', '아주 짧아요'][b];
+      fr.setAttribute('aria-valuetext', outF.textContent);
+    } else {
+      fr.setAttribute('aria-valuetext', fmtF(f));
+      if (lv === 'l2') { outF.textContent = '주파수 ' + fmtF(f); outL.textContent = '파장 약 ' + fmtL(L, 2); }
+      if (lv === 'l3') { outF.textContent = '주파수 ' + fmtF(f); outL.textContent = '파장 = 약 ' + fmtL(L, 3); }
+      if (lv === 'l4') { outF.textContent = 'f = ' + fmtF(f); outL.textContent = 'λ = c ÷ f = ' + fmtL(L, 4); }
+    }
+    if (lv === 'l3' && Math.abs(v - 8) < 0.025) note = '100메가헤르츠 FM 라디오 전파는 파장이 약 3미터예요.';
+    if (lv === 'l4' && Math.abs(v - 8) < 0.025) note = 'FM 라디오 100MHz 근처다. 파장은 약 3m다.';
+    if (lv === 'l4' && f >= 3e12) note = '3,000GHz 이상이다 — ITU 전파규칙이 말하는 ‘전파’의 범위(3,000GHz 미만) 밖이다.';
+    dyn.textContent = note;
+  }
+  function setV(v) { fr.value = v; renderDial(); }
+  function dialTo(v1, ms) {
+    var my = ++animRun, v0 = parseFloat(fr.value);
+    if (reduce || ms <= 0 || v0 === v1) { setV(v1); return; }
+    var t0 = performance.now();
+    (function step(now) {
+      if (my !== animRun) return;
+      var k = Math.min(1, (now - t0) / ms), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      setV(v0 + (v1 - v0) * e);
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+  }
+  fr.addEventListener('input', function () { animRun++; renderDial(); });   // 직접 돌리면 자동 동작을 멈춘다
+  var fm = $('#fm');
+  if (fm) fm.addEventListener('click', function () { animRun++; setV(8); });
+  radios.forEach(function (r) { r.addEventListener('change', renderDial); });
+  renderDial();
+
+  // ── 공연 따라가기 ────────────────────────────────────────────────
+  // 감독이 로봇에게 보내는 `say` 의 발화 라벨(cue_id)로 "어느 큐, 어느 대목"인지 안다.
+  //   <큐>  → 사회자 여는 말            <큐>:pt<i>  → 사회자 질문(i≥1)
+  //   <큐>:pt<i>:docent → 도슨트 i번 설명   <큐>:docent → 마지막 도슨트 설명
+  //   <큐>:after → 사회자 받아치기          <큐>:qa / :reask → 관람객 질문 답 / 재질문
+  function parse(label) {
+    var m = /^([^:]+)(?::(.+))?$/.exec(label || ''); if (!m) return null;
+    var cue = m[1], rest = m[2] || '', sh = sheetOf(cue), n = sh ? parseInt(sh.getAttribute('data-points'), 10) : 0, a, b;
+    if (!rest) return { cue: cue, turn: 'open' };
+    if (rest === 'after' || rest === 'qa' || rest === 'reask') return { cue: cue, turn: rest };
+    if (rest === 'docent') return n ? { cue: cue, turn: 'docent' + (n - 1) } : null;
+    if ((a = /^pt(\d+)$/.exec(rest))) return { cue: cue, turn: 'ask' + a[1] };
+    if ((b = /^pt(\d+):docent$/.exec(rest))) return { cue: cue, turn: 'docent' + b[1] };
+    return null;
+  }
+  function apply(sh, turn) {
+    var S = seen[sh.id] || (seen[sh.id] = {});
+    $$('[data-turns]', sh).forEach(function (el) {
+      var toks = el.getAttribute('data-turns').split(' '), now = !!turn && toks.indexOf(turn) >= 0;
+      el.classList.toggle('now', now);
+      el.classList.toggle('seen', !now && toks.every(function (t) { return S[t]; }));
+    });
+    $$('.row[data-t]', sh).forEach(function (el) {
+      var t = el.getAttribute('data-t');
+      el.classList.toggle('now', t === turn); el.classList.toggle('seen', t !== turn && !!S[t]);
+    });
+    if (turn) S[turn] = true;
+  }
+  function scrollToSheet(cue) {
+    var sh = sheetOf(cue); if (sh) sh.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }
+  function activate(cue) {
+    $$('.sheet').forEach(function (s) { s.classList.toggle('live', s.id === cue); });
+    if (activeCue !== cue) {
+      var prev = activeCue && sheetOf(activeCue);     // 떠나는 장의 '지금' 강조는 걷는다(본 것 표시는 남긴다)
+      if (prev) $$('.now', prev).forEach(function (e) { e.classList.remove('now'); });
+      activeCue = cue; if (follow) scrollToSheet(cue);
+    }
+  }
+  function resetCue(cue) {
+    seen[cue] = {};
+    if (cue === '02-history') resetPulse();
+    if (cue === '03-theory') { animRun++; setV(3); }
+  }
+  var nb = $('#nowbar'), nbWho = $('#nb-who'), nbText = $('#nb-text'), nbBadge = $('#nb-badge');
+  function showNow(role, text, badge) {
+    nb.hidden = false; nb.className = 'nowbar ' + (role === 'docent' ? 'docent' : 'mc');
+    nbWho.textContent = role === 'docent' ? '도슨트' : '사회자'; nbBadge.textContent = badge || ''; nbText.textContent = text || '';
+  }
+  // 말하는 대목에 맞춰 저절로 움직이는 것들. 인자 ms 는 그 대목의 어림 발화 길이다.
+  var ACTIONS = {
+    '02-history': { docent2: function () { playPulse(); } },
+    '03-theory': {
+      docent1: function (ms) { dialTo(13, ms * 0.9); },     // 주파수를 설명하는 동안 다이얼이 낮은 쪽에서 높은 쪽으로
+      docent2: function () { dialTo(8, 2400); }              // 파장을 설명할 때 FM 라디오 100MHz 에 선다
+    }
+  };
+  var trace = [];                                   // 받은 라벨 기록(검증용)
+  function onSay(label, info) {
+    info = info || {};
+    var p = parse(label); if (!p) return;
+    trace.push(label);
+    if (p.turn === 'qa' || p.turn === 'reask') {            // 질문 답은 큐의 해설 흐름이 아니다 — 카드는 그대로 둔다
+      showNow(info.role || 'docent', info.text, '관람객 질문에 답하는 중'); return;
+    }
+    showNow(info.role, info.text, '');
+    var sh = sheetOf(p.cue); if (!sh) return;
+    if (p.turn === 'open') resetCue(p.cue);
+    activate(p.cue);
+    apply(sh, p.turn);
+    var act = (ACTIONS[p.cue] || {})[p.turn];
+    if (act) act(estMs(info.text) / (info.speed || 1));
+  }
+  function clearLive() {
+    activeCue = null; seen = {};
+    $$('.sheet').forEach(function (s) { s.classList.remove('live'); });
+    $$('.now,.seen').forEach(function (e) { e.classList.remove('now', 'seen'); });
+    nb.hidden = true; resetPulse(); animRun++;
+  }
+  function onSnapshot(s) {
+    if (!s) return;
+    if (s.level && !lvLocked && LV_BY_NAME[s.level]) {
+      var r = document.getElementById(LV_BY_NAME[s.level]);
+      if (r && !r.checked) { r.checked = true; renderDial(); }
+    }
+    if (s.show_running === false) { clearLive(); return; }
+    if (s.cue_id && sheetOf(s.cue_id) && s.cue_id !== activeCue) { activate(s.cue_id); apply(sheetOf(s.cue_id), null); }
+  }
+
+  // 따라가기를 관람객이 끊을 수 있다 — 스크롤을 빼앗지 않는다. 다시 켜면 지금 이야기로 돌아온다.
+  var ftoggle = $('#ftoggle'), fstate = $('#fstate');
+  function setFollow(on) {
+    follow = on;
+    fstate.textContent = on ? '공연 따라가기 켜짐' : '일시정지됨';
+    ftoggle.textContent = on ? '일시정지' : '지금 이야기로';
+    if (on && activeCue) scrollToSheet(activeCue);
+  }
+  ftoggle.addEventListener('click', function () { setFollow(!follow); });
+  ['wheel', 'touchmove'].forEach(function (ev) {
+    window.addEventListener(ev, function () { if (follow && activeCue) setFollow(false); }, { passive: true });
+  });
+  window.addEventListener('keydown', function (e) {
+    if (follow && activeCue && ['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '].indexOf(e.key) >= 0
+        && !/INPUT|BUTTON|SELECT/.test(e.target.tagName)) setFollow(false);
+  });
+
+  // ── 시안용 공연 시뮬레이터 — 실제로는 감독의 say 이벤트가 이 자리를 대신한다 ──
+  var sim = { i: 0, timer: null, playing: false, speed: 6, level: '일반', events: [] };
+  var simgo = $('#simgo'), simnext = $('#simnext'), simspeed = $('#simspeed'), simlevel = $('#simlevel'), simqa = $('#simqa'), simreset = $('#simreset');
+  function build() {
+    var ev = [];
+    ['02-history', '03-theory'].forEach(function (cue) {
+      var d = DATA[cue], L = d.levels[LV_BY_NAME[sim.level]];
+      ev.push({ label: cue, role: 'mc', text: d.open });
+      for (var i = 0; i < d.n; i++) {
+        if (L.ask[i]) ev.push({ label: cue + ':pt' + i, role: 'mc', text: L.ask[i] });
+        ev.push({ label: i === d.n - 1 ? cue + ':docent' : cue + ':pt' + i + ':docent', role: 'docent', text: L.ans[i] });
+      }
+      ev.push({ label: cue + ':after', role: 'mc', text: d.after });
+      ev.push({ pause: 3500 });
+    });
+    return ev;
+  }
+  function stepSim() {
+    clearTimeout(sim.timer);
+    if (!sim.playing) return;
+    if (sim.i >= sim.events.length) { stopSim(); return; }
+    var e = sim.events[sim.i++], ms;
+    if (e.pause) { ms = e.pause / sim.speed; }
+    else { onSay(e.label, { role: e.role, text: e.text, speed: sim.speed }); ms = estMs(e.text) / sim.speed; }
+    sim.timer = setTimeout(stepSim, ms);
+  }
+  function stopSim() { sim.playing = false; clearTimeout(sim.timer); simgo.textContent = sim.i >= sim.events.length ? '▶ 처음부터' : '▶ 이어서'; }
+  if (simgo) {
+    simgo.addEventListener('click', function () {
+      if (sim.playing) { stopSim(); return; }
+      if (!sim.events.length || sim.i >= sim.events.length) { sim.events = build(); sim.i = 0; onSnapshot({ level: sim.level, show_running: true }); }
+      sim.playing = true; simgo.textContent = '⏸ 멈춤'; stepSim();
+    });
+    simnext.addEventListener('click', function () {
+      if (!sim.events.length || sim.i >= sim.events.length) { sim.events = build(); sim.i = 0; onSnapshot({ level: sim.level, show_running: true }); }
+      var was = sim.playing; sim.playing = true; clearTimeout(sim.timer);
+      var e = sim.events[sim.i];
+      if (e && e.pause) sim.i++;
+      stepSim(); sim.playing = was; clearTimeout(sim.timer);
+      if (was) sim.timer = setTimeout(stepSim, 50);
+    });
+    simspeed.addEventListener('change', function () { sim.speed = parseFloat(simspeed.value); });
+    simlevel.addEventListener('change', function () {
+      sim.level = simlevel.value; var i = sim.i; sim.events = build(); sim.i = i; onSnapshot({ level: sim.level });
+    });
+    simqa.addEventListener('click', function () {
+      onSay((activeCue || '02-history') + ':qa', { role: 'docent', text: '관람객 질문에 답하는 자리예요. (시안용 예시 문장)' });
+    });
+    simreset.addEventListener('click', function () {
+      stopSim(); sim.i = 0; sim.events = []; simgo.textContent = '▶ 공연 시뮬레이션'; onSnapshot({ show_running: false });
+    });
+  }
+
+  // 실제 연결 지점 — `/ws/audience` 의 say / snapshot 메시지를 그대로 이 두 함수에 넘기면 된다.
+  window.handout = {
+    onSay: onSay, onSnapshot: onSnapshot, trace: trace,
+    state: function () { return { follow: follow, activeCue: activeCue, lvLocked: lvLocked }; }
+  };
+})();
+</script>
+</body></html>

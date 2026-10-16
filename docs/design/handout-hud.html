@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전파체험관 교육자료 — 발표형</title>
+<!--
+  전파체험관 교육자료(발표형) — `python -m scripts.handout_hud.build` 가 만든 파일이다. 직접 고치지 않는다.
+  카드는 `data/handout-cards/<큐>.yaml`, 대사는 `data/cues.yaml`, 이 틀은 `scripts/handout_hud/template.html`.
+
+  사용자 요구(2026-10-06): ① 교육 자료는 화면 가득. ② 사회자는 콘텐츠의 왼쪽·도슨트는 오른쪽 **고정 구역**에 말풍선으로.
+  ③ HUD 방식 — 가리는 면적을 최소로(말하는 문장 하나만, 반투명, 말이 끝나면 사라지고 아이콘만 남는다). ④ 아이콘은 사용자가 준 로봇 이미지.
+
+  화면의 글은 검수한 고정 대본을 줄여 쓴 카드뿐이다(새 사실 없음 — 빌드가 대본·조사 자료와 대조한다).
+  외부 리소스를 부르지 않는다(전시장은 오프라인). 모든 글자는 textContent 로만 넣는다.
+  실서비스 연결 지점은 맨 아래 `window.hud`.
+-->
+<style>
+:root{
+  /* 1280×720 을 기준으로 한 길이 단위 — 창이 커지면 글자·간격이 같이 커지고, 남는 세로는 flex 가 나눠 가진다 */
+  --u:min(calc(100vw / 1280), calc(100vh / 720));
+  --ink:#0E2433; --sig:#0B7FB5; --mist:#E8F3F8; --rule:#C3D9E6; --bg:#F3F7FA;
+  --mc:#0A6F84; --mcbg:#DDF1F5; --doc:#8F5300; --docbg:#FFEFD6; --amber:#B96F00; --muted:#52636F;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+button,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.rm{display:block;background:url(data:image/png;base64,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) center/contain no-repeat}
+
+.stage{position:relative;width:100vw;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── 위 도구줄: 장·수준·코스·시뮬레이션. 콘텐츠를 가리지 않는 크롬이다 */
+.bar{flex:0 0 calc(var(--u)*42);display:flex;align-items:center;gap:calc(var(--u)*12);padding:0 calc(var(--u)*16);
+  background:var(--ink);color:#fff;font-size:calc(var(--u)*13);position:relative;z-index:6}
+.nav{display:flex;align-items:center;gap:calc(var(--u)*6);min-width:0}
+.nav select{width:calc(var(--u)*270);background:#1B3A4F;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:calc(var(--u)*4) calc(var(--u)*10);min-height:calc(var(--u)*30);text-overflow:ellipsis}
+.round{width:calc(var(--u)*30);height:calc(var(--u)*30);border-radius:50%;border:1px solid rgba(255,255,255,.55);background:transparent;padding:0;font-size:calc(var(--u)*16);line-height:1}
+.round:disabled{opacity:.35;cursor:default}
+.pos{font-variant-numeric:tabular-nums;opacity:.8;white-space:nowrap}
+.seg{display:flex;border:1px solid rgba(255,255,255,.45);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:calc(var(--u)*4) calc(var(--u)*12);min-height:calc(var(--u)*30);white-space:nowrap}
+.seg button+button{border-left:1px solid rgba(255,255,255,.3)}
+.seg button[aria-pressed="true"]{background:#fff;color:var(--ink);font-weight:800}
+.pill{border:1px solid rgba(255,255,255,.55);background:transparent;border-radius:999px;padding:calc(var(--u)*4) calc(var(--u)*13);min-height:calc(var(--u)*30);white-space:nowrap}
+.pill.go{background:#fff;color:var(--ink);font-weight:800}
+.sim{margin-left:auto;display:flex;align-items:center;gap:calc(var(--u)*8)}
+.sim label{display:flex;align-items:center;gap:calc(var(--u)*5);white-space:nowrap}
+.sim select{background:#1B3A4F;border:1px solid rgba(255,255,255,.4);border-radius:6px;padding:2px 6px}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offset:2px}
+
+/* ── 장 */
+.slide{flex:1;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto auto auto;row-gap:calc(var(--u)*12);
+  padding:calc(var(--u)*16) calc(var(--u)*52) calc(var(--u)*14)}
+.headline{margin:0;font-size:calc(var(--u)*50);line-height:1.22;font-weight:800;letter-spacing:-.01em}
+[data-turns]{transition:background-color .35s,opacity .35s,box-shadow .35s}
+.headline.now{box-shadow:inset 0 calc(var(--u)*-10) 0 rgba(11,127,181,.22)}
+
+/* 가운데 띠: [사회자 구역 | 그림 | 도슨트 구역]. 구역은 화면 끝까지 닿는다 */
+.band{display:grid;grid-template-columns:minmax(calc(var(--u)*290),24%) minmax(0,1fr) minmax(calc(var(--u)*290),24%);
+  align-items:center;margin:0 calc(var(--u)*-52);min-height:0}
+.lane{align-self:stretch;display:flex;align-items:center;padding:0 calc(var(--u)*14)}
+.lane-mc{background:repeating-radial-gradient(circle at 0% 50%,transparent 0,transparent calc(var(--u)*68),rgba(11,127,181,.13) calc(var(--u)*68),rgba(11,127,181,.13) calc(var(--u)*70))}
+.lane-docent{background:repeating-radial-gradient(circle at 100% 50%,transparent 0,transparent calc(var(--u)*68),rgba(185,111,0,.17) calc(var(--u)*68),rgba(185,111,0,.17) calc(var(--u)*70))}
+.visual{min-width:0;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*6);padding:0 calc(var(--u)*8)}
+
+/* 폴듀 → 뉴펀들랜드 */
+.km{font-size:calc(var(--u)*42);font-weight:800;color:#0B6A99;line-height:1.2;text-align:center}
+.line{position:relative;width:100%;display:flex;align-items:center;margin-top:calc(var(--u)*16)}
+.dot{flex:0 0 calc(var(--u)*24);width:calc(var(--u)*24);height:calc(var(--u)*24);border-radius:50%}
+.dash{flex:1;border-top:calc(var(--u)*6) dashed var(--sig)}
+.pulse{position:absolute;left:0;top:50%;width:calc(var(--u)*22);height:calc(var(--u)*22);margin-top:calc(var(--u)*-11);border-radius:50%;background:var(--sig);opacity:0}
+.route.go .pulse{animation:travel 3.2s ease-in-out 1 forwards}
+@keyframes travel{0%{left:0;opacity:1}92%{opacity:1}100%{left:calc(100% - var(--u)*22);opacity:0}}
+.ends{width:100%;display:flex;justify-content:space-between;gap:calc(var(--u)*12);font-size:calc(var(--u)*26);font-weight:800;line-height:1.3}
+.note{font-size:calc(var(--u)*13);color:var(--muted);margin-top:calc(var(--u)*4)}
+.btn{border:2px solid var(--ink);background:var(--ink);color:#fff;border-radius:999px;font-weight:800;padding:calc(var(--u)*6) calc(var(--u)*20);font-size:calc(var(--u)*16);min-height:calc(var(--u)*36)}
+.btn.ghost{background:#fff;color:var(--ink)}
+.route{width:100%;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*6)}
+
+/* 핵심 수치(keyfact)·단계(steps) — 02·03 장 말고 나머지 장의 그림 */
+.vwrap{width:100%;display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*8)}
+.vtitle{margin:0;font-size:calc(var(--u)*19);font-weight:800;text-align:center;color:var(--muted)}
+.facts{width:100%;display:flex;justify-content:center;gap:calc(var(--u)*14)}
+.fact{flex:1;min-width:0;max-width:calc(var(--u)*320);text-align:center;padding:calc(var(--u)*14) calc(var(--u)*12);border-radius:calc(var(--u)*14);background:#fff;border:1px solid #D3E1EA}
+.fact .big{font-size:calc(var(--u)*46);font-weight:800;color:#0B6A99;line-height:1.15}
+.facts.n1 .big{font-size:calc(var(--u)*70)}
+.facts.n3 .big{font-size:calc(var(--u)*38)}
+.fact .lab{margin-top:calc(var(--u)*6);font-size:calc(var(--u)*21);line-height:1.4}
+.steps{width:100%;display:flex;justify-content:center;gap:calc(var(--u)*4)}
+.step{flex:1;min-width:0;text-align:center;padding:calc(var(--u)*12) calc(var(--u)*8);border-radius:calc(var(--u)*12);background:#fff;border:1px solid #D3E1EA}
+.step .k{font-size:calc(var(--u)*29);font-weight:800;color:#0B6A99;line-height:1.2}
+.step .k.long{font-size:calc(var(--u)*21);overflow-wrap:normal}   /* 긴 이름(예: 2000년대 초)은 낱말 중간에서 끊지 않는다 */
+.step .v{margin-top:calc(var(--u)*4);font-size:calc(var(--u)*18);line-height:1.4}
+.arr{flex:0 0 auto;align-self:center;font-size:calc(var(--u)*20);color:var(--muted)}
+.vwrap.now .fact,.vwrap.now .step{background:#DCEEF7;border-color:var(--sig)}
+.vwrap.later{opacity:.72}
+
+/* 주파수 다이얼 */
+.dial{width:100%;display:flex;flex-direction:column;gap:calc(var(--u)*3)}
+.wave{display:block;width:100%;height:calc(var(--u)*66)}
+.wave path{fill:none;stroke:var(--sig);stroke-width:3;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+.wl{display:flex;justify-content:space-between;font-size:calc(var(--u)*14);color:var(--muted);font-weight:700}
+.dtitle{margin:0;text-align:center;font-size:calc(var(--u)*15);font-weight:800}
+.freq{-webkit-appearance:none;appearance:none;display:block;width:100%;height:calc(var(--u)*30);margin:0;background:transparent;cursor:pointer}
+.freq::-webkit-slider-runnable-track{height:calc(var(--u)*10);border-radius:6px;background:linear-gradient(90deg,var(--sig),var(--amber))}
+.freq::-moz-range-track{height:calc(var(--u)*10);border-radius:6px;background:linear-gradient(90deg,var(--sig),var(--amber))}
+.freq::-webkit-slider-thumb{-webkit-appearance:none;width:calc(var(--u)*22);height:calc(var(--u)*34);margin-top:calc(var(--u)*-12);border-radius:7px;background:var(--ink);border:3px solid #fff;box-shadow:0 0 0 1.5px var(--ink)}
+.freq::-moz-range-thumb{width:calc(var(--u)*16);height:calc(var(--u)*28);border-radius:7px;background:var(--ink);border:3px solid #fff;box-shadow:0 0 0 1.5px var(--ink)}
+.ticks{position:relative;height:calc(var(--u)*40);margin:0 calc(var(--u)*11)}
+.tick{position:absolute;top:0;transform:translateX(-50%);font-size:calc(var(--u)*12);color:var(--muted);white-space:nowrap;text-align:center;line-height:1.3}
+.tick::before{content:"";display:block;width:1px;height:calc(var(--u)*6);background:var(--ink);margin:0 auto calc(var(--u)*2)}
+.tick.row2{top:calc(var(--u)*20)}
+.tick.hl{color:var(--ink);font-weight:800}
+.out{display:flex;gap:calc(var(--u)*30);justify-content:center;flex-wrap:wrap;font-size:calc(var(--u)*28);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.25}
+.dyn{margin:0;min-height:1.5em;text-align:center;font-size:calc(var(--u)*16);font-weight:800;color:var(--amber)}
+.fine{margin:0;text-align:center;font-size:calc(var(--u)*12);color:var(--muted)}
+.dialrow{display:flex;justify-content:center;gap:calc(var(--u)*14);align-items:center}
+
+/* 카드·기억해 두기 */
+.cards{display:grid;grid-template-columns:repeat(var(--n,3),minmax(0,1fr));gap:calc(var(--u)*16)}
+.card{padding:calc(var(--u)*13) calc(var(--u)*18);border-radius:calc(var(--u)*12);background:#fff;border:1px solid #D3E1EA}
+.card .hd{display:flex;align-items:center;gap:calc(var(--u)*10)}
+.card .no{flex:0 0 calc(var(--u)*32);width:calc(var(--u)*32);height:calc(var(--u)*32);border-radius:50%;background:var(--muted);color:#fff;font-weight:800;font-size:calc(var(--u)*17);display:flex;align-items:center;justify-content:center}
+.card .tt{font-size:calc(var(--u)*22);font-weight:800;line-height:1.3}
+.card .bd{margin:calc(var(--u)*4) 0 0;font-size:calc(var(--u)*17);line-height:1.5}
+.cards.n1 .bd{font-size:calc(var(--u)*21)}
+.card.now{background:#DCEEF7;border-color:var(--sig)}
+.card.now .no{background:var(--sig)}
+.card.seen{background:var(--mist)}
+.card.later{opacity:.62}
+.remember{display:flex;align-items:center;gap:calc(var(--u)*12);padding:calc(var(--u)*8) calc(var(--u)*18);border-radius:calc(var(--u)*12);background:var(--ink);color:#fff}
+.remember.now{box-shadow:0 0 0 3px var(--sig)}
+.remember .tag{font-size:calc(var(--u)*12);font-weight:800;background:#fff;color:var(--ink);border-radius:999px;padding:0 calc(var(--u)*10);white-space:nowrap}
+.remember .tx{font-size:calc(var(--u)*18);font-weight:800}
+.src{margin:0;font-size:calc(var(--u)*12);color:var(--muted)}
+.src:empty{display:none}
+
+/* ── HUD: 말하는 문장 하나만, 반투명. 말이 끝나면 사라지고 아이콘만 남는다 */
+.hud{display:flex;align-items:center;gap:calc(var(--u)*8);width:100%;min-width:0}
+.hud.docent{flex-direction:row-reverse}
+.hud .who{flex:0 0 calc(var(--u)*62);display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*2)}
+.hud .rm{width:calc(var(--u)*60);height:calc(var(--u)*60);transition:opacity .4s}
+.hud.docent .rm{transform:scaleX(-1)}
+.hud.idle .rm{opacity:.55}
+.hud .name{font-size:calc(var(--u)*12);font-weight:800}
+.hud.mc .name{color:var(--mc)} .hud.docent .name{color:var(--doc)}
+.eq{display:flex;align-items:flex-end;gap:2px;height:calc(var(--u)*12);visibility:hidden}
+.eq i{display:block;width:3px;border-radius:2px;background:var(--amber);height:50%}
+.hud.mc .eq i{background:var(--mc)}
+.hud.speaking .eq{visibility:visible}
+.hud.speaking .eq i{animation:eq .7s ease-in-out infinite alternate}
+.eq i:nth-child(2){animation-delay:.15s!important}.eq i:nth-child(3){animation-delay:.3s!important}
+@keyframes eq{from{height:30%}to{height:100%}}
+.bubble{flex:1;min-width:0;padding:calc(var(--u)*10) calc(var(--u)*13) calc(var(--u)*9);border-radius:calc(var(--u)*16);
+  background:rgba(221,241,245,.86);border:1px solid rgba(138,196,210,.95);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+  opacity:0;transform:translateY(4px);transition:opacity .35s,transform .35s;pointer-events:none}
+.hud.mc .bubble{border-top-left-radius:4px}
+.hud.docent .bubble{background:rgba(255,239,214,.9);border-color:rgba(224,184,119,.95);border-top-right-radius:4px}
+.hud.speaking .bubble{opacity:1;transform:none}
+.hud.fading .bubble{opacity:.5;transform:none}
+.bubble .t{margin:0;font-size:calc(var(--u)*17);line-height:1.45}
+.bubble .done{font-weight:800}
+.bubble .rest{opacity:.5}
+.prog{height:3px;margin-top:calc(var(--u)*8);border-radius:2px;background:rgba(14,36,51,.12)}
+.prog i{display:block;height:100%;width:0;border-radius:2px;background:var(--sig)}
+
+@media (prefers-reduced-motion:reduce){
+  .bubble,.hud .rm,[data-turns]{transition:none}
+  .route.go .pulse,.hud.speaking .eq i{animation:none}
+  .route.go .pulse{opacity:.9;left:calc(100% - var(--u)*22)}
+}
+
+/* 좁은 화면(폰)은 임시 대체다 — 구역을 위아래로 쌓는다. 세로 화면용은 따로 설계한다 */
+@media (max-width:820px){
+  :root{--u:calc(100vw / 480)}
+  .stage{height:auto;min-height:100vh;overflow:visible}
+  .bar{flex:0 0 auto;flex-wrap:wrap;padding:8px 12px;gap:8px}
+  .nav select{width:calc(var(--u)*230)}
+  .sim{margin-left:0}
+  .slide{display:flex;flex-direction:column;padding:16px 16px 24px}
+  .band{display:flex;flex-direction:column;margin:0;gap:8px}
+  .lane{padding:0;order:1;background:none}
+  .lane-docent{order:2}
+  .visual{order:3;padding:12px 0}
+  .hud{width:92%}
+  .hud.docent{margin-left:auto}
+  .cards{grid-template-columns:1fr}
+  .facts,.steps{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <header class="bar">
+    <div class="nav">
+      <button type="button" class="round" id="prev" aria-label="이전 장">‹</button>
+      <select id="slidesel" aria-label="장 고르기"></select>
+      <button type="button" class="round" id="nextslide" aria-label="다음 장">›</button>
+      <span class="pos" id="pos"></span>
+    </div>
+    <div class="seg" id="levels" role="group" aria-label="관람객 수준"></div>
+    <div class="seg" id="courses" role="group" aria-label="코스"></div>
+    <div class="sim">
+      <button type="button" class="pill go" id="play">▶ 시뮬레이션</button>
+      <button type="button" class="pill" id="next">다음 발화 ›</button>
+      <label>속도
+        <select id="speed"><option value="1">1×</option><option value="2">2×</option><option value="3" selected>3×</option><option value="6">6×</option></select>
+      </label>
+      <button type="button" class="pill" id="reset">종료</button>
+    </div>
+  </header>
+  <main class="slide" id="slide"></main>
+</div>
+
+<script type="application/json" id="data">{"levels": [{"key": "l1", "name": "초등"}, {"key": "l2", "name": "중고등"}, {"key": "l3", "name": "일반"}, {"key": "l4", "name": "전문가"}], "cues": [{"id": "01-intro", "no": "01", "title": "체험관 개요", "n": 2, "open": "안녕하세요, 여러분! 전파체험관 이야기 시간에 오신 걸 환영해요. 진행은 제가, 해설은 옆에 있는 도슨트가 맡을게요. 도슨트, 이 체험관이 어떤 곳인지부터 소개해 줄래요?", "after": "네, 소개 고마워요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "전파체험관은 눈에 안 보이는 전파를 만져 보는 곳이에요", "items": [{"t": "전파체험관", "b": "전파는 눈에 안 보이지만 우리가 날마다 쓰고 있어요. 그 전파를 직접 보고 만져 보게 만든 곳이에요."}, {"t": "만든 곳", "b": "한국방송통신전파진흥원이 만들었어요. 전파는 모두가 함께 쓰는 거라서 사이좋게 나눠 주고 지켜 줘야 해요."}], "remember": "전파는 모두가 함께 쓰는 거라서 지켜 줘야 해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "함께 쓰는 전파", "label": "사이좋게 나눠 주고 지켜 줘야 해요"}]}, "ask": [null, "오, 그럼 이 체험관은 누가 만든 거예요?"], "ans": ["안녕하세요, 여러분! 전파는 눈에 안 보이지만 우리가 날마다 쓰고 있거든요. 이 체험관은 그 전파를 직접 보고 만져 보게 만든 곳이에요.", "한국방송통신전파진흥원이라는 곳에서 만들었어요. 전파는 모두가 함께 쓰는 거라서, 누군가 사이좋게 나눠 주고 지켜 줘야 하거든요."]}, "l2": {"headline": "전파는 나라가 관리하는 공공 자원이에요", "items": [{"t": "전파체험관", "b": "눈에 보이지 않는 전파를 직접 보고 체험해 볼 수 있게 만든 곳이에요. 전파가 뭔지, 어디에 쓰이는지 하나씩 만나 봐요."}, {"t": "공공 자원", "b": "한국방송통신전파진흥원이라는 공공기관이 만들었어요. 전파는 아무나 마음대로 쓰는 게 아니라 나라가 관리하는 공공 자원이에요."}], "remember": "전파는 아무나 마음대로 쓰는 게 아니라 공공 자원이에요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "공공 자원", "label": "나라가 관리하는 전파"}, {"big": "관리 · 인력", "label": "전파를 관리하고 인력도 키워요"}]}, "ask": [null, "오, 그럼 이 체험관은 누가 만든 거예요?"], "ans": ["반가워요, 여러분! 이 체험관은 눈에 보이지 않는 전파를 직접 보고 체험해 볼 수 있게 만든 곳이에요. 전파가 뭔지, 어디에 쓰이는지 하나씩 만나 보게 될 거예요.", "한국방송통신전파진흥원이라는 공공기관이 만들었어요. 전파는 아무나 마음대로 쓰는 게 아니라 나라가 관리하는 공공 자원이거든요. 그래서 전파를 관리하고 인력도 키우죠."]}, "l3": {"headline": "전파를 효율적으로 관리하려고 세운 기관이 만들었어요", "items": [{"t": "전파체험관", "b": "전파를 직접 체험할 수 있게 만든 곳으로, 2020년 11월에 문을 열었어요. 전파가 무엇인지부터 생활 곳곳의 쓰임까지 차례로 둘러봐요."}, {"t": "한국방송통신전파진흥원", "b": "전파를 효율적으로 관리하고, 방송과 통신, 전파를 진흥하고, 인력을 키우려고 세운 기관이에요."}], "remember": "효율적인 전파 관리, 진흥, 인력 양성을 위해 세운 기관이에요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "2020년 11월", "label": "전파체험관이 문을 열었어요"}]}, "ask": [null, "오, 그럼 이 체험관은 누가 만든 거예요?"], "ans": ["반갑습니다! 이 체험관은 전파를 직접 체험할 수 있게 만든 곳으로, 2020년 11월에 문을 열었어요. 전파가 무엇인지부터 생활 곳곳에 어떻게 쓰이는지까지 차례로 둘러보실 거예요.", "한국방송통신전파진흥원이 만들었어요. 전파를 효율적으로 관리하고, 방송과 통신, 전파를 진흥하고, 인력을 키우려고 세운 기관이거든요."]}, "l4": {"headline": "전파법 제66조에 따라 설립된 기관이 만든 체험관이다", "items": [{"t": "대국민 접점", "b": "전파를 직접 체험하도록 만든 대국민 전시 공간으로, 2020년 11월에 개관했다. 진흥과 인력양성 기능이 시민과 직접 만나는 자리이다."}, {"t": "설립 근거와 사업", "b": "한국방송통신전파진흥원은 전파법 제66조에 따라 설립됐고, 사업은 방송통신융합 산업진흥, ICT기금 운용, 전파산업진흥, 전파자원관리 넷이다."}], "remember": "설립 근거는 전파법 제66조이고, 사업은 넷으로 나뉜다.", "source": "근거 · KCA 공식 — 설립목적 · KCA 공식 — 설립목적 페이지 · 원장 `docs/exhibit-guide.md:55` (2018년 11월부터 2년간 준비해 2020년 11월 개관) + 운영자 확정(2026-09-20) (신뢰 등급 A)", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "제66조", "label": "전파법 — 설립 근거"}, {"big": "사업 넷", "label": "방송통신융합·ICT기금·전파산업·전파자원"}]}, "ask": [null, "오, 그럼 이 체험관은 누가 만든 거예요?"], "ans": ["반갑습니다. 이 체험관은 전파를 직접 체험하도록 만든 대국민 전시 공간으로, 2020년 11월에 문을 열었어요. 한국방송통신전파진흥원의 진흥과 인력양성 기능이 시민과 직접 만나는 자리라고 보시면 돼요.", "한국방송통신전파진흥원이에요. 전파법 제66조에 따라 설립된 기관이고요, 사업은 방송통신융합 산업진흥, ICT기금 운용, 전파산업진흥, 전파자원관리 이렇게 넷으로 나뉘어요."]}}}, {"id": "02-history", "no": "02", "title": "전파의 발견 역사", "n": 3, "open": "자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?", "after": "발명이 아니라 발견이라니, 저도 처음엔 헷갈렸어요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "전파는 누가 만든 게 아니라, 원래 있던 걸 찾아낸 거예요", "items": [{"t": "계산", "b": "한 과학자가 계산해 보고 ‘이런 게 있을 거야!’ 하고 알아냈어요."}, {"t": "실험", "b": "다른 과학자가 실험으로 진짜 있다는 걸 보여 줬어요."}, {"t": "신호 보내기", "b": "전파에 신호를 실어 넓은 바다 건너편까지 보냈어요."}], "remember": "눈에 안 보여도 전파는 원래 있었고, 과학자들이 찾아냈어요.", "source": "", "visual": {"type": "route", "label": "넓은 바다 건너편까지", "from": "여기서 보내면", "to": "저기서 받았어요"}, "ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["놀랍게도 전파는 누가 만든 게 아니에요! 원래 우리 주변에 있었는데, 눈에 안 보여서 아무도 몰랐던 거예요.", "먼저 한 과학자가 계산을 해 보고 '이런 게 있을 거야' 하고 알아냈어요. 그다음에 다른 과학자가 실험으로 진짜 있다는 걸 보여 줬답니다.", "전파에 신호를 실어서 멀리 보내는 데 처음 쓰였어요. 글쎄, 넓은 바다 건너편까지 신호가 닿았대요!"]}, "l2": {"headline": "전파는 발명이 아니라 발견이에요", "items": [{"t": "맥스웰 · 예언", "b": "수식만으로 이런 파동이 있을 거라고 내다봤어요."}, {"t": "헤르츠 · 증명", "b": "실험으로 처음 증명했어요."}, {"t": "마르코니 · 실용화", "b": "무선전신을 실용화했어요. 1901년에는 대서양 건너 약 3,500km에서 모스 부호를 받았다고 발표했어요."}], "remember": "발명은 없던 걸 새로 만드는 것, 발견은 원래 있던 걸 알아내는 것이에요.", "source": "", "visual": {"type": "route", "label": "대서양 건너 약 3,500km", "from": "송신", "to": "수신"}, "ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["사실 전파는 누가 만든 게 아니라 찾아낸 거예요. 없던 걸 새로 만드는 게 발명이라면, 전파는 원래 있던 걸 알아낸 거라서 발견이라고 부르거든요.", "그게 재밌는 부분이에요. 맥스웰이라는 과학자가 먼저 수식만으로 이런 파동이 있을 거라고 예언했거든요. 그리고 헤르츠가 실험으로 처음 증명했죠.", "마르코니가 전파로 신호를 주고받는 무선전신을 실용화했어요. 1901년에는 무려 대서양 건너 약 3,500킬로미터 떨어진 곳에서 모스 부호를 받았다고 발표했죠."]}, "l3": {"headline": "예언한 사람, 증명한 사람, 써먹은 사람이 따로 있었어요", "items": [{"t": "맥스웰 · 이론", "b": "전기·자기·빛이 한 가지 현상이라는 이론을 세웠고, 그 방정식이 전자기파를 예언했어요."}, {"t": "헤르츠 · 증명", "b": "그 전자기파를 실험으로 처음 확실하게 증명했어요."}, {"t": "마르코니 · 무선전신", "b": "1901년 12월 12일, 영국 폴듀에서 보낸 모스 부호를 약 3,500km 떨어진 대서양 건너 뉴펀들랜드에서 받았대요. 그때 뉴펀들랜드는 영국 식민지였어요."}], "remember": "전파는 발명이 아니라 발견이에요.", "source": "", "visual": {"type": "route", "label": "약 3,500km · 1901.12.12", "from": "폴듀 (영국)", "to": "뉴펀들랜드"}, "ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["재밌게도 전파는 발명이 아니라 발견이에요. 머리로 예언한 사람, 실험으로 증명한 사람, 통신에 쓴 사람이 다 따로 있었다는 게 이 이야기의 재미거든요.", "맥스웰은 전기와 자기, 빛이 한 가지 현상이라는 이론을 세웠는데요, 그 방정식이 전자기파가 있다고 예언했어요. 그걸 실험으로 처음 확실하게 증명한 사람이 헤르츠예요.", "마르코니가 만든 무선전신이에요. 1901년 12월 12일 영국 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 대서양 건너 뉴펀들랜드에서 받았대요. 그때 뉴펀들랜드는 영국 식민지였고요."]}, "l4": {"headline": "전파를 발견한 사람을 한 명으로 꼽기는 어렵다", "items": [{"t": "맥스웰 방정식 · 이론적 예언", "b": "전자기파의 존재를 예언했다."}, {"t": "헤르츠 · 실험적 증명", "b": "처음으로 결정적인 실험으로 증명했다. 흔히 드는 1785년은 쿨롱 법칙이 나온 해로, 전자기학의 출발점이지 전파의 발견은 아니다."}, {"t": "마르코니 · 실용화", "b": "1909년 브라운과 노벨 물리학상을 공동 수상했다. 1901년 폴듀에서 세인트존스까지 약 3,500km 수신은 지금도 논쟁거리다."}], "remember": "이론적 예언, 실험적 증명, 실용화는 각각 다른 사람의 일이었다.", "source": "근거 · Wikipedia — James Clerk Maxwell · Wikipedia — Heinrich Hertz · Wikipedia — Guglielmo Marconi · Wikipedia — Coulomb's law (신뢰 등급 B)", "visual": {"type": "route", "label": "약 3,500km (2,200마일)", "from": "폴듀 (영국 콘월)", "to": "세인트존스 (뉴펀들랜드)"}, "ask": [null, "와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?", "그렇군요! 그럼 전파는 처음에 어디에 쓰였어요?"], "ans": ["발명이 아니라 발견이에요. 다만 발견한 사람을 딱 한 명으로 꼽기는 어렵습니다. 이론적 예언, 실험적 증명, 실용화가 각각 다른 사람의 일이었거든요.", "맥스웰 방정식이 전자기파의 존재를 예언했고, 헤르츠가 처음으로 결정적인 실험으로 증명했어요. 흔히 출발점으로 꼽는 1785년은 쿨롱 법칙이 나온 해라서, 전자기학의 출발점이지 전파의 발견은 아니에요.", "마르코니의 실용 무선전신이에요. 그는 1909년 브라운과 함께 노벨 물리학상도 받았죠. 1901년 폴듀에서 보낸 모스 부호를 약 3,500킬로미터 떨어진 세인트존스에서 받았다고 했는데, 그 수신은 지금도 논쟁거리예요."]}}, "turns": {"headline": "open docent0", "visual": "docent2"}, "actions": {"docent2": [{"type": "pulse"}]}}, {"id": "03-theory", "no": "03", "title": "전파 이론 — 주파수와 파장", "n": 3, "open": "이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?", "after": "보이지 않는 것을 이렇게 풀어 주시니 훨씬 가깝게 느껴지네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "전파는 눈에 안 보이는 물결이에요", "items": [{"t": "물결", "b": "연못의 물결처럼 멀리 퍼져 가요. 전파는 물이 없는 텅 빈 곳도 지나가요."}, {"t": "주파수", "b": "물결이 얼마나 빠르게 출렁이는지예요."}, {"t": "파장", "b": "물결 하나의 길이예요. 빠르게 출렁일수록 짧아져요."}], "remember": "빠르게 출렁일수록 물결 하나는 짧아져요.", "source": "", "visual": {"type": "dial", "mode": "words", "low": "천천히 출렁여요 · 물결 하나 — 길어요", "high": "빠르게 출렁여요 · 물결 하나 — 짧아요", "title": "다이얼을 돌려 보세요. 물결이 어떻게 바뀔까요?", "endLabels": ["느리게", "빠르게"], "caption": "그림은 느낌만 보여 줘요."}, "ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 눈에 보이지도 않고 만져지지도 않는 물결 같은 거예요. 연못의 물결처럼 멀리 퍼져 가는데요, 전파는 물이 없는 텅 빈 곳도 지나가요.", "주파수는 전파가 얼마나 빠르게 출렁이는지를 말해요. 아주 빠르게 출렁이는 전파도 있고, 느릿느릿 천천히 출렁이는 전파도 있답니다.", "파장은 물결 하나의 길이예요. 빠르게 출렁이는 전파일수록 물결 하나가 짧아지고, 천천히 출렁일수록 길어지거든요."]}, "l2": {"headline": "주파수가 높을수록 파장은 짧아져요", "items": [{"t": "전자기파", "b": "전기와 자기가 서로를 밀어 주며 퍼져 나가요. 소리와 달리 텅 빈 우주 공간에서도 가요."}, {"t": "주파수 (Hz)", "b": "1초에 몇 번 출렁이는지예요. 단위 헤르츠는 전파를 처음 증명한 헤르츠에서 왔어요."}, {"t": "파장", "b": "한 번 출렁이는 동안 나아간 거리예요. 주파수와 반비례해요."}], "remember": "주파수가 높아지면 파장은 짧아져요. 둘은 반비례예요.", "source": "", "visual": {"type": "dial", "mode": "num", "low": "주파수 낮음 · 파장 길다", "high": "주파수 높음 · 파장 짧다", "title": "주파수 다이얼 — 돌려서 파장을 확인해 보세요", "ticks": [{"e": 3, "label": "1kHz"}, {"e": 6, "label": "1MHz"}, {"e": 9, "label": "1GHz"}, {"e": 12, "label": "1THz"}], "fLabel": "주파수", "lLabel": "파장 약", "sf": 1, "formula": "주파수 ↑ → 파장 ↓ (반비례)", "caption": "그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요."}, "ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 전기와 자기가 서로를 밀어 주며 퍼져 나가는 전자기파의 한 갈래예요. 소리는 공기가 없으면 못 가잖아요? 그런데 전파는 텅 빈 우주 공간에서도 퍼져 나가요.", "주파수는 전파가 1초에 몇 번 출렁이는지를 나타내는 양이고, 단위는 헤르츠예요. 재밌는 건 이 이름이 앞에서 전파를 처음 증명한 헤르츠에서 왔다는 거예요.", "파장은 전파가 한 번 출렁이는 동안 나아간 거리예요. 빨리 출렁일수록, 그러니까 주파수가 높을수록 파장은 짧아지죠. 둘은 서로 반비례하는 사이예요."]}, "l3": {"headline": "파장은 빛의 속도를 주파수로 나눈 값이에요", "items": [{"t": "전파", "b": "빛과 같은 전자기파의 한 갈래예요. 진공에서도 가고, 그때는 빛의 속도로 달려요."}, {"t": "주파수", "b": "1초 동안 진동하는 횟수예요. 1회가 1헤르츠, 1,000회가 1킬로헤르츠예요."}, {"t": "파장", "b": "빛의 속도 ÷ 주파수예요. 100메가헤르츠 FM 라디오 전파의 파장은 약 3m예요."}], "remember": "주파수가 높을수록 파장은 짧아져요.", "source": "", "visual": {"type": "dial", "mode": "num", "low": "주파수 낮음 · 파장 길다", "high": "주파수 높음 · 파장 짧다", "title": "주파수 다이얼 — 돌려서 파장을 확인해 보세요", "ticks": [{"e": 3, "label": "1kHz"}, {"e": 6, "label": "1MHz"}, {"e": 9, "label": "1GHz"}, {"e": 12, "label": "1THz"}, {"e": 8, "label": "FM 라디오 100MHz", "row2": true, "hl": true}], "fLabel": "주파수", "lLabel": "파장 = 약", "sf": 1, "fmSentence": "100메가헤르츠 FM 라디오 전파는 파장이 약 3미터예요.", "fmButton": "FM 라디오 100MHz 로 맞추기", "formula": "파장 = 빛의 속도 ÷ 주파수 · 예) 100MHz FM 라디오 → 약 3m", "caption": "그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요."}, "ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파는 빛과 같은 전자기파의 한 갈래로, 아무것도 없는 공간에서도 스스로 퍼져 나가요. 소리는 공기가 있어야 들리잖아요. 전파는 진공에서도 가고, 그때는 빛의 속도로 달려요.", "주파수는 1초 동안 진동하는 횟수를 나타내는 물리량이고, 단위가 헤르츠예요. 1초에 한 번 진동하면 1헤르츠, 천 번이면 1킬로헤르츠라고 부르죠.", "파장은 파동이 한 번 진동하는 동안 나아간 거리로, 빛의 속도를 주파수로 나눈 값이에요. 그래서 주파수가 높을수록 짧아지는데요, 100메가헤르츠 FM 라디오 전파는 파장이 약 3미터나 돼요."]}, "l4": {"headline": "전파는 3,000GHz보다 낮은 주파수의 전자기파다", "items": [{"t": "전파법상 정의", "b": "인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것."}, {"t": "ITU 전파규칙", "b": "그 범위를 3,000GHz보다 낮은 주파수로 잡는다."}, {"t": "빛의 속도 c", "b": "299,792,458m/s. 측정값이 아니라 미터의 정의가 고정한 값이라 정확하다."}], "remember": "λ = c ÷ f 이고, c 는 근삿값이 아니라 정의로 고정된 정확한 값이다.", "source": "근거 · 국가법령정보센터 — 전파법 제2조 · ITU Radio Regulations No. 1.5 · Wikipedia — Speed of light (신뢰 등급 B)", "visual": {"type": "dial", "mode": "num", "low": "주파수 낮음 · 파장 길다", "high": "주파수 높음 · 파장 짧다", "title": "주파수 다이얼 — 돌려서 파장을 확인해 보세요", "ticks": [{"e": 3, "label": "1kHz"}, {"e": 6, "label": "1MHz"}, {"e": 9, "label": "1GHz"}, {"e": 12, "label": "1THz"}, {"e": 8, "label": "FM 라디오 100MHz", "row2": true, "hl": true}, {"e": 12.4771, "label": "3,000GHz", "row2": true, "hl": true}], "fLabel": "f =", "lLabel": "λ = c ÷ f =", "sf": 4, "fmSentence": "FM 라디오 100MHz 근처다. 파장은 약 3m다.", "fmButton": "FM 라디오 100MHz 로 맞추기", "formula": "λ = c ÷ f · c = 299,792,458 m/s (정확값)", "caption": "그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요."}, "ask": [null, "아하, 그렇군요! 그럼 주파수는 뭐예요?", "그럼 파장은 뭐고, 주파수랑은 어떤 사이예요?"], "ans": ["전파법은 전파를 인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것으로 정의해요. 그 범위는 ITU 전파규칙이 3,000기가헤르츠보다 낮은 주파수로 잡고 있고요.", "주파수는 단위시간당 반복 횟수를 나타내는 물리량이고, 헤르츠는 그 SI 단위로 초의 역수예요. 주기적인 현상에만 쓰고, 이름은 전자기파를 처음 결정적으로 증명한 하인리히 헤르츠에서 왔습니다.", "파장은 빛의 속도를 주파수로 나눈 값이고, 진공에서 빛의 속도는 정확히 초속 299,792,458미터예요. 재밌는 건 이게 측정값이 아니라, 미터의 정의가 이 값을 고정해 뒀기 때문에 정확하다는 거예요."]}}, "turns": {"headline": "open", "visual": "docent1 docent2"}, "actions": {"docent1": [{"type": "dial", "from": 3, "to": 12.3}], "docent2": [{"type": "dial", "to": 8, "ms": 2400}]}}, {"id": "04-morse", "no": "04", "title": "전파이야기 체험 — 모스부호·헤르츠 실험·라이덴 병", "n": 3, "open": "체험관에는 직접 만져볼 수 있는 장치들도 있다고 들었어요. 도슨트, 전파이야기 체험존에서는 무엇을 해볼 수 있나요?", "after": "모스부호를 직접 쳐볼 수 있다니 재미있겠어요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "점과 선만으로 글자를 보내는 약속이 모스 부호예요", "items": [{"t": "모스 부호", "b": "짧게 똑, 길게 뚜우. 점과 선 두 가지만으로 글자를 보내는 약속이에요. 직접 손으로 쳐 볼 수 있어요."}, {"t": "글자마다 약속", "b": "짧은 신호와 긴 신호를 섞어 글자마다 약속을 정했어요. 자주 쓰는 글자일수록 짧은 신호를 줘요."}, {"t": "불꽃으로 만든 전파", "b": "옛날 한 과학자가 불꽃을 튀겨 전파를 만들고, 떨어진 곳에서 받아 냈어요. 라이덴 병은 전기를 잠깐 담아 두는 병이에요."}], "remember": "짧은 신호와 긴 신호만 섞어도 글자를 보낼 수 있어요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "점과 선", "label": "두 가지만으로 글자를 보내요"}, {"big": "똑 · 뚜우", "label": "짧게 똑", "길게 뚜우": null}]}, "ask": [null, "재밌겠네요! 그럼 모스 부호는 어떻게 만들어진 거예요?", "그럼 헤르츠 실험은 무엇을 보여 주는 거예요?"], "ans": ["점과 선으로 글자를 보내는 모스 부호를 직접 손으로 쳐 볼 수 있어요! 짧게 똑, 길게 뚜우, 이 두 소리만으로 편지를 쓰는 셈이에요.", "짧은 신호와 긴 신호를 섞어서 글자마다 약속을 정해 둔 거예요. 자주 쓰는 글자일수록 짧은 신호를 줘서 빨리 보낼 수 있게 했답니다.", "옛날 한 과학자가 불꽃을 튀겨서 전파를 만들고, 떨어진 곳에서 그 전파를 받아 낸 실험이에요. 라이덴 병은 전기를 잠깐 담아 두는 병이고요."]}, "l2": {"headline": "모스 부호는 점과 선의 길이 차이로 글자를 나타내요", "items": [{"t": "체험 세 가지", "b": "모스 부호, 헤르츠의 전파 실험, 라이덴 병을 직접 체험해요. 전파를 처음 만들고 쓰던 방법을 손으로 따라가 봐요."}, {"t": "모스 부호의 설계", "b": "점과 선의 길이 차이로 글자를 나타내요. 자주 쓰는 글자일수록 짧은 부호를 받아서 가장 흔한 E가 점 하나예요."}, {"t": "헤르츠 실험", "b": "헤르츠가 불꽃을 튀겨 전파를 만들고 떨어진 고리에서 받아 내 존재를 확인했어요. 라이덴 병은 축전기의 원형이에요."}], "remember": "자주 쓰는 글자일수록 짧은 부호를 받았어요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "E = 점 하나", "label": "영어에서 가장 흔한 글자"}, {"big": "김학우", "label": "한글 전신 부호를 만든 사람"}]}, "ask": [null, "재밌겠네요! 그럼 모스 부호는 어떻게 만들어진 거예요?", "그럼 헤르츠 실험은 무엇을 보여 주는 거예요?"], "ans": ["모스 부호랑 헤르츠의 전파 실험, 라이덴 병을 직접 체험해 볼 수 있어요. 전파를 처음 만들고 쓰던 방법을 손으로 하나씩 따라가 보는 거죠.", "점과 선의 길이 차이로 글자를 나타내는데, 자주 쓰는 글자일수록 짧은 부호를 받았어요. 그래서 영어에서 가장 흔한 E가 점 하나예요. 한글 전신 부호는 김학우가 만들었죠.", "헤르츠가 불꽃을 튀겨 전파를 만들고 떨어진 고리에서 받아 내 존재를 확인한 실험이에요. 라이덴 병은 전기를 담는 축전기의 원형인데, 그 방전 실험이 실마리가 됐어요."]}, "l3": {"headline": "모스 부호는 모스 혼자 만든 게 아니에요", "items": [{"t": "직접 해 볼 세 가지", "b": "모스 부호, 헤르츠의 전파 실험, 라이덴 병을 직접 해 볼 수 있어요. 전파를 처음 증명하고 통신에 쓰기까지를 손으로 따라가요."}, {"t": "모스 부호의 내력", "b": "동료 베일이 알파벳 부호로 넓혔고, 지금의 국제 모스 부호는 1865년에 표준이 됐어요. SOS는 끊지 않고 이어 치는 하나의 신호예요."}, {"t": "헤르츠 실험", "b": "유도코일의 고전압을 불꽃 간극에 튀겨 전파를 쏘고, 떨어진 고리 안테나의 작은 불꽃으로 받았어요."}], "remember": "SOS는 세 글자가 아니라 이어 치는 하나의 신호예요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "1865년", "label": "국제 모스 부호가 표준이 된 해"}, {"big": "SOS", "label": "끊지 않고 이어 치는 하나의 신호"}]}, "ask": [null, "재밌겠네요! 그럼 모스 부호는 어떻게 만들어진 거예요?", "그럼 헤르츠 실험은 무엇을 보여 주는 거예요?"], "ans": ["모스 부호, 헤르츠의 전파 실험, 그리고 라이덴 병까지 세 가지를 직접 해 볼 수 있어요. 전파를 처음 증명하고 통신에 쓰기까지의 과정을 손으로 따라가 보는 코너예요.", "사실 이건 모스 혼자 만든 게 아니에요. 동료 베일이 알파벳 부호로 넓혔고, 지금의 국제 모스 부호는 1865년에 표준이 됐어요. SOS도 세 글자가 아니라 끊지 않고 이어 치는 하나의 신호예요.", "헤르츠는 유도코일의 고전압을 불꽃 간극에 튀겨 전파를 쏘고, 떨어진 고리 안테나의 작은 불꽃으로 받았어요. 라이덴 병은 1745년에 발견된 축전기의 원형이고, 그 방전 실험이 실마리가 됐어요."]}, "l4": {"headline": "현행 표준은 ITU-R 권고 M.1677-1이다", "items": [{"t": "출발점의 재현", "b": "국제 모스 부호 송신, 헤르츠의 불꽃간극 실험, 라이덴 병 방전으로 전파 기술의 출발점을 재현한다."}, {"t": "표준화의 경로", "b": "베일이 확장한 코드가 1848년 게르케의 개량을 거쳐 1865년 파리 국제전신협약에서 표준화됐다. 현행 표준은 ITU-R 권고 M.1677-1이다."}, {"t": "헤르츠의 장치", "b": "1886년 가을 리스 나선에 라이덴 병을 방전시키다 장치를 착상했다. 룸코르프 유도코일의 고전압으로 1미터 쌍극자의 불꽃 간극을 때려 전파를 만들었다."}], "remember": "선은 점 셋, 낱말 사이 간격은 점 일곱이다.", "source": "근거 · Wikipedia — Morse code · ITU 원문 PDF — Recommendation ITU-R M.1677-1 (10/2009) · ITU-R M.1677-1, Annex 1, §2.1~2.4 · Wikipedia — Heinrich Hertz / Spark-gap transmitter · Wikipedia — Heinrich Hertz / Spark-gap transmitter (원문: metal balls or plates for capacitance (C) ... an induction coil (Ruhmkorff coil) (T) ... 5 to 30 kV) (신뢰 등급 B)", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "1865년", "label": "파리 국제전신협약에서 표준화"}, {"big": "M.1677-1", "label": "ITU-R 현행 표준 권고"}, {"big": "점 일곱", "label": "낱말 사이 간격(선은 점 셋)"}]}, "ask": [null, "재밌겠네요! 그럼 모스 부호는 어떻게 만들어진 거예요?", "그럼 헤르츠 실험은 무엇을 보여 주는 거예요?"], "ans": ["국제 모스 부호 송신, 헤르츠의 불꽃간극 실험, 라이덴 병 방전까지 전파 기술의 출발점을 재현해 볼 수 있어요. 이론이 실험 장치로 내려오는 지점을 직접 만져 보는 셈이죠.", "베일이 알파벳 부호로 확장한 코드가 1848년 게르케의 개량을 거쳐 1865년 5월 17일 파리 국제전신협약에서 표준화됐어요. 현행 표준은 ITU-R 권고 M.1677-1이고, 선은 점 셋, 낱말 사이 간격은 점 일곱이에요.", "헤르츠는 1886년 가을 리스 나선에 라이덴 병을 방전시키다 장치를 착상했고, 룸코르프 유도코일의 고전압으로 1미터 쌍극자의 불꽃 간극을 때려 전파를 만들었어요. 재밌는 건 본인은 쓸모를 묻자 없을 것 같다고 답했대요."]}}}, {"id": "05-donor", "no": "05", "title": "기증자 — 장황남 박사", "n": 2, "open": "이 체험관 전시품 중에는 한 분이 기증한 것들이 있다고 들었어요. 도슨트, 장황남 박사가 누구인지 소개해 주세요.", "after": "의사가 통신 장비를 모았다는 게 뜻밖이죠. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "의사 선생님이 모은 통신 기계로 박물관이 생겼어요", "items": [{"t": "의사 선생님", "b": "병을 고치는 의사 선생님이에요. 통신 기계를 무척 좋아해서 아주 오랫동안 하나씩 모았어요."}, {"t": "이름을 딴 박물관", "b": "혼자 갖지 않고 대학교에 내놓아서 그분 이름을 딴 박물관이 생겼어요. 많은 사람이 옛날 통신 기계를 볼 수 있어요."}], "remember": "혼자 갖지 않고 우리가 볼 수 있게 내놓았어요.", "source": "", "visual": {"type": "steps", "at": 1, "steps": [{"k": "모으기", "v": "통신 기계를 하나씩 모았어요"}, {"k": "내놓기", "v": "혼자 갖지 않고 대학교에 내놓았어요"}, {"k": "박물관", "v": "그분 이름을 딴 박물관이 생겼어요"}]}, "ask": [null, "의사 선생님이 통신 기계를요? 그럼 모은 기계들은 어떻게 됐어요?"], "ans": ["병을 고치는 의사 선생님이에요! 통신 기계를 무척 좋아해서 아주 오랫동안 하나씩 모았고, 그걸 혼자 갖지 않고 우리가 볼 수 있게 내놓았어요.", "모은 기계들을 대학교에 내놓아서, 그분 이름을 딴 박물관이 생겼어요. 덕분에 많은 사람이 옛날 통신 기계를 볼 수 있게 됐답니다."]}, "l2": {"headline": "본업이 의사인 분이 통신 장비를 모아 기증했어요", "items": [{"t": "본업은 의사", "b": "전남 완도에서 태어나 의과대학을 다녔어요. 1963년에는 전남에서 처음으로 아마추어 무선국을 열었어요."}, {"t": "수집과 기증", "b": "1972년 미국으로 건너가 의사로 일하면서도 수집을 이어 갔어요. 기증해서 2014년 조선대학교에 박물관이 세워졌어요."}], "remember": "본업이 의사인 사람이 통신 장비를 모았어요.", "source": "", "visual": {"type": "steps", "at": 1, "steps": [{"k": "1963년", "v": "전남에서 처음 아마추어 무선국"}, {"k": "1972년", "v": "미국으로 건너가 의사로 일함"}, {"k": "2014년", "v": "조선대학교에 박물관이 세워짐"}]}, "ask": [null, "의사 선생님이 통신 기계를요? 그럼 모은 기계들은 어떻게 됐어요?"], "ans": ["놀랍게도 본업이 의사였던 분이에요. 전남 완도에서 태어나 의과대학을 다녔고, 1963년 전남에서 처음으로 아마추어 무선국을 연 사람이기도 해요.", "1972년 미국으로 건너가 의사로 일하면서도 수집을 이어 갔어요. 모은 것을 기증해서 2014년 조선대학교에 그의 이름을 딴 정보통신박물관이 세워졌어요."]}, "l3": {"headline": "의사가 모은 통신 장비가 조선대학교 박물관이 됐어요", "items": [{"t": "본업은 의사", "b": "전남 완도에서 태어나 전남의과대학을 나왔어요. 1963년에는 전남 최초의 아마추어 무선 통신사로 자기 무선국을 운영했어요."}, {"t": "수집과 기증", "b": "뉴욕주 뉴어크에서 내과를 개업하고도 수집을 이어 갔어요. 4천5백여 점을 조선대학교에 기증해 박물관이 문을 열었어요."}], "remember": "4천5백여 점은 조선대학교에 기증한 수량이에요.", "source": "", "visual": {"type": "steps", "at": 1, "steps": [{"k": "1963년", "v": "전남 최초 아마추어 무선 통신사"}, {"k": "1972년", "v": "뉴욕주 뉴어크에서 내과 개업"}, {"k": "2014년", "v": "9월 30일 박물관 개관"}]}, "ask": [null, "의사 선생님이 통신 기계를요? 그럼 모은 기계들은 어떻게 됐어요?"], "ans": ["전파나 통신이 본업이 아닌 의사예요. 전남 완도에서 태어나 전남의과대학을 나왔고, 1963년에는 전남 최초의 아마추어 무선 통신사로 자기 무선국을 운영했어요.", "1972년 미국 뉴욕주 뉴어크에서 내과를 개업하고도 수십 년에 걸쳐 수집을 이어 갔어요. 그렇게 모은 4천5백여 점을 조선대학교에 기증해 2014년 9월 30일 장황남정보통신박물관이 문을 열었어요."]}, "l4": {"headline": "의사이자 아마추어 무선 통신사가 통신기기를 기증했다", "items": [{"t": "의사와 무선 통신사", "b": "전남의과대학을 나와 약리학교실에서 석사과정을 마친 의사이다. 1963년 전남 최초의 아마추어 무선 통신사로 호출부호 HM4DF 무선국을 운영했다."}, {"t": "도미와 기증", "b": "1972년 뉴욕주 뉴어크에서 내과를 개업해 의사협회장을 지냈고, QST에 기술 기사도 실었다. 4천5백여 점을 조선대학교에 기증했다."}], "remember": "4천5백여 점은 조선대학교에 기증한 수량이다.", "source": "근거 · 조선대학교 공식 소개 · 기증자 인사말 (본인 서술) · 기증자 인사말 (본인 서술, 원문: '뉴욕주 Newark에서 내과 개업') · 기증자 인사말 (본인 서술, 원문: '1963년에 전남 최초의 아마추어 무선 통신사로 HM4DF 무선국을 운영') (신뢰 등급 B)", "visual": {"type": "steps", "at": 1, "steps": [{"k": "1963년", "v": "전남 최초 아마추어 무선 통신사"}, {"k": "1972년", "v": "뉴욕주 뉴어크에서 내과 개업"}, {"k": "2014년", "v": "9월 30일 장황남정보통신박물관 개관"}]}, "ask": [null, "의사 선생님이 통신 기계를요? 그럼 모은 기계들은 어떻게 됐어요?"], "ans": ["전남 완도 출생으로 광주고등학교와 전남의과대학을 나와 전남의대 약리학교실에서 석사과정을 마친 의사예요. 1963년 전남 최초의 아마추어 무선 통신사로 호출부호 에이치엠 사 디 에프 무선국을 운영했어요.", "1972년 미국 뉴욕주 뉴어크에서 내과를 개업해 의사협회장을 지냈고, 아마추어 무선 잡지 QST에 기술 기사도 실었어요. 유무선 통신기기 4천5백여 점을 조선대학교에 기증해 2014년 9월 30일 장황남정보통신박물관이 개관했어요."]}}}, {"id": "06-bands", "no": "06", "title": "주파수 대역별 기증품 — 초장파에서 밀리미터파까지", "n": 3, "open": "이번엔 기증품을 주파수 대역별로 둘러볼 차례예요. 도슨트, 전파를 왜 여러 종류로 나눠 놓은 거예요?", "after": "초장파부터 밀리미터파까지, 범위가 정말 넓네요. 어느 대역이 제일 궁금하신가요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "길이가 다르면 전파가 잘하는 일도 달라요", "items": [{"t": "여러 종류의 전파", "b": "아주 길게 출렁이는 것부터 쌀알만큼 짧게 떨리는 것까지 여러 종류가 있어요."}, {"t": "긴 전파와 짧은 전파", "b": "긴 전파는 언덕을 빙 돌아서 넘어가고, 짧은 전파는 곧게 쭉 나아가요."}, {"t": "세계의 약속", "b": "세계가 함께 쓰는 약속으로 구간을 나누고 이름을 붙여 뒀어요."}], "remember": "길이가 다르면 잘하는 일도 달라서 나눠 놓았어요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "긴 전파", "label": "언덕을 빙 돌아서 넘어가요"}, {"big": "짧은 전파", "label": "곧게 쭉 나아가요"}]}, "ask": [null, "아, 그렇구나! 그럼 길이가 다르면 실제로 뭐가 달라져요?", "그럼 그 구분은 누가 정하는 거예요?"], "ans": ["전파에도 아주 길게 출렁이는 것부터 쌀알만큼 짧게 떨리는 것까지 여러 종류가 있거든요. 길이가 다르면 잘하는 일도 달라서 나눠 놓은 거예요.", "신기하게도 긴 전파는 언덕을 빙 돌아서 넘어가고, 짧은 전파는 곧게 쭉 나아가요. 그래서 하는 일도 서로 달라요.", "세계가 함께 쓰는 약속으로 구간을 나누고 이름을 붙여 뒀어요. 이 코너 기계들은 서로 다른 전파를 쓰던 옛날 기계들이고요."]}, "l2": {"headline": "주파수에 따라 전파의 성질이 달라요", "items": [{"t": "주파수와 파장", "b": "주파수가 낮을수록 한 번 출렁이는 길이, 즉 파장이 길고, 높을수록 짧아져요."}, {"t": "멀리 가는 전파, 곧게 가는 전파", "b": "파장이 긴 전파는 장애물을 휘돌아 땅을 따라 지평선 너머까지 가요. 짧은 전파는 빛처럼 곧게 나아가요."}, {"t": "국제기구의 구분", "b": "성질이 다르니까 국제기구가 구간을 나누고 이름과 쓰임새를 정해 뒀어요."}], "remember": "주파수가 낮을수록 파장이 길고, 높을수록 짧아요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "긴 파장", "label": "장애물을 휘돌아 넘어가요"}, {"big": "짧은 파장", "label": "빛처럼 곧게 나아가요"}]}, "ask": [null, "아, 그렇구나! 그럼 길이가 다르면 실제로 뭐가 달라져요?", "그럼 그 구분은 누가 정하는 거예요?"], "ans": ["주파수에 따라 전파의 성질이 달라서예요. 주파수가 낮을수록 한 번 출렁이는 길이, 즉 파장이 길고, 높을수록 짧아지거든요.", "파장이 긴 전파는 언덕 같은 장애물을 휘돌아 넘어가고 땅을 따라 지평선 너머까지 가요. 반대로 짧은 전파는 빛처럼 곧게 나아가서 앞이 트여 있어야 잘 닿죠.", "성질이 다르니까 국제기구가 구간을 나누고 이름과 쓰임새를 정해 뒀어요. 이 코너의 기계들이 바로 그 서로 다른 구간을 쓰던 것들이에요."]}, "l3": {"headline": "전파는 주파수 순서로 나눠 이름을 붙여요", "items": [{"t": "주파수와 파장", "b": "초장파는 주파수가 아주 낮은 쪽, 밀리미터파는 아주 높은 쪽이에요. 파장으로는 100km에서 1mm까지예요."}, {"t": "대역별 전파 방식", "b": "낮은 주파수는 언덕을 휘돌아 지평선 너머까지 가요. 초단파부터는 곧게 가고, 단파는 전리층에서 꺾여 멀리 가기도 해요."}, {"t": "ITU의 구분", "b": "국제전기통신연합, ITU가 전파를 주파수 순서로 나누고 구간마다 이름을 붙였어요. 초장파는 VLF, 밀리미터파는 EHF처럼 영어 기호도 있어요."}], "remember": "파장이 길수록 멀리 돌아가고, 짧을수록 곧게 가요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "VLF", "label": "초장파 · 주파수가 낮은 쪽 끝"}, {"big": "EHF", "label": "밀리미터파 · 주파수가 높은 쪽 끝"}, {"big": "100km~1mm", "label": "이 코너가 다루는 파장 범위"}]}, "ask": [null, "아, 그렇구나! 그럼 길이가 다르면 실제로 뭐가 달라져요?", "그럼 그 구분은 누가 정하는 거예요?"], "ans": ["주파수에 따라 파장과 성질이 달라서예요. 이 코너 제목의 초장파는 주파수가 아주 낮은 쪽, 밀리미터파는 아주 높은 쪽이고, 파장으로 치면 100킬로미터에서 1밀리미터까지예요.", "장파나 중파 같은 낮은 주파수는 언덕을 휘돌아 넘고 땅을 따라 지평선 너머까지 가요. 초단파부터는 빛처럼 곧게 가서 보이는 거리 안에서 쓰이고, 단파는 하늘의 전리층에서 꺾여 멀리 가기도 해요.", "국제전기통신연합, ITU가 전파를 주파수 순서로 나누고 구간마다 이름을 붙였어요. 초장파는 VLF, 밀리미터파는 EHF처럼 영어 기호도 함께 있죠."]}, "l4": {"headline": "대역 이름은 주파수 기준과 파장 기준 두 계열이다", "items": [{"t": "파장과 주파수", "b": "파장은 주파수에 반비례한다. 제목의 범위는 3kHz~300GHz이고, 파장으로는 100km~1mm이다."}, {"t": "전파 방식", "b": "VLF~MF는 회절로 장애물을 넘는 지표파, VHF 이상은 가시선 전파가 주를 이룬다. 중파와 단파는 전리층 굴절로 대륙 간 거리까지 가기도 한다."}, {"t": "ITU-R 권고 V.431-8", "b": "대역번호 N은 0.3×10^N Hz에서 3×10^N Hz로 정한다. 초장파는 주파수 기준, 밀리미터파는 파장 기준 이름이다."}], "remember": "파장이 길수록 멀리 간다고 단정할 수는 없다.", "source": "근거 · Recommendation ITU-R V.431-8 (08/2015), Table 1 — · Recommendation ITU-R V.431-8 (08/2015), Table 1 표제 및 NOTE 1 · ITU-R V.431-8 Table 1 에서 직접 계산 (3 kHz → 100 km, 300 GHz → 1 mm) · Recommendation ITU-R V.431-8 (08/2015), Table 1 의 열 구성 · Wikipedia — Radio propagation (신뢰 등급 B)", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "주파수 기준", "label": "VLF·LF·MF·HF·VHF·UHF·SHF·EHF"}, {"big": "파장 기준", "label": "미리어미터파 ~ 밀리미터파"}, {"big": "100km~1mm", "label": "VLF~EHF 구간의 파장"}]}, "ask": [null, "아, 그렇구나! 그럼 길이가 다르면 실제로 뭐가 달라져요?", "그럼 그 구분은 누가 정하는 거예요?"], "ans": ["주파수에 따라 전파 특성이 달라서 구간별로 다뤄야 하거든요. 파장은 주파수에 반비례해서, 제목의 범위인 3킬로헤르츠에서 300기가헤르츠는 파장으로 100킬로미터에서 1밀리미터예요.", "VLF에서 MF까지는 회절로 장애물을 넘는 지표파가 주된 전파 방식이고, VHF 이상은 가시선 전파가 주를 이뤄요. 중파와 단파는 전리층 굴절로 대륙 간 거리까지 가기도 해서, 파장이 길수록 멀리 간다고 단정할 순 없어요.", "기준은 ITU-R 권고 V.431-8의 표로, 대역번호 N을 0.3 곱하기 10의 N승에서 3 곱하기 10의 N승 헤르츠로 정해요. 다만 초장파는 주파수 기준, 밀리미터파는 파장 기준 이름이라 제목은 두 계열이 섞인 표현이에요."]}}}, {"id": "07-maritime", "no": "07", "title": "해상무선통신", "n": 3, "open": "이번엔 바다 위의 무선통신 이야기예요. 도슨트, 타이타닉호 이야기를 들려주실래요?", "after": "마지막까지 구조 신호를 보낸 전신기사 이야기가 뭉클하네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "구조 신호를 전파로 보내 사람들을 구했어요", "items": [{"t": "구조 신호", "b": "큰 배가 바다에서 가라앉을 때, 한 사람이 끝까지 도와 달라는 신호를 전파로 보냈어요. 그걸 들은 다른 배가 달려와 사람들을 구했어요."}, {"t": "서로 듣기로 한 약속", "b": "그때부터 배들은 언제나 서로의 구조 신호를 듣고 있기로 약속했어요."}, {"t": "대신 외쳐 주는 장치", "b": "요즘은 배에 자동으로 위치를 알리는 장치가 있어서, 사람이 못 보내도 구조 신호가 저절로 나가요."}], "remember": "지금도 누가 도움을 부르면 가까운 배가 달려갈 수 있어요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "구조 신호 이야기", "steps": [{"k": "신호", "v": "도와 달라고 전파로 보내요"}, {"k": "구조", "v": "다른 배가 달려와요"}, {"k": "약속", "v": "서로의 신호를 언제나 들어요"}, {"k": "지금", "v": "장치가 저절로 알려 줘요"}]}, "ask": [null, "그 사고가 바꾼 게 있다고 들었어요. 무엇이 달라졌나요?", "그럼 지금은 어떤 규칙으로 바뀌었어요?"], "ans": ["옛날 큰 배가 바다에서 가라앉을 때, 한 사람이 끝까지 도와 달라는 신호를 전파로 보냈어요. 그걸 들은 다른 배가 달려와 사람들을 구했답니다.", "그때부터 배들은 언제나 서로의 구조 신호를 듣고 있기로 약속했어요. 덕분에 지금도 바다에서 누가 도움을 부르면 가까운 배가 달려갈 수 있답니다.", "요즘은 배에 자동으로 위치를 알리는 장치가 있어요. 사람이 못 보내도 구조 신호가 저절로 나가서, 기계가 대신 외쳐 주는 셈이죠."]}, "l2": {"headline": "사고가 사람이 아니라 규칙을 바꿨어요", "items": [{"t": "1912년 타이타닉", "b": "무선통신사가 마지막까지 구조 신호를 보냈고, 그 신호를 들은 다른 배가 달려와 구명정의 사람들을 구했어요."}, {"t": "무선을 지키는 규칙", "b": "조사위원회가 모든 배는 밤낮 끊기지 않게 무선을 지켜야 한다고 권고했고, 그 권고가 국제 규칙이 됐어요."}, {"t": "국제해상조난안전시스템", "b": "조난 신호를 장비가 자동으로 주고받아요. 1999년 전면 시행되면서 모스 부호는 바다에서 물러났어요."}], "remember": "모든 배는 밤낮 끊기지 않게 무선을 지켜야 해요.", "source": "", "visual": {"type": "steps", "at": 2, "title": "구조 신호에서 규칙까지", "steps": [{"k": "1912년", "v": "마지막까지 구조 신호를 보냈어요"}, {"k": "그 뒤", "v": "밤낮 무선을 지키는 국제 규칙"}, {"k": "1999년", "v": "장비가 자동으로 주고받아요"}]}, "ask": [null, "그 사고가 바꾼 게 있다고 들었어요. 무엇이 달라졌나요?", "그럼 지금은 어떤 규칙으로 바뀌었어요?"], "ans": ["1912년 타이타닉이 침몰할 때 무선통신사가 마지막까지 구조 신호를 보냈어요. 그 신호를 들은 다른 배가 달려와 구명정에 있던 사람들을 구했죠.", "사고 뒤 조사위원회가 모든 배는 밤낮 끊기지 않게 무선을 지켜야 한다고 권고했어요. 그 권고가 국제 규칙이 됐으니, 사고가 사람이 아니라 규칙을 바꾼 셈이죠.", "지금은 국제해상조난안전시스템이라는 규칙이 있어서 조난 신호를 장비가 자동으로 주고받아요. 1999년 전면 시행되면서 모스 부호는 바다에서 물러났죠."]}, "l3": {"headline": "전파가 사람을 구했고, 그 경험이 제도가 됐어요", "items": [{"t": "1912년 타이타닉", "b": "무선통신사 잭 필립스가 마지막까지 구조 신호를 보냈어요. 카르파티아호가 달려와 구명정의 사람들을 구했고, 공식 조사로는 약 700명이 살아남았어요."}, {"t": "런던 회의와 협약", "b": "1912년 런던 국제무선전신회의가 조난신호의 공통 주파수를 정하고, 정해진 시간마다 조난 호출을 듣게 했어요. 1914년에는 해상인명안전협약이 처음 채택됐어요."}, {"t": "GMDSS 도입", "b": "국제해상조난안전시스템은 그 협약의 1988년 개정으로 들어와 1992년부터 단계 도입, 1999년에 전면 시행됐어요. 그날부터 모스 부호가 해상에서 물러났어요."}], "remember": "GMDSS는 협약의 1988년 개정으로 들어왔어요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "타이타닉에서 GMDSS까지", "steps": [{"k": "1912년 4월", "v": "타이타닉 침몰"}, {"k": "1912년", "v": "런던 국제무선전신회의"}, {"k": "1914년", "v": "해상인명안전협약 채택"}, {"k": "1988년", "v": "협약 개정으로 GMDSS 도입"}, {"k": "1999년", "v": "전면 시행 · 모스 부호 퇴장"}]}, "ask": [null, "그 사고가 바꾼 게 있다고 들었어요. 무엇이 달라졌나요?", "그럼 지금은 어떤 규칙으로 바뀌었어요?"], "ans": ["1912년 4월 타이타닉이 침몰할 때 무선통신사 잭 필립스가 마지막까지 구조 신호를 보냈어요. 카르파티아호가 달려와 구명정의 사람들을 구했고, 공식 조사로는 약 700명이 살아남았죠.", "사고 몇 달 뒤 1912년 런던 국제무선전신회의가 조난신호의 공통 주파수를 정하고, 배가 정해진 시간마다 조난 호출을 듣도록 했어요. 1914년에는 해상인명안전협약이 처음 채택됐고요.", "지금 쓰는 국제해상조난안전시스템은 그 협약의 1988년 개정으로 들어와 1992년부터 단계 도입되고 1999년에 전면 시행됐어요. 그날부터 모스 부호가 해상에서 물러났죠."]}, "l4": {"headline": "711명이 살아남았고, 권고는 제도가 됐다", "items": [{"t": "영국 난파위원회 보고서", "b": "승선 2,201명 중 711명이 살아남았다. 카르파티아호가 구명정에서 712명을 올렸고, 정선은 침몰 1시간 45분 뒤인 4시 5분이었다."}, {"t": "권고 제20항", "b": "충분한 수의 훈련된 통신사로 밤낮 끊기지 않는 당직을 요구했다. 이 권고가 1912년 런던 회의의 공통 조난파장과 청취 의무, 1914년 최초 협약이 됐다."}, {"t": "GMDSS 도입", "b": "1988년 협약 개정으로 채택돼 1992년 2월 1일 단계 도입, 1999년 2월 1일 전면 시행됐다. 406MHz 비상위치표지를 필수로 둔다."}], "remember": "GMDSS는 1988년 SOLAS 개정으로 채택됐다.", "source": "근거 · British Wreck Commissioner's Inquiry Report (1912), 'Number of Persons Saved' · British Wreck Commissioner's Inquiry Report (1912), 'The Rescue by the S.S. Carpathia' · British Wreck Commissioner's Inquiry Report (1912), Recommendations · ITU — Overview of ITU's History · IMO — International Convention for the Safety of Life at Sea (SOLAS), 1974 · IMO — GMDSS Introduction / History · IMO — SOLAS 1974, Chapter IV 설명 · ITU World Radiocommunication Seminar 2024 — Maritime Communications (신뢰 등급 A)", "visual": {"type": "steps", "at": 2, "title": "협약에서 GMDSS까지", "steps": [{"k": "1914년", "v": "최초 해상인명안전협약"}, {"k": "1988년", "v": "협약 개정으로 채택"}, {"k": "1992년", "v": "2월 1일 단계 도입"}, {"k": "1999년", "v": "2월 1일 전면 시행"}]}, "ask": [null, "그 사고가 바꾼 게 있다고 들었어요. 무엇이 달라졌나요?", "그럼 지금은 어떤 규칙으로 바뀌었어요?"], "ans": ["영국 난파위원회 보고서 기준으로 승선 2,201명 중 711명이 살아남았어요. 카르파티아호가 구명정에서 712명을 올렸고, 정선 시각은 새벽 4시 5분으로 침몰 1시간 45분 뒤였죠.", "같은 보고서 권고 제20항이 충분한 수의 훈련된 통신사로 밤낮 끊기지 않는 당직을 요구했어요. 그 권고가 두 갈래로 흘러 1912년 런던 국제무선전신회의의 공통 조난파장과 청취 의무, 1914년 최초 해상인명안전협약이 됐고요.", "국제해상조난안전시스템은 1988년 협약 개정으로 채택돼 1992년 2월 1일 단계 도입, 1999년 2월 1일 전면 시행됐어요. 해역을 네 구간으로 나누고 406메가헤르츠 비상위치표지와 수색구조 트랜스폰더를 필수로 둡니다."]}}}, {"id": "08-aviation", "no": "08", "title": "항공무선통신과 시뮬레이터", "n": 3, "open": "바다 다음은 하늘이에요! 도슨트, 항공무선통신 코너에서는 무엇을 해볼 수 있어요?", "after": "조종석에 앉아 이륙까지 해볼 수 있다니 인기가 많겠어요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "비행기는 하늘에서도 전파로 땅과 이야기해요", "items": [{"t": "조종석 체험", "b": "진짜 조종석에 앉아서 손잡이를 당겨 비행기를 띄워 볼 수 있어요."}, {"t": "보이지 않는 실", "b": "비행기와 땅이 보이지 않는 실로 이어져 있다고 생각하면 돼요. 그 실이 전파라서 조종사는 하늘에서도 땅의 목소리를 들을 수 있어요."}, {"t": "나라들의 약속", "b": "하늘은 여러 나라가 함께 쓰는 길이라, 나라들이 모여 같은 약속을 정해 뒀어요."}], "remember": "어느 나라 하늘에서도 같은 방법으로 이야기할 수 있어요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "보이지 않는 실", "label": "그 실이 바로 전파예요"}, {"big": "같은 약속", "label": "어느 나라 하늘에서도 같은 방법"}]}, "ask": [null, "비행기는 어떻게 땅이랑 이야기하는 거예요?", "그런 규칙은 누가 정해요?"], "ans": ["진짜 조종석에 앉아서 손잡이를 당겨 비행기를 띄워 볼 수 있어요! 비행기는 하늘에서도 땅에 있는 사람과 전파로 이야기하면서 날아가거든요.", "비행기와 땅이 보이지 않는 실로 이어져 있다고 생각하면 돼요. 그 실이 전파라서, 조종사는 하늘에서도 땅의 목소리를 들을 수 있어요.", "하늘은 여러 나라가 함께 쓰는 길이라, 나라들이 모여 같은 약속을 정해 뒀어요. 그래서 어느 나라 하늘에서도 같은 방법으로 이야기할 수 있어요."]}, "l2": {"headline": "하늘의 규칙은 한 나라가 정할 수 없어요", "items": [{"t": "조종석 체험", "b": "실제 조종사 교육용 장비를 체험용으로 고친 시뮬레이터가 있어서 조종석에서 이륙까지 해 볼 수 있어요."}, {"t": "항공기의 통신 장비", "b": "관제소와 말할 무선기, 위치를 알리는 장비, 사고 때 위치를 쏘는 비상 신호기가 실려 있어요."}, {"t": "국제민간항공기구", "b": "국제민간항공기구가 표준을 정하고 각 나라가 그걸 법으로 받아 써요. 1944년 시카고 협약으로 만들어진 기구예요."}], "remember": "어느 나라 하늘을 날든 같은 방식으로 통신해야 해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "무선기", "label": "관제소와 말해요"}, {"big": "위치 장비", "label": "위치를 알려요"}, {"big": "비상 신호기", "label": "사고 때 위치를 쏴요"}]}, "ask": [null, "비행기는 어떻게 땅이랑 이야기하는 거예요?", "그런 규칙은 누가 정해요?"], "ans": ["실제 조종사 교육용 장비를 체험용으로 고친 시뮬레이터가 있어서 조종석에서 이륙까지 해 볼 수 있어요. 비행기가 관제소와 어떻게 통신하는지도 함께 볼 수 있고요.", "비행기에는 관제소와 말할 무선기, 위치를 알리는 장비, 사고 때 위치를 쏘는 비상 신호기가 실려 있어요. 어느 나라 하늘을 날든 같은 방식으로 통신해야 하거든요.", "국제민간항공기구가 표준을 정하고 각 나라가 그걸 법으로 받아 써요. 1944년 시카고 협약으로 만들어진 기구인데, 하늘의 규칙은 한 나라가 정할 수 없으니까요."]}, "l3": {"headline": "국제 표준이 우리 하늘의 법이 돼요", "items": [{"t": "조종석 체험", "b": "실제 조종사 교육용 장비를 이착륙 체험용으로 개조한 시뮬레이터가 있어요."}, {"t": "법으로 의무인 장비", "b": "관제기관과 교신할 무선전화 송수신기, 위치를 응답하는 트랜스폰더, 사고 시 위치를 알리는 비상위치표지가 법으로 의무예요. 무선기는 두 벌을 싣고요."}, {"t": "1944년 시카고 협약", "b": "이 협약으로 만들어진 국제민간항공기구(ICAO)가 부속서로 항공통신 표준을 정해요. 우리 항공안전법은 제1조에서 그 부속서를 따른다고 밝히고 있어요."}], "remember": "항공안전법 제1조가 협약 부속서를 따른다고 밝혀요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "무선전화", "label": "관제기관과 교신 · 두 벌"}, {"big": "트랜스폰더", "label": "위치를 응답해요"}, {"big": "비상위치표지", "label": "사고 시 위치를 알려요"}]}, "ask": [null, "비행기는 어떻게 땅이랑 이야기하는 거예요?", "그런 규칙은 누가 정해요?"], "ans": ["실제 조종사 교육용 장비를 이착륙 체험용으로 개조한 시뮬레이터가 있어요. 코너 안쪽에서는 항공기 어느 위치에 어떤 통신 안테나가 붙는지도 볼 수 있고요.", "항공기에는 관제기관과 교신할 무선전화 송수신기, 위치를 응답하는 트랜스폰더, 사고 시 위치를 알리는 비상위치표지가 법으로 의무예요. 무선기는 하나가 고장나도 되도록 두 벌을 싣고요.", "1944년 시카고 협약으로 만들어진 국제민간항공기구가 부속서로 항공통신 표준을 정해요. 우리 항공안전법은 제1조에서 그 부속서를 따른다고 스스로 밝히고 있고요."]}, "l4": {"headline": "ICAO 부속서 10이 통신·항법·감시를 규율한다", "items": [{"t": "시뮬레이터 · 조종면", "b": "조종사 교육용 장비를 개조한 시뮬레이터로 이륙을 체험할 수 있다. 요크가 피치와 롤을, 러더 페달이 요를 맡는다."}, {"t": "항공안전법 제51조", "b": "제51조와 시행규칙 제107조가 무선전화 송수신기 두 대와 트랜스폰더, 비상위치지시용 무선표지설비를 의무화한다."}, {"t": "시카고 협약 부속서 10", "b": "항공통신이 통신과 항법, 감시를 규율한다. 공대지 음성은 117.975~137MHz, 비상주파수는 121.5MHz이다."}], "remember": "국제 표의 숫자가 우리 시행규칙에 그대로 박혀 있다.", "source": "근거 · ICAO — Annex 10: Aeronautical Telecommunications · ICAO Doc 9718, Handbook on Radio Frequency Spectrum Requirements for Civil Aviation, Vol I, Section 7-I List of Frequency Bands · 법제처 국가법령정보센터 — 항공안전법 제1조 · 법제처 국가법령정보센터 — 항공안전법 제51조 · 법제처 국가법령정보센터 — 항공안전법 시행규칙 제107조제1항 · 법제처 국가법령정보센터 — 항공안전법 시행규칙 제107조제1항제8호·제2항 · FAA, Pilot's Handbook of Aeronautical Knowledge, Chapter 6 Flight Controls (신뢰 등급 A)", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "부속서 10", "label": "통신 · 항법 · 감시를 규율"}, {"big": "공대지 음성", "label": "117.975~137MHz"}, {"big": "비상주파수", "label": "121.5MHz"}]}, "ask": [null, "비행기는 어떻게 땅이랑 이야기하는 거예요?", "그런 규칙은 누가 정해요?"], "ans": ["조종사 교육용 장비를 개조한 시뮬레이터로 이륙을 체험할 수 있고, 항공기 통신 안테나 배치도 함께 볼 수 있어요. 조종면은 요크가 피치와 롤을, 페달이 요를 맡습니다.", "항공안전법 제51조와 시행규칙 제107조가 무선전화 송수신기 두 대와 트랜스폰더, 비상위치지시용 무선표지설비를 의무화해요. 비상표지는 121.5메가헤르츠와 406메가헤르츠로 송신하고요.", "시카고 협약 부속서 10 항공통신이 통신과 항법, 감시를 규율하고, 공대지 음성은 117.975에서 137메가헤르츠, 비상주파수는 121.5메가헤르츠예요. 국제 표의 숫자가 우리 시행규칙에 그대로 박혀 있는 셈이죠."]}}}, {"id": "09-special-exhibit", "no": "09", "title": "특별교류전시", "n": 1, "open": "특별교류전시라는 코너도 있다고 들었어요. 도슨트, 그건 어떤 코너예요?", "after": "기간마다 바뀌는 전시라 올 때마다 다르겠네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "특별 전시는 오늘과 다음에 오셨을 때가 달라요", "items": [{"t": "특별한 전시", "b": "이 코너의 물건들은 가끔씩 바뀌는 특별한 전시예요. 오늘 보이는 것과 다음에 오셨을 때 보이는 게 다를 수 있어요."}], "remember": "오늘 보이는 것과 다음에 오셨을 때 보이는 게 다를 수 있어요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "특별한 전시", "label": "가끔씩 바뀌는 물건들"}]}, "ask": [null], "ans": ["이 코너의 물건들은 가끔씩 바뀌는 특별한 전시예요. 그래서 오늘 보이는 것과 다음에 오셨을 때 보이는 게 다를 수 있답니다."]}, "l2": {"headline": "일정 기간만 여는 교류 전시예요", "items": [{"t": "특별교류전시", "b": "다른 기관과 교류해서 일정 기간만 여는 전시 공간이에요. 지금 무엇이 있는지는 눈앞에 보이는 것을 보는 게 정확해요."}], "remember": "지금 무엇이 있는지는 눈앞에 보이는 것을 보고 확인해요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "일정 기간", "label": "다른 기관과 교류해서 여는 전시"}]}, "ask": [null], "ans": ["다른 기관과 교류해서 일정 기간만 여는 전시 공간이에요. 그래서 지금 무엇이 있는지는 눈앞에 보이는 것을 보고 말씀드리는 게 정확해요."]}, "l3": {"headline": "유관기관과 교류해 일정 기간 선보이는 전시예요", "items": [{"t": "유관기관 교류 전시", "b": "유관기관과 교류해 특별 전시품을 일정 기간 선보이는 공간이에요. 전시품과 기간은 그때그때 달라져요."}], "remember": "지금 보고 계신 것을 중심으로 봐 주세요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "일정 기간", "label": "유관기관과 교류하는 특별 전시"}]}, "ask": [null], "ans": ["유관기관과 교류해 특별 전시품을 일정 기간 선보이는 공간이에요. 전시품과 기간은 그때그때 달라지니, 지금 보고 계신 것을 중심으로 봐 주시면 좋겠어요."]}, "l4": {"headline": "상설전시와 달리 기간 한정이라 소장·대여 주체가 갈린다", "items": [{"t": "기간 한정 전시", "b": "상설전시와 달리 기간 한정이라 소장과 대여의 주체가 갈린다. 전시품 목록과 교류 기관은 시기마다 달라진다."}], "remember": "지금 놓인 실물을 기준으로 보는 것이 맞다.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "기간 한정", "label": "소장과 대여의 주체가 갈린다"}]}, "ask": [null], "ans": ["상설전시와 달리 기간 한정이라 소장과 대여의 주체가 갈리는 공간이에요. 그래서 전시품 목록과 교류 기관은 시기마다 달라지고, 지금 놓인 실물을 기준으로 보시는 게 맞습니다."]}}}, {"id": "10-ham", "no": "10", "title": "아마추어 무선통신 (HAM)", "n": 3, "open": "이번엔 취미로 즐기는 무선통신, 아마추어 무선이에요. 도슨트, 햄이 뭐예요?", "after": "취미가 재난 때는 통신망이 된다는 게 멋지네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "햄은 재미로 무선 이야기를 나누는 사람들이에요", "items": [{"t": "햄", "b": "돈을 벌려고가 아니라 재미있어서, 무선으로 멀리 있는 사람과 이야기를 나누는 사람들이에요."}, {"t": "먼저 확인하고 쓰기", "b": "전파는 모두가 나눠 쓰는 거라서, 아무나 마음대로 쓰면 서로 방해가 돼요. 그래서 잘 쓸 수 있는지 먼저 확인해요."}, {"t": "큰일이 났을 때", "b": "전화나 인터넷이 끊기는 큰일이 났을 때, 그 사람들의 무선이 대신 소식을 전해 줄 수 있어요."}], "remember": "취미가 이웃을 돕는 일이 되기도 해요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "햄", "label": "재미로 무선 이야기를 나누는 사람들"}]}, "ask": [null, "아, 그렇군요. 그런데 취미인데 왜 자격시험까지 봐야 해요?", "그럼 이 취미가 실제로 쓸모 있을 때도 있어요?"], "ans": ["돈을 벌려고가 아니라 그냥 재미있어서, 무선으로 멀리 있는 사람과 이야기를 나누는 사람들이 있어요. 그 사람들을 햄이라고 부른답니다.", "전파는 모두가 나눠 쓰는 거라서, 아무나 마음대로 쓰면 서로 방해가 되거든요. 그래서 잘 쓸 수 있는지 먼저 확인하고 쓰게 해요.", "전화나 인터넷이 끊기는 큰일이 났을 때, 그 사람들의 무선이 대신 소식을 전해 줄 수 있어요. 취미가 이웃을 돕는 일이 되는 거죠."]}, "l2": {"headline": "취미 무선도 자격을 확인하고 허가한 뒤에 쓸 수 있어요", "items": [{"t": "아마추어 무선과 햄", "b": "돈벌이가 아니라 스스로 익히고 기술을 시험해 보려고 하는 무선통신이에요. 그런 무선을 즐기는 사람들을 햄이라고 불러요."}, {"t": "자격 확인", "b": "전파는 남과 나눠 쓰는 자원이라 나라가 자격을 확인하고 허가한 뒤에야 쓸 수 있어요. 시험은 방해 없이 제대로 쓰라는 약속이에요."}, {"t": "비상시의 통신망", "b": "재난으로 통신망이 끊길 때를 대비하도록 국제 규칙이 각국에 권장해요. 평소의 취미가 비상시에는 통신망이 되기도 해요."}], "remember": "전파는 나눠 쓰는 자원이라 자격을 확인한 뒤에 써요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "햄", "label": "아마추어 무선을 즐기는 사람들"}]}, "ask": [null, "아, 그렇군요. 그런데 취미인데 왜 자격시험까지 봐야 해요?", "그럼 이 취미가 실제로 쓸모 있을 때도 있어요?"], "ans": ["돈벌이가 아니라 스스로 익히고 기술을 시험해 보려고 하는 무선통신이 아마추어 무선이에요. 그런 무선을 즐기는 사람들을 햄이라고 부르고요.", "전파는 남과 나눠 쓰는 자원이라 나라가 자격을 확인하고 허가한 뒤에야 쓸 수 있어요. 시험은 방해 없이 제대로 쓰라는 약속인 셈이죠.", "재난으로 통신망이 끊길 때를 대비하도록 국제 규칙이 각국에 권장하고 있어요. 그래서 평소의 취미가 비상시에는 통신망이 되기도 해요."]}, "l3": {"headline": "금전적 이익 없는 무선이, 통신망이 끊기면 비상망이 돼요", "items": [{"t": "아마추어업무와 햄", "b": "국제전기통신연합은 금전적 이익 없이 개인적 관심에서 하는 자기훈련과 상호통신, 기술연구라고 정의해요. 그런 무선을 즐기는 사람이 햄이에요."}, {"t": "무선설비·무선국·무선종사자", "b": "전파를 보내거나 받는 시설이 무선설비, 그 설비와 조작하는 사람을 합쳐 무선국이에요. 자격을 받은 사람이 무선종사자예요."}, {"t": "재난구호 대비", "b": "국제 규칙이 아마추어국을 재난구호 통신에 대비시키도록 각국에 권장해요. 평소엔 취미지만 통신망이 끊기면 실제 비상망이 돼요."}], "remember": "평소엔 취미지만, 통신망이 끊기면 비상망이 돼요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "전파법의 세 낱말", "steps": [{"k": "무선설비", "v": "전파를 보내거나 받는 시설"}, {"k": "무선국", "v": "설비와 조작하는 사람"}, {"k": "무선종사자", "v": "자격을 받은 사람"}]}, "ask": [null, "아, 그렇군요. 그런데 취미인데 왜 자격시험까지 봐야 해요?", "그럼 이 취미가 실제로 쓸모 있을 때도 있어요?"], "ans": ["국제전기통신연합은 아마추어업무를 금전적 이익 없이 개인적 관심에서 하는 자기훈련과 상호통신, 기술연구라고 정의해요. 그런 무선을 즐기는 사람을 햄이라고 부르고요.", "전파법이 무선설비와 무선국, 무선종사자를 나눠 규정하고 있어요. 전파를 보내거나 받는 시설이 무선설비, 그 설비와 조작하는 사람을 합쳐 무선국, 자격을 받은 사람이 무선종사자예요.", "국제 규칙이 아마추어국을 재난구호 통신에 대비시키도록 각국에 권장하고 있어요. 그래서 평소엔 취미지만, 통신망이 끊긴 상황에서는 실제 비상망이 되죠."]}, "l4": {"headline": "금전적 이익 없는 무선이 제도 안에서 비상망이 된다", "items": [{"t": "전파규칙 제1.56조", "b": "아마추어업무를 금전적 이익 없는 자기훈련, 상호통신, 기술연구로 정의한다. 영리 목적이 아니라는 점이 핵심이고, 운용 규칙은 제25조가 따로 둔다."}, {"t": "자격검정과 네 등급", "b": "제25.6조가 각국에 자격 검증 의무를 지운다. 국내는 전파법 제70조의 자격검정과 시행령 별표 17의 네 등급이 있고, 검정은 한국방송통신전파진흥원에 위탁된다."}, {"t": "재난구호 대비", "b": "제25.9A조가 재난구호 대비를 권장하고, 제25.3조는 제3자 대리 국제통신을 비상과 재난구호에 한정한다. 취미 무선국이 제도 안에서 비상망이 된다."}], "remember": "핵심은 영리 목적이 아니라는 점이고, 자격 검증은 각국의 의무다.", "source": "근거 · Recommendation ITU-R M.1544-1 (09/2015) considering a) 가 RR No. 1.56 을 직접 인용 — · ITU RR Article 25 전문 (ANCOM 게재본) — · ITU RR Article 25, Nos. 25.2 / 25.2A / 25.3 · ITU RR Article 25, No. 25.9A · ITU RR Article 25, No. 25.7 · 전파법 시행령 별표 17 '무선종사자의 자격종목 및 자격종목별 종사범위' (제115조 관련, 개정 2016-06-21) — 법제처 · 전파법 제78조제2항 (신뢰 등급 A)", "visual": {"type": "steps", "at": 1, "title": "등급별 안테나공급전력 상한", "steps": [{"k": "제1급", "v": "1kW 이하"}, {"k": "제2급", "v": "200W 이하"}, {"k": "제3급", "v": "100W 이하 (주파수 조건)"}, {"k": "제4급", "v": "10W 이하 (30MHz 이상)"}]}, "ask": [null, "아, 그렇군요. 그런데 취미인데 왜 자격시험까지 봐야 해요?", "그럼 이 취미가 실제로 쓸모 있을 때도 있어요?"], "ans": ["국제 전파규칙 제1.56조가 아마추어업무를 금전적 이익 없는 자기훈련, 상호통신, 기술연구로 정의해요. 영리 목적이 아니라는 점이 정의의 핵심이고, 운용 규칙은 전파규칙 제25조가 따로 둡니다.", "전파규칙 제25.6조가 각국에 자격 검증 의무를 지우고, 출력 상한은 제25.7조에 따라 각국이 정해요. 우리는 전파법 제70조의 자격검정과 시행령 별표 17의 네 등급이 있고, 검정 업무는 한국방송통신전파진흥원에 위탁돼 있습니다.", "전파규칙 제25.9A조가 재난구호 대비를 권장하고, 제25.3조는 제3자 대리 국제통신을 비상과 재난구호에 한정해요. 취미로 운영되는 무선국이 제도 안에서 비상망으로 자리 잡은 셈입니다."]}}}, {"id": "11-iot", "no": "11", "title": "사물인터넷", "n": 3, "open": "다음 주제는 사물인터넷이에요. 도슨트, 사물인터넷이 뭐예요?", "after": "물건들끼리 서로 말을 걸다니 신기하네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "물건들이 인터넷으로 연결돼 서로 말을 걸어요", "items": [{"t": "사물인터넷", "b": "전등이나 시계, 자동차 같은 물건들이 인터넷으로 서로 연결돼서, 물건들끼리 서로 말을 걸 수 있어요."}, {"t": "멀리서 켜고 끄기", "b": "멀리 있어도 물건을 켜고 끄고, 지금 어떤지 알 수 있어요. 집에 가지 않아도 전등을 끌 수 있어요."}, {"t": "많은 물건 연결", "b": "5세대 이동통신은 한꺼번에 아주 많은 물건을 연결할 수 있게 만들어졌어요. 앞으로 더 많은 물건이 서로 이야기하게 될 거예요."}], "remember": "멀리 있어도 물건을 켜고 끄고, 지금 어떤지 알 수 있어요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "말을 걸어요", "label": "인터넷으로 연결된 물건들"}]}, "ask": [null, "아, 그렇군요. 그럼 우리한테 뭐가 좋아지는 거예요?", "5세대 이동통신이랑도 관계가 있어요?"], "ans": ["전등이나 시계, 자동차 같은 물건들이 인터넷으로 서로 연결된 거예요. 그래서 물건들끼리 서로 말을 걸 수 있게 됐답니다.", "멀리 있어도 물건을 켜고 끄고, 지금 어떤지 알 수 있어요. 집에 가지 않아도 전등을 끌 수 있는 거죠.", "네, 5세대 이동통신은 한꺼번에 아주 많은 물건을 연결할 수 있게 만들어졌어요. 그래서 앞으로 더 많은 물건이 서로 이야기하게 될 거예요."]}, "l2": {"headline": "사물이 스스로 상태를 알리는 게 사물인터넷이에요", "items": [{"t": "사물인터넷", "b": "사물에 통신 기능을 붙여 서로 연결하고, 모인 정보로 서비스를 만들어요. 물건이 인터넷에 접속하는 셈이에요."}, {"t": "스스로 알리는 사물", "b": "사람이 일일이 입력하지 않아도 사물이 스스로 상태를 알려요. 그래서 멀리서도 켜고 끄거나 상태를 확인할 수 있어요."}, {"t": "5세대의 역할", "b": "5세대는 기기를 훨씬 많이, 훨씬 빠른 응답으로 연결할 수 있게 설계된 세대예요. 다만 5세대가 됐다고 뭐든 저절로 되는 건 아니에요."}], "remember": "5세대가 됐다고 뭐든 저절로 되는 건 아니에요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "스스로 알림", "label": "입력하지 않아도 사물이 상태를 알려요"}]}, "ask": [null, "아, 그렇군요. 그럼 우리한테 뭐가 좋아지는 거예요?", "5세대 이동통신이랑도 관계가 있어요?"], "ans": ["사물에 통신 기능을 붙여 서로 연결하고, 거기서 모인 정보로 서비스를 만드는 걸 사물인터넷이라고 해요. 물건이 인터넷에 접속하는 셈이죠.", "사람이 일일이 입력하지 않아도 사물이 스스로 상태를 알린다는 게 가장 큰 차이예요. 그래서 멀리서도 켜고 끄거나 상태를 확인할 수 있고요.", "5세대는 기기를 훨씬 많이, 훨씬 빠른 응답으로 연결할 수 있게 설계된 세대예요. 다만 5세대가 됐다고 뭐든 저절로 되는 건 아니고요."]}, "l3": {"headline": "사물인터넷은 사물을 잇는 글로벌 인프라예요", "items": [{"t": "국제 표준의 정의", "b": "사물을 서로 연결해 진보된 서비스를 가능하게 하는 글로벌 인프라예요. 사물은 물리적인 것뿐 아니라 가상의 것도 포함해요."}, {"t": "스스로 알리는 사물", "b": "사람이 하나하나 확인하지 않아도 사물이 스스로 상태를 알려 줘요. 그 정보를 모아 관리하거나 자동으로 반응하게 만들 수도 있어요."}, {"t": "5세대의 성능 목표", "b": "5세대는 1제곱킬로미터에 백만 대 규모로 연결하고 밀리초 단위로 응답하는 걸 목표로 설계됐어요. 이건 성능 목표이지 자율주행의 달성을 뜻하진 않아요."}], "remember": "5세대는 성능 목표일 뿐, 자율주행의 달성을 뜻하진 않아요.", "source": "", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "백만 대", "label": "1제곱킬로미터에 연결하는 목표 규모"}, {"big": "밀리초", "label": "응답 속도 목표의 단위"}]}, "ask": [null, "아, 그렇군요. 그럼 우리한테 뭐가 좋아지는 거예요?", "5세대 이동통신이랑도 관계가 있어요?"], "ans": ["국제 표준에서는 사물을 서로 연결해 진보된 서비스를 가능하게 하는 글로벌 인프라라고 정의해요. 이때 사물은 물리적인 것뿐 아니라 가상의 것도 포함하고요.", "사람이 하나하나 확인하지 않아도 사물이 스스로 상태를 알려 준다는 점이에요. 그 정보를 모아 관리하거나 자동으로 반응하게 만들 수도 있고요.", "5세대는 사물을 훨씬 촘촘하게, 1제곱킬로미터에 백만 대 규모로 연결하고 응답도 밀리초 단위로 빠르게 하는 걸 목표로 설계됐어요. 다만 그건 성능 목표이지 자율주행의 달성을 뜻하진 않고요."]}, "l4": {"headline": "사물인터넷은 정보사회를 위한 글로벌 인프라다", "items": [{"t": "ITU-T Y.4000 정의", "b": "사물인터넷을 정보사회를 위한 글로벌 인프라로 정의한다. 물리적 사물과 가상 사물을 구분하고, 기기는 통신 기능을 가진 장치로 따로 규정한다."}, {"t": "사물이 출발점", "b": "사람의 개입 없이 사물이 상태를 보고하고 제어되는 구조다. 표준은 이를 사물 간 통신과 그 위의 서비스 계층으로 나눠 규정한다."}, {"t": "5세대 요구조건", "b": "대규모 기기 연결과 초저지연이 사물인터넷에 대응한다. 연결밀도 1제곱킬로미터당 백만 대, 사용자평면 지연 1밀리초는 무부하 단일 사용자 가정의 무선 구간 값이다."}], "remember": "수치는 조건과 함께 읽는 성능 목표이지, 응용의 달성이 아니다.", "source": "근거 · ITU-T Recommendation Y.4000/Y.2060 (06/2012) — Overview of the Internet of things. · ITU-T Y.4000/Y.2060 (06/2012) — 용어 정의 · Report ITU-R M.2410-0 (11/2017) — Minimum requirements related to technical performance for IMT-2020 radio interface(s). · Report ITU-R M.2410-0 §4.8 Connection density · Report ITU-R M.2410-0 §4.7.1 User plane latency (신뢰 등급 A)", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "백만 대", "label": "1제곱킬로미터당 · mMTC 평가용"}, {"big": "1밀리초", "label": "URLLC 지연 · 무부하 무선 구간 편도"}]}, "ask": [null, "아, 그렇군요. 그럼 우리한테 뭐가 좋아지는 거예요?", "5세대 이동통신이랑도 관계가 있어요?"], "ans": ["국제 표준 ITU-T Y.4000이 사물인터넷을 정보사회를 위한 글로벌 인프라로 정의해요. 물리적 사물과 가상 사물을 구분하고, 기기는 통신 기능을 가진 장치로 따로 규정합니다.", "사람의 개입 없이 사물이 상태를 보고하고 제어되는 구조라는 점이에요. 표준도 이를 사물 간 통신과 그 위의 서비스 계층으로 나눠 규정하고요. 사람이 아니라 사물이 데이터의 출발점이 되는 셈입니다.", "5세대 요구조건 가운데 사물인터넷에 대응하는 건 대규모 기기 연결과 초저지연이에요. 연결밀도 1제곱킬로미터당 백만 대, 사용자평면 지연 1밀리초인데, 무부하 단일 사용자 가정의 무선 구간 값이라는 조건이 붙습니다."]}}}, {"id": "12-multimedia", "no": "12", "title": "KCA 멀티미디어실", "n": 2, "open": "한국방송통신전파진흥원이 방송 콘텐츠도 지원한다고 하던데요. 도슨트, 멀티미디어실에서는 뭘 볼 수 있어요?", "after": "전파를 관리하는 일만 하는 게 아니었군요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "멀티미디어실은 방송 프로그램을 볼 수 있는 곳이에요", "items": [{"t": "방송 보는 곳", "b": "방송 프로그램을 직접 볼 수 있는 곳이에요. 어떤 걸 볼 수 있는지는 화면에서 골라 보시면 돼요."}, {"t": "전파와 방송", "b": "전파를 돌보는 일만 하는 게 아니라 방송을 만드는 일도 도와줘요. 전파 위에 실려 오는 게 바로 방송이니까요."}], "remember": "전파 위에 실려 오는 게 바로 방송이에요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "방송", "label": "전파 위에 실려 오는 것"}]}, "ask": [null, "전파를 관리하는 기관이 방송 프로그램까지 돕는 거예요?"], "ans": ["방송 프로그램을 직접 볼 수 있는 곳이에요. 어떤 걸 볼 수 있는지는 화면에서 골라 보시면 돼요.", "네, 전파를 돌보는 일만 하는 게 아니라 방송을 만드는 일도 도와줘요. 전파 위에 실려 오는 게 바로 방송이니까요."]}, "l2": {"headline": "전파는 길이고, 방송은 그 길 위를 달려요", "items": [{"t": "방송 콘텐츠 공간", "b": "방송 콘텐츠를 볼 수 있는 공간이에요. 전파를 관리하는 일만 하는 게 아니라, 그 위에 실리는 방송 콘텐츠 제작도 돕고 있어요."}, {"t": "전파와 방송", "b": "전파는 길이고 방송은 그 길 위를 달리는 셈이라 둘이 이어져 있어요. 그래서 길을 관리하는 곳이 콘텐츠 제작도 돕는 거예요."}], "remember": "길을 관리하는 곳이 그 위에 실리는 콘텐츠 제작도 도와요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "전파는 길", "label": "방송은 그 길 위를 달려요"}]}, "ask": [null, "전파를 관리하는 기관이 방송 프로그램까지 돕는 거예요?"], "ans": ["방송 콘텐츠를 볼 수 있는 공간이에요. 전파를 관리하는 일만 하는 게 아니라, 그 위에 실리는 방송 콘텐츠 제작도 돕고 있거든요.", "네, 전파는 길이고 방송은 그 길 위를 달리는 셈이라 둘이 이어져 있어요. 그래서 길을 관리하는 곳이 그 위에 실리는 콘텐츠 제작도 돕는 거죠."]}, "l3": {"headline": "전파 관리와 방송통신 진흥을 함께 맡고 있어요", "items": [{"t": "멀티미디어실", "b": "방송통신 진흥과 관련된 콘텐츠를 볼 수 있는 공간이에요. 한국방송통신전파진흥원이 제작 지원 사업도 하고 있어서, 그 결과물을 함께 소개해요."}, {"t": "진흥 사업", "b": "한국방송통신전파진흥원은 전파 관리와 함께 방송통신 진흥도 맡고 있어요. 콘텐츠 제작 지원은 그 진흥 사업 가운데 하나예요."}], "remember": "콘텐츠 제작 지원은 방송통신 진흥 사업 가운데 하나예요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "KCA", "label": "한국방송통신전파진흥원"}, {"big": "제작 지원", "label": "진흥 사업 가운데 하나"}]}, "ask": [null, "전파를 관리하는 기관이 방송 프로그램까지 돕는 거예요?"], "ans": ["방송통신 진흥과 관련된 콘텐츠를 볼 수 있는 공간이에요. 한국방송통신전파진흥원이 제작 지원 사업도 하고 있어서, 그 결과물을 함께 소개하는 자리죠.", "네, 한국방송통신전파진흥원은 전파 관리와 함께 방송통신 진흥도 맡고 있어요. 콘텐츠 제작 지원은 그 진흥 사업 가운데 하나고요."]}, "l4": {"headline": "전파법 제66조가 정한 진흥 사업이 이 공간의 배경이다", "items": [{"t": "진흥 사업의 결과물", "b": "방송통신 진흥 사업의 결과물을 보여 주는 공간이다. 전파법 제66조가 정한 진흥 사업과 방송통신발전기금 운용이 배경이다."}, {"t": "진흥 사업의 한 갈래", "b": "전파법 제66조가 정한 진흥 사업의 한 갈래이다. 방송통신발전기금을 운용해 콘텐츠 제작을 지원하는 구조이다."}], "remember": "전파 관리와 진흥이 한 기관 안에 함께 있다.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "제66조", "label": "전파법이 정한 진흥 사업"}, {"big": "기금 운용", "label": "방송통신발전기금"}]}, "ask": [null, "전파를 관리하는 기관이 방송 프로그램까지 돕는 거예요?"], "ans": ["방송통신 진흥 사업의 결과물을 보여 주는 공간이에요. 전파법 제66조가 정한 진흥 사업과 방송통신발전기금 운용이 이 공간의 배경이고요. 구체적인 지원작은 확인 전이라 말씀드리기 어렵습니다.", "전파법 제66조가 정한 진흥 사업의 한 갈래라고 보시면 돼요. 방송통신발전기금을 운용해 콘텐츠 제작을 지원하는 구조이고, 전파 관리와 진흥이 한 기관 안에 함께 있는 셈입니다."]}}}, {"id": "13-chromakey", "no": "13", "title": "크로마키 체험", "n": 2, "open": "크로마키 체험 코너 이야기도 해 볼까요? 도슨트, 크로마키가 뭐예요?", "after": "가만히 서 있어도 다른 곳에 간 것처럼 보이는 거네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "초록색만 쏙 빼고 다른 그림을 넣는 기술이에요", "items": [{"t": "크로마키", "b": "초록색 천 앞에 서면 그 초록색만 쏙 빼고 다른 그림을 넣을 수 있어요. 가만히 서 있어도 다른 곳에 간 것처럼 보여요."}, {"t": "쓰이는 곳", "b": "날씨를 알려 주는 방송이나 영화에서 많이 써요. 기상 캐스터 뒤에 지도가 나오는 것도 이 기술이에요."}], "remember": "가만히 서 있어도 다른 곳에 간 것처럼 보여요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "초록색 천", "label": "초록색만 쏙 빼고 다른 그림을 넣어요"}]}, "ask": [null, "그럼 어디에 쓰여요?"], "ans": ["초록색 천 앞에 서면 그 초록색만 쏙 빼고 다른 그림을 넣을 수 있는 기술이에요. 가만히 서 있어도 다른 곳에 간 것처럼 보이죠.", "날씨를 알려 주는 방송이나 영화에서 많이 써요. 기상 캐스터 뒤에 지도가 나오는 것도 이 기술이랍니다."]}, "l2": {"headline": "특정 색을 투명하게 만들고 다른 영상을 합성해요", "items": [{"t": "크로마키 기법", "b": "특정 색을 골라내 투명하게 만들고, 그 자리에 다른 영상을 합성하는 기법이에요. 그래서 초록 천 앞에 서면 배경만 쏙 바뀌어요."}, {"t": "쓰이는 곳", "b": "날씨예보나 영화에서 많이 쓰여요. 실제로는 아무것도 없는 천 앞에 서 있는데 화면에는 다른 배경이 보여요."}], "remember": "실제로는 천 앞에 서 있는데 화면에는 다른 배경이 보여요.", "source": "", "visual": {"type": "steps", "at": 0, "steps": [{"k": "고르기", "v": "특정 색을 골라내요"}, {"k": "투명", "v": "그 색을 투명하게 만들어요"}, {"k": "합성", "v": "그 자리에 다른 영상을 넣어요"}]}, "ask": [null, "그럼 어디에 쓰여요?"], "ans": ["특정 색을 골라내 투명하게 만들고, 그 자리에 다른 영상을 합성하는 기법이에요. 그래서 초록 천 앞에 서면 배경만 쏙 바뀌는 거죠.", "날씨예보나 영화에서 많이 쓰여요. 실제로는 아무것도 없는 천 앞에 서 있는데 화면에는 다른 배경이 보이는 거죠."]}, "l3": {"headline": "같은 자리에서 전혀 다른 장면을 만들 수 있어요", "items": [{"t": "크로마키 합성", "b": "다른 카메라로 찍은 배경 위에 전경을 합성하는 기법이에요. 특정 색을 골라 투명하게 만든 뒤 그 자리에 다른 화면을 넣어요."}, {"t": "쓰이는 곳", "b": "뉴스 날씨예보나 공상과학 영화에서 많이 쓰여요. 촬영장에는 초록 천만 있고 배경은 나중에 합성해 넣어요."}], "remember": "같은 자리에서 전혀 다른 장면을 만들 수 있어요.", "source": "", "visual": {"type": "steps", "at": 0, "steps": [{"k": "고르기", "v": "특정 색을 골라요"}, {"k": "투명", "v": "골라낸 색을 투명하게"}, {"k": "합성", "v": "그 자리에 다른 화면을 넣어요"}]}, "ask": [null, "그럼 어디에 쓰여요?"], "ans": ["다른 카메라로 찍은 배경 위에 전경을 합성하는 기법이에요. 특정 색을 골라 투명하게 만든 뒤 그 자리에 다른 화면을 넣는 방식이고요.", "뉴스 날씨예보나 공상과학 영화에서 많이 쓰여요. 촬영장에는 초록 천만 있고 배경은 나중에 합성해 넣는데, 덕분에 같은 자리에서 전혀 다른 장면을 만들 수 있죠."]}, "l4": {"headline": "색상 키잉으로 특정 색 영역을 투명하게 처리해 합성한다", "items": [{"t": "색상 키잉", "b": "색상 키잉으로 특정 색 영역을 투명하게 처리하고 그 자리에 다른 영상을 합성한다. 전경과 배경을 따로 촬영해 합치는 구조이다."}, {"t": "방송과 영화", "b": "방송 날씨예보와 영화 시각효과에서 널리 쓰인다. 배경을 따로 만들어 합성하므로 촬영이 끝난 뒤에도 장면을 바꿀 수 있다."}], "remember": "전경과 배경을 따로 촬영해 합치므로 배경을 바꿔 끼우기가 자유롭다.", "source": "", "visual": {"type": "steps", "at": 0, "steps": [{"k": "촬영", "v": "전경과 배경을 따로 촬영"}, {"k": "키잉", "v": "특정 색 영역을 투명 처리"}, {"k": "합성", "v": "그 자리에 다른 영상을 합성"}]}, "ask": [null, "그럼 어디에 쓰여요?"], "ans": ["색상 키잉으로 특정 색 영역을 투명하게 처리하고 그 자리에 다른 영상을 합성하는 기법이에요. 전경과 배경을 따로 촬영해 합치는 구조라, 배경을 바꿔 끼우기가 자유롭습니다.", "방송 날씨예보와 영화 시각효과에서 널리 쓰입니다. 전경만 촬영하고 배경을 따로 만들어 합성하니 배경 교체가 자유롭고, 촬영이 끝난 뒤에도 장면을 바꿀 수 있고요."]}}}, {"id": "14-mobile", "no": "14", "title": "이동통신", "n": 3, "open": "이번 주제는 휴대폰의 발전, 이동통신이에요. 도슨트, 맨 처음 휴대폰은 어떻게 생겼어요?", "after": "카폰 한 대가 자동차 한 대보다 비쌌다니 놀랍네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "전화기는 점점 작아지고 더 많은 걸 주고받게 됐어요", "items": [{"t": "처음 전화기", "b": "맨 처음 전화기는 들고 다닐 수 없어서 자동차에 싣고 다녔어요. 그게 자동차 한 대보다 비쌌대요."}, {"t": "작아진 전화기", "b": "점점 작아져서 손에 들고 다닐 수 있게 됐어요. 목소리만 주고받다가 글자도 보내고, 나중엔 얼굴까지 보면서 이야기해요."}, {"t": "지금의 전화", "b": "지금은 훨씬 빠르고, 한꺼번에 아주 많은 기기를 연결할 수 있어요. 영상도 끊기지 않고 볼 수 있어요."}], "remember": "처음엔 자동차에 싣고 다녔는데 지금은 손에 들고 다녀요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "주고받는 것이 늘어났어요", "steps": [{"k": "목소리", "v": "목소리만 주고받았어요"}, {"k": "글자", "v": "글자도 보냈어요"}, {"k": "얼굴", "v": "얼굴까지 보면서 이야기해요"}]}, "ask": [null, "아, 그렇군요. 그 뒤로는 뭐가 달라졌어요?", "그럼 지금 쓰는 5세대는 뭐가 다른 거예요?"], "ans": ["맨 처음 전화기는 들고 다닐 수 없어서 자동차에 싣고 다녔어요. 그게 자동차 한 대보다 비쌌대요!", "점점 작아져서 손에 들고 다닐 수 있게 됐어요. 목소리만 주고받다가 글자도 보내고, 나중엔 얼굴까지 보면서 이야기하게 됐답니다.", "지금은 훨씬 빠르고, 한꺼번에 아주 많은 기기를 연결할 수 있어요. 영상도 끊기지 않고 볼 수 있게 됐죠."]}, "l2": {"headline": "처음엔 차에 싣고 다니는 카폰, 지금은 5세대예요", "items": [{"t": "카폰", "b": "처음엔 차에 싣고 다니는 카폰이었어요. 국내 기준으로 1984년에 시작됐고, 자동차 한 대 값보다 비쌌어요."}, {"t": "2세대부터 4세대", "b": "2세대에서 디지털로 바뀌어 음성과 문자를, 3세대에선 영상통화를, 4세대 LTE부터 데이터를 쓰게 됐어요. 국내 기준 1996년과 2011년이 시작이에요."}, {"t": "5세대", "b": "기기를 훨씬 많이, 훨씬 빠른 응답으로 연결할 수 있게 설계됐어요. 국내에서는 2019년에 시작됐어요."}], "remember": "음성과 문자에서 영상통화와 데이터까지, 연도는 국내 기준이에요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "국내 기준 세대별 변화", "steps": [{"k": "카폰", "v": "1984년 · 차에 싣는 전화"}, {"k": "2세대", "v": "1996년 · 음성과 문자"}, {"k": "3세대", "v": "영상통화"}, {"k": "4세대", "v": "2011년 · LTE 데이터"}, {"k": "5세대", "v": "2019년 · 많은 기기 연결"}]}, "ask": [null, "아, 그렇군요. 그 뒤로는 뭐가 달라졌어요?", "그럼 지금 쓰는 5세대는 뭐가 다른 거예요?"], "ans": ["처음엔 차에 싣고 다니는 카폰이었어요. 국내 기준으로 1984년에 시작됐는데, 자동차 한 대 값보다 비쌌죠.", "2세대에서 디지털로 바뀌어 음성과 문자를 쓰게 됐어요. 3세대에선 영상통화가, 4세대 LTE부터 데이터가 가능해졌죠. 국내 기준 1996년과 2011년이 시작이고요.", "5세대는 기기를 훨씬 많이, 훨씬 빠른 응답으로 연결할 수 있게 설계됐어요. 국내에서는 2019년에 시작됐고요."]}, "l3": {"headline": "차량전화에서 스마트폰 기반 5G까지 이어졌어요", "items": [{"t": "1984년 차량전화", "b": "국내 1세대는 1984년 차량전화로 시작했어요. 총비용이 약 400만 원이라 당시 승용차보다 비쌌어요."}, {"t": "CDMA에서 LTE로", "b": "1996년 국내에서 CDMA 방식 디지털 이동통신이 상용화됐어요. 2000년대 초 3세대에서 영상통화가, 2011년 국내에서 LTE가 상용화됐어요."}, {"t": "스마트폰 기반 5G", "b": "2019년 4월 대한민국이 스마트폰 기반 5G를 세계 최초로 상용화했어요. 속도는 이론상 최대 기준으로 4세대보다 훨씬 빨라요."}], "remember": "5G 속도는 이론상 최대 기준이고, 세계 최초는 스마트폰 기반이에요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "연도별 이동통신", "steps": [{"k": "1984년", "v": "국내 차량전화"}, {"k": "1996년", "v": "국내 CDMA 상용화"}, {"k": "2000년대 초", "v": "3세대 영상통화"}, {"k": "2011년", "v": "국내 LTE 상용화"}, {"k": "2019년", "v": "스마트폰 기반 5G 상용화"}]}, "ask": [null, "아, 그렇군요. 그 뒤로는 뭐가 달라졌어요?", "그럼 지금 쓰는 5세대는 뭐가 다른 거예요?"], "ans": ["국내 1세대는 1984년 차량전화로 시작했어요. 들고 다니는 게 아니라 차에 싣는 전화였는데, 총비용이 약 400만 원이라 당시 승용차보다 비쌌고요.", "1996년 국내에서 CDMA 방식 디지털 이동통신이 상용화됐어요. 2000년대 초 3세대에서 영상통화가 가능해졌고, 2011년에는 국내에서 LTE가 상용화됐죠.", "2019년 4월 대한민국이 스마트폰 기반 5G를 세계 최초로 상용화했어요. 속도는 이론상 최대 기준으로 4세대보다 훨씬 빠르고, 응답도 짧아졌고요."]}, "l4": {"headline": "차량전화에서 스마트폰 기반 세계 최초 5G까지", "items": [{"t": "1984년 차량전화", "b": "국내 1세대는 1984년 차량전화로 시작했다. 총비용 약 400만 원으로, 포니2의 347만 원보다 비쌌다."}, {"t": "CDMA에서 LTE로", "b": "1996년 CDMA를 상용화했다. 국내 4세대는 2011년 7월 LTE이나, IMT-Advanced 공식 지정은 LTE-Advanced뿐이다."}, {"t": "5G 상용화", "b": "2019년 4월 3일 스마트폰 기반 5G가 세계 최초로 상용화됐다. 20배는 하향 피크 20기가비트와 4세대 피크 1기가비트의 비다."}], "remember": "‘20배’는 이론 최대값의 비교이지 체감 속도의 비가 아니다.", "source": "근거 · 서울생활사박물관 · ETRI · 정책브리핑(과기정통부) · Report ITU-R M.2410-0 · Report ITU-R M.2134 (신뢰 등급 C)", "visual": {"type": "steps", "at": 1, "title": "이동통신 연표", "steps": [{"k": "1984년", "v": "국내 차량전화"}, {"k": "1996년", "v": "CDMA 상용화"}, {"k": "2003년 12월", "v": "국내 3세대 W-CDMA"}, {"k": "2011년 7월", "v": "국내 4세대 LTE"}, {"k": "2019년 4월", "v": "스마트폰 기반 세계 최초 5G"}]}, "ask": [null, "아, 그렇군요. 그 뒤로는 뭐가 달라졌어요?", "그럼 지금 쓰는 5세대는 뭐가 다른 거예요?"], "ans": ["국내 1세대는 1984년 차량전화로 시작했어요. 총비용이 약 400만 원이었는데 그해 포니2가 347만 원이었으니, 자동차보다 비쌌던 셈입니다.", "1989년 국책과제로 시작해 1991년 퀄컴과 공동개발하고 1996년 CDMA를 상용화했어요. 3세대 국내 상용은 2003년 12월 W-CDMA, 4세대는 2011년 7월 LTE고요.", "2018년 12월 기업용 상용에 이어 2019년 4월 3일 스마트폰 기반 세계 최초 상용화가 있었어요. 흔히 말하는 20배는 하향 피크 초당 20기가비트와 4세대 피크 초당 1기가비트의 비라는 조건이 붙습니다."]}}}, {"id": "15-emf", "no": "15", "title": "전자파 측정", "n": 3, "open": "지금부터는 한국방송통신전파진흥원이 정부에서 위탁받은 전파품질 관리 이야기예요. 도슨트, 눈에 보이지도 않는 전자파를 어떻게 재고 관리해요?", "after": "세기가 발생원에서 멀어질수록 빠르게 줄어든다는 게 핵심이군요. 궁금한 점 있으시면 말씀해 주시고, 아니면 '다음'이요.", "lv": {"l1": {"headline": "전자파는 멀어질수록 빠르게 약해져요", "items": [{"t": "멀어질수록", "b": "전자파는 멀어질수록 빠르게 약해져요. 그래서 정해 둔 선을 넘지 않는지 계속 재고 있어요."}, {"t": "세기 표시", "b": "커다란 안테나가 있는 곳에는 얼마나 센지 보여 주는 표시가 붙어 있어요. 어른들이 정해진 때마다 재서 확인해요."}, {"t": "나라가 정한 선", "b": "안전하다거나 위험하다고 딱 잘라 말하긴 어려워요. 다만 나라가 정해 둔 선이 있고, 그 선을 넘지 않게 계속 확인해요."}], "remember": "나라가 정해 둔 선을 넘지 않는지 계속 확인하고 있어요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "난롯불", "label": "한 걸음 물러나면 덜 뜨거운 것처럼"}]}, "ask": [null, "아, 그래서 어디서 쟀는지가 중요하군요. 그럼 기준을 넘는지는 어떻게 알아요?", "그럼 건강에는 괜찮은 거예요?"], "ans": ["전자파는 멀어질수록 빠르게 약해져요. 난롯불에서 한 걸음 물러나면 덜 뜨거운 것처럼요. 그래서 정해 둔 선을 넘지 않는지 계속 재고 있답니다.", "커다란 안테나가 있는 곳에는 얼마나 센지 보여 주는 표시가 붙어 있어요. 어른들이 정해진 때마다 재서 확인하고요.", "안전하다거나 위험하다고 딱 잘라 말하긴 어려워요. 다만 나라가 정해 둔 선이 있고, 그 선을 넘지 않게 계속 확인하고 있답니다."]}, "l2": {"headline": "얼마나 센지는 어디서 쟀는지도 함께 말해요", "items": [{"t": "거리와 기준", "b": "세기가 거리에 따라 빠르게 줄어요. 나라가 일반인 기준과 직업인 기준을 따로 두고 판단해요."}, {"t": "등급 라벨", "b": "기지국 같은 설비에는 기준 대비 세기를 보여 주는 등급 라벨을 붙이게 돼 있어요. 2014년부터 시행됐어요."}, {"t": "건강 영향", "b": "국제기구는 기준 이하에서 건강에 나쁜 영향이 확인된 적은 없다고 정리해요. 다만 연구가 아직 진행 중이라 안전하다고 단정하지는 않아요."}], "remember": "기준 이하에서 나쁜 영향이 확인된 적은 없지만, 안전하다고 단정하지는 않아요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "2014년", "label": "기지국 같은 설비의 등급 라벨 시행"}]}, "ask": [null, "아, 그래서 어디서 쟀는지가 중요하군요. 그럼 기준을 넘는지는 어떻게 알아요?", "그럼 건강에는 괜찮은 거예요?"], "ans": ["세기가 거리에 따라 빠르게 줄어서, 얼마나 센지를 말하려면 어디서 쟀는지도 함께 말해야 해요. 나라가 일반인 기준과 직업인 기준을 따로 두고 판단하고요.", "기지국 같은 설비에는 기준 대비 세기를 보여 주는 등급 라벨을 붙이게 돼 있어요. 2014년부터 시행됐고요.", "국제기구는 기준 이하에서 건강에 나쁜 영향이 확인된 적은 없다고 정리해요. 다만 연구가 아직 진행 중이라서, 안전하다고 단정하지는 않고요."]}, "l3": {"headline": "기준이 따로 있고, 어디서 쟀는지가 늘 함께 가요", "items": [{"t": "인체보호기준", "b": "전파법에 따라 국가가 정했고, 일반인 기준과 직업인 기준이 따로 있어요. 세기는 발생원에서 멀어질수록 빠르게 줄어요."}, {"t": "등급 라벨", "b": "일정 규모 이상의 무선국은 세기를 재서 보고하고 네 가지 라벨을 붙여요. 설비에 붙는 것이지 체험관 불빛은 아니에요."}, {"t": "건강 영향", "b": "기준 이하에서 인과적으로 확인된 악영향은 없다는 게 국제기구의 정리예요. 동시에 국제암연구소는 무선주파수 전자기장을 발암 가능으로 분류해 뒀어요."}], "remember": "기준 이하에서 확인된 악영향은 없다는 정리와 발암 가능 분류를 함께 봐야 해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "네 가지", "label": "1등급·2등급·주의·경고 라벨"}, {"big": "1등급", "label": "일반인 기준의 절반 이하"}]}, "ask": [null, "아, 그래서 어디서 쟀는지가 중요하군요. 그럼 기준을 넘는지는 어떻게 알아요?", "그럼 건강에는 괜찮은 거예요?"], "ans": ["국가가 전파법에 따라 전자파 인체보호기준을 정해 두었고, 일반인 기준과 직업인 기준이 따로 있어요. 세기는 발생원에서 멀어질수록 빠르게 줄어들기 때문에, 어디서 쟀는지가 늘 함께 가야 하고요.", "일정 규모 이상의 무선국은 세기를 재서 보고하고 1등급과 2등급, 주의, 경고 네 가지 라벨을 붙여요. 1등급은 일반인 기준의 절반 이하죠. 이 등급은 설비에 붙는 것이지 체험관 불빛은 아니에요.", "기준 이하 노출에서 인과적으로 확인된 악영향은 없다는 게 국제기구의 정리예요. 동시에 국제암연구소는 무선주파수 전자기장을 발암 가능으로 분류해 뒀고요. 두 가지를 함께 보셔야 정확합니다."]}, "l4": {"headline": "기준·등급·측정 고시의 근거는 전파법 제47조의2다", "items": [{"t": "전파법 제47조의2", "b": "제1항이 인체보호기준과 등급기준, 측정기준의 고시 근거다. 제2항은 기준을 넘는 장소에 출입을 막는 안전시설을 두도록 의무화한다."}, {"t": "등급 경계와 표시 대상", "b": "1등급은 일반인 기준의 50% 이하, 경고등급은 직업인 기준 초과다. 표시 대상은 보고대상 무선국이다."}, {"t": "건강 영향과 시차", "b": "세계보건기구의 정리와 국제암연구소 2B 분류를 함께 본다. 국제 가이드라인은 2020년 개정, 국내 고시 현행판은 2019년판이라 반영 여부는 단정하지 않는다."}], "remember": "'인과적으로 확인된 악영향 없음'과 국제암연구소 2B를 병렬로 본다.", "source": "근거 · 법제처 국가법령정보센터 — 전파법 제47조의2 · 법제처 — 행정규칙 「전자파인체보호기준」 별표1 · IARC Press Release N° 208 · ICNIRP (신뢰 등급 A)", "visual": {"type": "steps", "at": 1, "title": "전자파강도 등급 경계", "steps": [{"k": "1등급", "v": "일반인 기준의 50% 이하"}, {"k": "2등급", "v": "50% 초과~일반인 기준 이하"}, {"k": "주의등급", "v": "일반인 기준 초과~직업인 기준 이하"}, {"k": "경고등급", "v": "직업인 기준 초과"}]}, "ask": [null, "아, 그래서 어디서 쟀는지가 중요하군요. 그럼 기준을 넘는지는 어떻게 알아요?", "그럼 건강에는 괜찮은 거예요?"], "ans": ["전파법 제47조의2 제1항이 인체보호기준과 등급기준, 측정기준의 고시 근거예요. 같은 조 제2항은 기준을 넘는 장소에 출입을 막는 안전시설을 두도록 의무화하고 있고요.", "등급 경계는 1등급이 일반인 기준의 50퍼센트 이하, 2등급이 그 초과에서 기준 이하, 주의등급이 일반인 기준 초과에서 직업인 기준 이하, 경고등급이 직업인 기준 초과예요. 표시 대상은 보고대상 무선국이고요.", "세계보건기구의 정리와 국제암연구소의 2B 분류를 함께 놓고 봐야 해요. 국제 가이드라인은 2020년에 개정됐는데 국내 고시 현행판은 2019년판이라, 그 시차를 어떻게 반영했는지는 단정하지 않는 게 맞고요."]}}}, {"id": "16-inspection", "no": "16", "title": "무선국 검사", "n": 3, "open": "전파품질 관리의 또 다른 축은 무선국 검사예요. 도슨트, 무선국 검사가 뭐예요?", "after": "전파가 한정된 자원이라 관리가 필요하다는 말이 와닿네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "전파는 나눠 쓰는 거라서 약속대로 확인해요", "items": [{"t": "나눠 쓰는 전파", "b": "전파는 나눠 쓰는 거라서 한 사람이 너무 세게 쓰면 다른 사람 것이 안 들려요. 그래서 기계가 약속대로 만들어졌는지 직접 가서 확인해요."}, {"t": "다시 확인", "b": "처음 만들었을 때 한 번 보고, 그 뒤에도 정해진 때마다 다시 확인해요. 배나 비행기가 먼 나라로 떠날 때도 따로 살펴봐요."}, {"t": "전파를 돌보는 곳", "b": "전파를 돌보는 곳의 사람들이 직접 가서 확인해요. 이 코너에 있는 장비들이 그 확인에 쓰던 것들이에요."}], "remember": "전파는 나눠 쓰는 거라서 정해진 때마다 직접 가서 확인해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "처음 한 번", "label": "만들었을 때 보고 그 뒤에도 다시 확인"}, {"big": "배나 비행기", "label": "먼 나라로 떠날 때도 따로 살펴봐요"}]}, "ask": [null, "아, 그렇군요. 검사는 한 번만 받으면 되는 거예요?", "그 일은 누가 하는 거예요?"], "ans": ["전파는 나눠 쓰는 거라서 한 사람이 너무 세게 쓰면 다른 사람 것이 안 들려요. 그래서 기계가 약속대로 만들어졌는지 직접 가서 확인한답니다.", "아니에요. 처음 만들었을 때 한 번 보고, 그 뒤에도 정해진 때마다 다시 확인해요. 배나 비행기가 먼 나라로 떠날 때도 따로 살펴보고요.", "전파를 돌보는 곳의 사람들이 직접 가서 확인해요. 이 코너에 있는 장비들이 그 확인에 쓰던 것들이랍니다."]}, "l2": {"headline": "전파는 한정돼서 검사를 받아야 쓸 수 있어요", "items": [{"t": "허가와 검사", "b": "혼신이 생기면 남의 통신이 끊겨서, 법이 무선국을 허가제로 두고 설비를 다 만든 뒤 기준에 맞는지 검사를 받아야 쓸 수 있게 했어요."}, {"t": "정해진 주기의 검사", "b": "한 번으로 끝나지 않고 정해진 주기마다 다시 받아요. 허가받은 대로 바꿨는지 보는 검사도 있고, 배나 비행기가 외국으로 나갈 때도 따로 받아요."}, {"t": "위탁과 전시 장비", "b": "정부가 직접 다 하지 않고 한국방송통신전파진흥원이 1981년부터 위탁받아 해 왔어요. 이 코너의 장비들이 그때 쓰던 검사 장비예요."}], "remember": "허가에 더해, 설비를 만든 뒤 기준에 맞는지 검사를 받아야 해요.", "source": "", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "1981년", "label": "위탁받아 검사를 해 오기 시작한 해"}]}, "ask": [null, "아, 그렇군요. 검사는 한 번만 받으면 되는 거예요?", "그 일은 누가 하는 거예요?"], "ans": ["전파는 한정돼 있어서 혼신이 생기면 남의 통신이 끊겨요. 그래서 법이 무선국을 허가제로 두고, 설비를 다 만든 뒤에 기준에 맞는지 검사를 받아야 쓸 수 있게 했죠.", "한 번으로 끝나지 않고 정해진 주기마다 다시 받아요. 허가받은 대로 바꿨는지 보는 검사도 있고, 배나 비행기가 외국으로 나갈 때도 따로 받고요.", "정부가 직접 다 하지 않고 한국방송통신전파진흥원이 1981년부터 위탁받아 해 왔어요. 이 코너의 장비들이 그때 쓰던 검사 장비고요."]}, "l3": {"headline": "허가는 시작이고 검사가 마무리예요", "items": [{"t": "준공검사", "b": "설비를 다 갖춘 뒤 준공검사를 받아야 운용할 수 있어요. 검사는 기술기준만이 아니라 무선종사자의 자격과 정원까지 함께 봐요."}, {"t": "검사 네 가지", "b": "준공검사, 5년 범위에서 받는 정기검사, 변경검사, 수시검사 네 가지예요. 배나 항공기가 외국으로 출항할 때도 대상이에요."}, {"t": "위탁과 1981년", "b": "정부가 이 업무를 한국방송통신전파진흥원에 위탁해 왔고, 시작이 1981년이에요. 검사에 쓰던 장비들이 이 코너에 전시돼 있어요."}], "remember": "검사는 기술기준만이 아니라 무선종사자의 자격과 정원까지 봐요.", "source": "", "visual": {"type": "steps", "at": 1, "title": "무선국 검사 네 가지", "steps": [{"k": "준공검사", "v": "설비를 다 갖춘 뒤"}, {"k": "정기검사", "v": "5년 범위에서 받아요"}, {"k": "변경검사", "v": "허가받은 대로 바꿨는지"}, {"k": "수시검사", "v": "필요할 때"}]}, "ask": [null, "아, 그렇군요. 검사는 한 번만 받으면 되는 거예요?", "그 일은 누가 하는 거예요?"], "ans": ["허가는 시작이고 검사가 마무리예요. 무선국은 설비를 다 갖춘 뒤 준공검사를 받아야 비로소 운용할 수 있고, 검사는 기술기준만이 아니라 무선종사자의 자격과 정원까지 함께 봅니다.", "검사는 네 가지예요. 준공검사, 5년 범위에서 받는 정기검사, 허가받은 대로 바꿨는지 보는 변경검사, 필요할 때 하는 수시검사죠. 배나 항공기가 외국으로 출항할 때도 검사 대상이 되고요.", "정부가 이 업무를 한국방송통신전파진흥원에 위탁해 왔고, 그 시작이 1981년이에요. 그때부터 쓰던 검사 장비들이 이 코너에 전시돼 있고요."]}, "l4": {"headline": "검사는 운용의 전제이고, 근거는 전파법 제24조다", "items": [{"t": "전파법 제24조", "b": "준공검사에서 기술기준과 무선종사자 자격, 정원 배치기준 적합 여부를 본다. 제25조 제1항이 준공검사 후 운용을 못박아 검사를 운용의 전제로 만든다."}, {"t": "정기검사와 수시검사", "b": "제4항이 5년 범위의 정기검사를, 제5항이 선박·항공기의 외국 출항 같은 수시검사를 둔다. 판정은 제45조 기술기준과 제71조 자격·정원 배치기준에 따른다."}, {"t": "위임과 위탁", "b": "검사는 중앙전파관리소장에게 위임되고, 고시된 무선국의 준공검사는 한국방송통신전파진흥원에 위탁된다. 수탁은 1981년 5월 18일이다."}], "remember": "1981년 수탁 당시 법인명은 한국무선종사자협회, 현재 명칭은 2011년부터다.", "source": "근거 · 전파법 제24조 · 전파법 제25조제1항 · 전파법 시행령 제123조제3항·제5항 · KCA 공식 — 연혁 (신뢰 등급 A)", "visual": {"type": "keyfact", "at": 2, "facts": [{"big": "1981년", "label": "수탁 당시 한국무선종사자협회"}, {"big": "2011년", "label": "현재 명칭 한국방송통신전파진흥원"}]}, "ask": [null, "아, 그렇군요. 검사는 한 번만 받으면 되는 거예요?", "그 일은 누가 하는 거예요?"], "ans": ["근거는 전파법 제24조예요. 준공검사에서 기술기준과 무선종사자 자격, 정원 배치기준 적합 여부를 보고, 제25조 제1항이 준공검사를 받은 뒤에 운용하도록 못박아 검사를 운용의 전제로 만듭니다.", "제24조 제4항이 5년 범위의 정기검사를, 제5항이 선박과 항공기의 외국 출항 같은 수시검사를 둡니다. 판정 기준은 제45조 기술기준과 제71조 무선종사자 자격, 정원 배치기준 둘이고요.", "전파법 시행령이 제24조 검사를 중앙전파관리소장에게 위임하고, 고시된 무선국의 준공검사는 한국방송통신전파진흥원에 위탁해요. 수탁 시작은 1981년 5월 18일인데, 당시 법인명은 한국무선종사자협회였고 지금 이름은 2011년부터고요."]}}}, {"id": "17-rover", "no": "17", "title": "원격 무선조종 차량 — 행성 탐사", "n": 3, "open": "체험관에는 행성 탐사 체험도 있다고 들었어요. 도슨트, 원격 무선조종 차량 코너는 뭘 하는 곳이에요?", "after": "지연 때문에 로봇이 스스로 판단해야 한다는 게 인상적이네요. 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "너무 멀면 말이 도착하는 데 한참 걸려요", "items": [{"t": "전파로 움직여요", "b": "아주 멀리 있는 자동차를 전파로 움직여 보는 곳이에요. 다른 천체 위를 달리는 차를 직접 몰아 보는 기분을 느낄 수 있어요."}, {"t": "한참 걸리는 말", "b": "너무 멀면 가라고 말해도 그 말이 도착하는 데 한참 걸려요. 그래서 차가 스스로 조심하며 가야 해요."}, {"t": "가까운 달", "b": "달은 훨씬 가까워서 말이 금방 도착해요. 그래서 옛날에 사람들이 지구에서 달 위의 차를 직접 몰아 본 적도 있어요."}], "remember": "너무 멀면 말이 한참 늦게 도착해서 차가 스스로 조심하며 가야 해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "너무 멀면", "label": "가라고 말해도 한참 걸려요"}, {"big": "가까운 달", "label": "말이 금방 도착해요"}]}, "ask": [null, "실제로도 지구에서 실시간으로 조종할 수 있어요?", "그럼 달에서는 어땠어요?"], "ans": ["아주 멀리 있는 자동차를 전파로 움직여 보는 곳이에요. 다른 천체 위를 달리는 차를 직접 몰아 보는 기분을 느낄 수 있답니다.", "너무 멀면 가라고 말해도 그 말이 도착하는 데 한참 걸려요. 그래서 차가 스스로 조심하며 가야 한답니다.", "달은 훨씬 가까워서 말이 금방 도착해요. 그래서 옛날에 사람들이 지구에서 달 위의 차를 직접 몰아 본 적도 있답니다."]}, "l2": {"headline": "전파는 빛의 속도인데도 우주에서는 느려요", "items": [{"t": "탐사차 체험", "b": "증강현실로 다른 천체를 다니며 탐사차를 조종해 보는 코너예요. 전파로 멀리 있는 차를 움직인다는 게 어떤 일인지 몸으로 느껴 보는 거예요."}, {"t": "달과 화성의 차이", "b": "달은 왕복 2초에서 3초라 화면을 보며 몰 수 있었지만, 화성은 편도로도 몇 분이 걸려 실시간 조종이 안 돼요."}, {"t": "루노호트와 월면차", "b": "1970년 루노호트 1호는 지구 관제팀이 화면을 보며 몰았어요. 아폴로 월면차는 우주비행사가 직접 타고 운전한 차예요."}], "remember": "달은 화면을 보며 몰 수 있고, 화성은 실시간 조종이 안 돼요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "2초에서 3초", "label": "달은 왕복 시간"}, {"big": "몇 분", "label": "화성은 편도로도 걸려요"}]}, "ask": [null, "실제로도 지구에서 실시간으로 조종할 수 있어요?", "그럼 달에서는 어땠어요?"], "ans": ["증강현실로 다른 천체를 다니며 탐사차를 조종해 보는 코너예요. 전파로 멀리 있는 차를 움직인다는 게 어떤 일인지 몸으로 느껴 보는 거죠.", "전파는 빛의 속도인데도 우주에서는 그게 느려요. 달은 왕복 2초에서 3초라 화면을 보며 몰 수 있었지만, 화성은 편도로도 몇 분이 걸려 실시간 조종이 안 되죠.", "달은 왕복 2초에서 3초 수준이라 사정이 달라요. 1970년 루노호트 1호는 지구 관제팀이 화면을 보며 몰았고요. 아폴로 월면차는 우주비행사가 직접 타고 운전한 차고요."]}, "l3": {"headline": "화성 로버는 지연 때문에 스스로 장애물을 피해요", "items": [{"t": "탐사 체험 코너", "b": "증강현실로 다른 천체의 표면을 다니며 탐사로봇을 조종해 보는 코너예요."}, {"t": "화성의 지연", "b": "지구와 화성 사이는 편도로 약 3분에서 20분대라 로버를 조이스틱으로 몰 수 없어요. 미리 보낸 계획을 다음 날 실행하며 스스로 장애물을 피해요."}, {"t": "달과 월면차", "b": "달은 왕복 2초에서 3초 수준이라 원격조종이 성립했어요. 1970년 루노호트 1호는 지구의 관제팀이 몰았고, 아폴로 월면차는 우주비행사가 직접 탄 차예요."}], "remember": "화성은 편도 약 3분에서 20분대라 로버가 스스로 판단해야 해요.", "source": "", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "3분에서 20분대", "label": "지구와 화성 사이 편도"}, {"big": "2초에서 3초", "label": "달은 왕복 수준"}]}, "ask": [null, "실제로도 지구에서 실시간으로 조종할 수 있어요?", "그럼 달에서는 어땠어요?"], "ans": ["증강현실로 다른 천체의 표면을 다니며 탐사로봇을 조종해 보는 코너예요. 물이나 생명체, 광물자원의 흔적을 찾는 미션을 게임처럼 수행하고요.", "전파가 빛의 속도로 가도 지구와 화성 사이는 편도로 약 3분에서 20분대가 걸려요. 그래서 화성 로버는 조이스틱으로 몰 수 없고, 미리 보낸 계획을 다음 날 실행하며 스스로 장애물을 피해요.", "달은 왕복 2초에서 3초 수준이라 원격조종이 성립했어요. 1970년 루노호트 1호는 지구의 관제팀이 화면을 보며 실제로 몰았죠. 아폴로 월면차는 그와 달리 우주비행사가 직접 타고 운전한 차예요."]}, "l4": {"headline": "지연 때문에 화성 로버는 자율항법으로 달린다", "items": [{"t": "체험 코너", "b": "증강현실 기반으로 탐사차를 조종해 보는 체험 코너다. 실제 행성 탐사의 조건, 특히 통신 지연이 조종을 어떻게 제약하는지를 체감하는 자리다."}, {"t": "광행시간과 자율항법", "b": "거리 5,460만 km에서 4억 20만 km, 편도 약 3분에서 22.4분이다. 로버는 자율항법으로 경로를 스스로 계획하고, 그 대가로 속도가 아주 느리다."}, {"t": "달과 월면차", "b": "달은 편도 약 1.3초, 왕복 약 2.6초다. 루노호트 1호는 1970년 11월 착륙해 5인 관제팀이 몰았고, 아폴로 월면차는 승무원이 탑승해 조종했다."}], "remember": "달은 편도 약 1.3초, 화성은 편도 약 3분에서 22.4분이다.", "source": "근거 · NASA Science — Mars Relay Network · NASA JPL — 'Takes the Wheel' · NASA NSSDCA — The Apollo Lunar Roving Vehicle · NASA NSSDCA — Luna 17 / Lunokhod 1 · Wikipedia — Lunokhod programme · NASA NSSDCA Moon Fact Sheet (신뢰 등급 B)", "visual": {"type": "keyfact", "at": 1, "facts": [{"big": "3분~22.4분", "label": "지구와 화성 편도 광행시간"}, {"big": "약 1.3초", "label": "지구와 달 편도 광행시간"}]}, "ask": [null, "실제로도 지구에서 실시간으로 조종할 수 있어요?", "그럼 달에서는 어땠어요?"], "ans": ["증강현실 기반으로 탐사차를 조종해 보는 체험 코너예요. 실제 행성 탐사의 조건, 특히 통신 지연이 조종을 어떻게 제약하는지를 체감하는 자리라고 보시면 됩니다.", "지구와 화성 거리는 5,460만 킬로미터에서 4억 20만 킬로미터라 광행시간이 편도 약 3분에서 22.4분이에요. 그래서 화성 로버는 자율항법으로 전방 지형도를 만들어 경로를 스스로 계획하고, 그 대가로 주행 속도가 아주 느립니다.", "달은 평균 38만 4천 킬로미터라 광행시간이 편도 약 1.3초, 왕복 약 2.6초예요. 그래서 루노호트 1호는 1970년 11월 착륙해 지구의 5인 관제팀이 몰았고요. 아폴로 월면차는 승무원이 탑승해 조종한 차라는 구분이 중요합니다."]}}}, {"id": "18-science", "no": "18", "title": "과학 원리 실험 도구", "n": 2, "open": "마지막 주제는 전파와 관련된 기초 과학 실험 도구들이에요. 도슨트, 어떤 게 있어요?", "after": "손을 대지 않고, 전선을 꽂지 않고도 되는 것들이 이렇게 많군요. 마지막으로 궁금한 점 있으실까요? 이어가려면 '다음'이라고 해 주세요.", "lv": {"l1": {"headline": "손을 대지 않고도 소리가 나는 악기가 있어요", "items": [{"t": "손만 움직이는 악기", "b": "손을 대지 않고 허공에서 손만 움직여 연주하는 악기가 있어요. 손을 가까이 가져가면 소리가 높아지고, 멀리 하면 낮아져요."}, {"t": "눈에 보이지 않는 힘", "b": "마법 같지만 마법이 아니에요. 눈에 보이지 않는 전기의 힘이 손이 가까이 왔는지 알아채는 거예요."}], "remember": "마법 같지만 마법이 아니에요. 보이지 않는 전기의 힘이에요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "가까이", "label": "손을 가까이 가져가면 소리가 높아져요"}, {"big": "멀리", "label": "손을 멀리 하면 소리가 낮아져요"}]}, "ask": [null, "손도 안 대는데 어떻게 소리가 나요?"], "ans": ["손을 대지 않고 허공에서 손만 움직여 연주하는 악기가 있어요. 손을 가까이 가져가면 소리가 높아지고, 멀리 하면 낮아진답니다.", "마법 같지만 마법이 아니에요. 눈에 보이지 않는 전기의 힘이 손이 가까이 왔는지 알아채는 거랍니다."]}, "l2": {"headline": "테레민은 센서 연구에서 나온 악기예요", "items": [{"t": "테레민", "b": "1920년에 만들어졌어요. 악기를 만들려던 게 아니라 가까이 온 것을 알아채는 센서 연구에서 나온 물건이에요."}, {"t": "손과 축전기", "b": "두 금속 막대는 안테나처럼 생겼지만 전파를 주고받는 안테나가 아니에요. 손과 함께 축전기가 돼서 손의 거리를 알아채요."}], "remember": "안테나처럼 생겼지만, 손과 함께 축전기가 돼서 거리를 알아채요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "1920년", "label": "테레민이 만들어진 해"}, {"big": "센서 연구", "label": "가까이 온 것을 알아채는 연구에서 나왔어요"}]}, "ask": [null, "손도 안 대는데 어떻게 소리가 나요?"], "ans": ["테레민이라는 악기가 있어요. 1920년에 만들어졌는데, 악기를 만들려던 게 아니라 가까이 온 것을 알아채는 센서 연구에서 나온 물건이죠.", "두 금속 막대가 안테나처럼 생겼지만 전파를 주고받는 안테나가 아니에요. 손과 함께 축전기가 돼서 손의 거리를 알아채는 거죠."]}, "l3": {"headline": "테레민은 근접 센서 연구에서 나온 악기예요", "items": [{"t": "테레민", "b": "1920년 러시아 물리학자 레온 테레민이 만들었어요. 원래는 근접 센서 연구에서 나온 물건이고, 미국 특허는 1928년이에요."}, {"t": "축전기 극판", "b": "전파용 안테나가 아니라 축전기 극판으로 작동해요. 손이 가까워지면 정전용량이 달라지고, 음정 안테나에 손이 가까울수록 음이 높아져요."}], "remember": "두 금속 막대는 안테나가 아니라 축전기 극판이에요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "1920년", "label": "레온 테레민이 만들었어요"}, {"big": "1928년", "label": "미국 특허를 받았어요"}]}, "ask": [null, "손도 안 대는데 어떻게 소리가 나요?"], "ans": ["테레민이라는 악기가 눈에 띄어요. 1920년 러시아 물리학자 레온 테레민이 만들었는데, 원래는 근접 센서 연구에서 나온 물건이에요. 미국 특허는 1928년이고요.", "두 금속 막대는 전파용 안테나가 아니라 축전기 극판으로 작동해요. 손이 가까워지면 정전용량이 달라지는데, 음정 안테나에 손이 가까울수록 음이 높아지고요."]}, "l4": {"headline": "기초 과학 실험 도구는 원리별로 묶인다", "items": [{"t": "원리별 구성", "b": "정전기, 전자기 유도, 전자기 회전, 공진, 검파, 표시까지 원리별로 모여 있다. 1831년 패러데이의 전자기 유도에서 오실로스코프까지 이어진다."}, {"t": "헤테로다인 원리", "b": "500kHz 미만으로 맞춘 발진기 두 개의 주파수 차를 가청음으로 쓴다. 안테나는 전파용이 아니라 커패시터 극판으로, 손의 거리를 정전용량으로 읽는다."}], "remember": "안테나는 전파용이 아니라 커패시터 극판이다.", "source": "근거 · Wikipedia — Theremin · Wikipedia — Tesla coil · Wikipedia — Faraday's law of induction (History) · Wikipedia — Homopolar motor · Wikipedia — Coherer · Wikipedia — Oscilloscope (신뢰 등급 B)", "visual": {"type": "steps", "at": 0, "title": "원리별로 모인 실험 도구", "steps": [{"k": "정전기", "v": "전하의 축적"}, {"k": "전자기 유도", "v": "1831년 패러데이"}, {"k": "전자기 회전", "v": "1821년 패러데이"}, {"k": "공진", "v": "1891년 테슬라 코일"}, {"k": "검파·표시", "v": "코히러 · 오실로스코프"}]}, "ask": [null, "손도 안 대는데 어떻게 소리가 나요?"], "ans": ["정전기와 전자기 유도, 전자기 회전, 공진, 검파, 표시까지 원리별로 모여 있어요. 1831년 패러데이의 전자기 유도부터 1891년 테슬라 코일, 코히러 검파기, 오실로스코프까지 이어집니다.", "헤테로다인 원리예요. 500킬로헤르츠 미만으로 맞춘 발진기 두 개의 주파수 차를 가청음으로 쓰고, 안테나는 전파용이 아니라 커패시터 극판으로 손의 거리를 정전용량으로 읽습니다."]}}}, {"id": "19-closing", "no": "19", "title": "마무리", "n": 1, "open": "오늘의 전파체험관 이야기는 이걸로 마칠게요. 도슨트, 마무리 인사 부탁해요.", "after": "저도 감사드립니다. 질문이 남았다면 지금 말씀해 주세요. 오늘 이야기가 전파를 조금 더 가깝게 느끼는 계기가 되었기를 바랍니다. 고맙습니다.", "lv": {"l1": {"headline": "눈에 보이지 않는 전파를 사람이 찾아냈어요", "items": [{"t": "오늘 기억할 것", "b": "눈에 보이지 않는 전파를 사람이 찾아내서, 지금처럼 쓰게 됐어요."}], "remember": "그거 하나만 기억해 주세요. 사람이 전파를 찾아냈어요.", "source": "", "visual": {"type": "keyfact", "at": 0, "facts": [{"big": "전파", "label": "눈에 보이지 않지만 사람이 찾아냈어요"}, {"big": "지금처럼", "label": "찾아내서 지금처럼 쓰게 됐어요"}]}, "ask": [null], "ans": ["와 주셔서 고맙습니다! 눈에 보이지 않는 전파를 사람이 찾아내서 지금처럼 쓰게 됐다는 것, 그거 하나만 기억해 주세요."]}, "l2": {"headline": "전파는 발명이 아니라 발견이었어요", "items": [{"t": "오늘의 줄기", "b": "전파는 발명이 아니라 발견이었고, 통신에 쓰면서 방송과 이동통신으로 이어졌어요. 지금은 나라가 기준을 두고 관리하고 있어요."}], "remember": "발견이 방송과 이동통신으로 이어졌고, 지금은 나라가 기준을 두고 관리해요.", "source": "", "visual": {"type": "steps", "at": 0, "title": "오늘의 줄기", "steps": [{"k": "발견", "v": "발명이 아니라 발견이었어요"}, {"k": "통신", "v": "통신에 쓰기 시작했어요"}, {"k": "방송·이동통신", "v": "방송과 이동통신으로 이어졌어요"}, {"k": "관리", "v": "나라가 기준을 두고 관리해요"}]}, "ask": [null], "ans": ["오늘 함께해 주셔서 고맙습니다. 전파는 발명이 아니라 발견이었고, 그걸 통신에 쓰면서 방송과 이동통신으로 이어졌죠. 지금은 나라가 기준을 두고 관리하고 있고요."]}, "l3": {"headline": "발견에서 실용화, 그리고 관리까지 이어진 하루였어요", "items": [{"t": "오늘의 줄기", "b": "발견에서 실용화로, 방송과 이동통신으로, 그리고 전파품질 관리와 인체보호기준으로 이어졌어요. 궁금한 점은 지금 물어보셔도 좋아요."}], "remember": "발견, 방송과 이동통신, 전파품질 관리와 인체보호기준.", "source": "", "visual": {"type": "steps", "at": 0, "title": "오늘의 줄기", "steps": [{"k": "발견", "v": "발견에서 시작해요"}, {"k": "실용화", "v": "실용화로 이어져요"}, {"k": "방송·이동통신", "v": "방송과 이동통신으로"}, {"k": "관리", "v": "전파품질 관리와 인체보호기준"}]}, "ask": [null], "ans": ["관람해 주셔서 고맙습니다. 발견에서 실용화로, 방송과 이동통신으로, 그리고 전파품질 관리와 인체보호기준으로 이어지는 하루였어요. 궁금한 점이 남으셨다면 지금 물어보셔도 좋습니다."]}, "l4": {"headline": "발견의 계보 위에 관리 체계가 놓였다", "items": [{"t": "발견에서 관리까지", "b": "이론과 실증, 실용화로 이어진 발견의 계보가 방송과 이동통신으로 이어졌다. 그 위에 인체보호기준과 무선국 검사라는 관리 체계가 놓였다."}], "remember": "기준 이하 노출의 장기 영향은 아직 연구가 계속되고 있다.", "source": "", "visual": {"type": "steps", "at": 0, "title": "제도의 관점에서 되짚기", "steps": [{"k": "발견의 계보", "v": "맥스웰 · 헤르츠 · 마르코니"}, {"k": "방송·이동통신", "v": "발견의 계보가 이어졌다"}, {"k": "관리 체계", "v": "인체보호기준 · 무선국 검사"}, {"k": "남은 쟁점", "v": "장기 영향은 연구가 계속"}]}, "ask": [null], "ans": ["함께해 주셔서 고맙습니다. 이론과 실증, 실용화로 이어진 발견의 계보가 방송과 이동통신으로 이어졌고, 그 위에 인체보호기준과 무선국 검사라는 관리 체계가 놓였죠. 기준 이하 노출의 장기 영향은 아직 연구가 계속되고 있고요."]}}}], "courses": [{"name": "전체", "ids": ["01-intro", "02-history", "03-theory", "04-morse", "05-donor", "06-bands", "07-maritime", "08-aviation", "09-special-exhibit", "10-ham", "11-iot", "12-multimedia", "13-chromakey", "14-mobile", "15-emf", "16-inspection", "17-rover", "18-science", "19-closing"]}, {"name": "하이라이트", "ids": ["01-intro", "02-history", "03-theory", "04-morse", "07-maritime", "14-mobile", "17-rover", "18-science", "19-closing"]}]}</script>
+<script>
+(function () {
+  'use strict';
+  var DATA = JSON.parse(document.getElementById('data').textContent);
+  var CUES = DATA.cues, LEVELS = DATA.levels, COURSES = DATA.courses;
+  var TURNS = [];                                // 장마다 포인트 수에 맞춰 다시 만든다
+  var CPS = 4.0;                                 // 감독의 CHARS_PER_SEC — 글자 수로 말하는 시간을 어림한다
+  var C = 299792458;                             // 빛의 속도(m/s, 정확값)
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var state = { slide: 0, lv: 'l3', course: COURSES[0].name, turn: null, running: false };
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function speed() { return parseFloat($('#speed').value) || 1; }
+  function courseIds() { return COURSES.filter(function (c) { return c.name === state.course; })[0].ids; }
+  function visibleIdx() {
+    var ids = courseIds();
+    return CUES.map(function (c, i) { return ids.indexOf(c.id) >= 0 ? i : -1; }).filter(function (i) { return i >= 0; });
+  }
+
+  // 포인트 n 개인 큐의 말 순서: open, docent0, ask1, docent1, … , docent(n-1), after
+  function turnsFor(n) {
+    var t = ['open', 'docent0'];
+    for (var i = 1; i < n; i++) { t.push('ask' + i); t.push('docent' + i); }
+    t.push('after');
+    return t;
+  }
+  function itemTurns(i) { return i === 0 ? 'open docent0' : 'ask' + i + ' docent' + i; }
+
+  // ── HUD: 두 구역은 한 번 만들어 장이 바뀔 때마다 그 자리로 옮겨 꽂는다 ────────────────
+  var huds = {};
+  function makeHud(role, label) {
+    var root = el('div', 'hud ' + role + ' idle');
+    var who = el('div', 'who');
+    who.appendChild(el('span', 'rm'));
+    who.appendChild(el('span', 'name', label));
+    var eq = el('span', 'eq'); eq.appendChild(el('i')); eq.appendChild(el('i')); eq.appendChild(el('i'));
+    who.appendChild(eq);
+    var bubble = el('div', 'bubble');
+    var t = el('p', 't'); t.setAttribute('aria-live', 'polite');
+    var done = el('span', 'done'), rest = el('span', 'rest');
+    t.appendChild(done); t.appendChild(rest);
+    var prog = el('div', 'prog'), bar = el('i'); prog.appendChild(bar);
+    bubble.appendChild(t); bubble.appendChild(prog);
+    root.appendChild(who); root.appendChild(bubble);
+    huds[role] = { el: root, done: done, rest: rest, bar: bar, mode: 'idle', timer: null };
+  }
+  makeHud('mc', '사회자');
+  makeHud('docent', '도슨트');
+
+  function setMode(h, mode) {
+    clearTimeout(h.timer);
+    h.mode = mode;
+    h.el.classList.remove('idle', 'speaking', 'fading');
+    h.el.classList.add(mode);
+    if (mode === 'fading') h.timer = setTimeout(function () { setMode(h, 'idle'); }, 2400);
+  }
+  function hudClear() {
+    ['mc', 'docent'].forEach(function (r) {
+      var h = huds[r]; setMode(h, 'idle'); h.done.textContent = ''; h.rest.textContent = ''; h.bar.style.width = '0%';
+    });
+  }
+  function hudShow(role, text) {
+    var me = huds[role], other = huds[role === 'mc' ? 'docent' : 'mc'];
+    if (other.mode === 'speaking') setMode(other, 'fading');
+    setMode(me, 'speaking');
+    me.done.textContent = ''; me.rest.textContent = text; me.bar.style.width = '0%';
+  }
+  function hudProgress(role, text, p) {
+    var h = huds[role], n = Math.round(text.length * p);
+    h.done.textContent = text.slice(0, n); h.rest.textContent = text.slice(n); h.bar.style.width = (p * 100) + '%';
+  }
+
+  // 한 번에 보이는 말은 한 문장(길면 쉼표에서 끊은 절)이다 — 가리는 면적을 줄이는 핵심
+  function chunksOf(text, max) {
+    max = max || 40;
+    var out = [];
+    // 뒤돌아보기(lookbehind) 없이 쪼갠다 — 전시장 브라우저가 오래된 사파리여도 돈다
+    (text.match(/[^.?!]+[.?!]+\s*|[^.?!]+$/g) || [text]).forEach(function (s0) {
+      var s = s0.trim();
+      if (s.length <= max) { out.push(s); return; }
+      var parts = (s.match(/[^,]+,?\s*/g) || [s]).map(function (x) { return x.trim(); }), cur = '';
+      parts.forEach(function (p) {
+        if (cur && (cur + ' ' + p).length > max) { out.push(cur); cur = p; } else { cur = cur ? cur + ' ' + p : p; }
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+
+  // ── 장 그리기 ───────────────────────────────────────────────────────
+  var dialEls = null;
+  function turnsAttr(e, turns) { if (turns) e.setAttribute('data-turns', turns); return e; }
+
+  function renderSlide() {
+    var cue = CUES[state.slide], L = cue.lv[state.lv], n = cue.n;
+    TURNS = turnsFor(n);
+    var turns = cue.turns || {};
+    var root = $('#slide'); root.textContent = '';
+    dialEls = null;
+    root.appendChild(turnsAttr(el('h1', 'headline', L.headline), turns.headline || 'open docent0'));
+
+    var band = el('div', 'band');
+    var laneMc = el('div', 'lane lane-mc'), laneDoc = el('div', 'lane lane-docent');
+    laneMc.appendChild(huds.mc.el); laneDoc.appendChild(huds.docent.el);
+    var vis = el('div', 'visual');
+    vis.appendChild(visualView(L.visual, cue, turns));
+    band.appendChild(laneMc); band.appendChild(vis); band.appendChild(laneDoc);
+    root.appendChild(band);
+
+    var cards = el('div', 'cards n' + n);
+    cards.style.setProperty('--n', n);
+    L.items.forEach(function (it, i) {
+      var c = turnsAttr(el('div', 'card'), (turns.items && turns.items[i]) || itemTurns(i));
+      var hd = el('div', 'hd');
+      hd.appendChild(el('span', 'no', String(i + 1)));
+      hd.appendChild(el('span', 'tt', it.t));
+      c.appendChild(hd); c.appendChild(el('p', 'bd', it.b));
+      cards.appendChild(c);
+    });
+    root.appendChild(cards);
+
+    var rem = turnsAttr(el('div', 'remember'), turns.remember || 'after');
+    rem.appendChild(el('span', 'tag', '기억해 두기'));
+    rem.appendChild(el('span', 'tx', L.remember));
+    root.appendChild(rem);
+    root.appendChild(el('p', 'src', L.source || ''));
+    applyHighlight();
+  }
+
+  function visualView(v, cue, turns) {
+    var t = turns.visual || (v.at != null ? itemTurns(v.at) : '');
+    if (v.type === 'route') return routeView(v, t);
+    if (v.type === 'dial') return dialView(v, t);
+    if (v.type === 'steps') return stepsView(v, t);
+    return factsView(v, t);
+  }
+
+  function factsView(v, t) {
+    var w = turnsAttr(el('div', 'vwrap'), t);
+    var f = el('div', 'facts n' + v.facts.length);
+    v.facts.forEach(function (x) {
+      var d = el('div', 'fact');
+      d.appendChild(el('div', 'big', x.big)); d.appendChild(el('div', 'lab', x.label));
+      f.appendChild(d);
+    });
+    w.appendChild(f);
+    return w;
+  }
+  function stepsView(v, t) {
+    var w = turnsAttr(el('div', 'vwrap'), t);
+    if (v.title) w.appendChild(el('p', 'vtitle', v.title));
+    var s = el('div', 'steps');
+    v.steps.forEach(function (x, i) {
+      if (i) s.appendChild(el('span', 'arr', '›'));
+      var d = el('div', 'step');
+      d.appendChild(el('div', x.k.length > 5 ? 'k long' : 'k', x.k)); d.appendChild(el('div', 'v', x.v));
+      s.appendChild(d);
+    });
+    w.appendChild(s);
+    return w;
+  }
+
+  function routeView(v, t) {
+    var r = turnsAttr(el('div', 'route'), t);
+    r.appendChild(el('div', 'km', v.label));
+    var line = el('div', 'line');
+    var d1 = el('span', 'dot'); d1.style.background = '#0E2433';
+    var d2 = el('span', 'dot'); d2.style.background = '#B96F00';
+    line.appendChild(d1); line.appendChild(el('span', 'dash')); line.appendChild(d2); line.appendChild(el('span', 'pulse'));
+    r.appendChild(line);
+    var ends = el('div', 'ends');
+    ends.appendChild(el('span', '', v.from)); ends.appendChild(el('span', '', v.to));
+    r.appendChild(ends);
+    r.appendChild(el('div', 'note', '개념도 — 실제 지도·축척이 아니에요'));
+    var b = el('button', 'btn', '신호 보내 보기'); b.type = 'button';
+    b.addEventListener('click', function () { sendPulse(); });
+    r.appendChild(b);
+    return r;
+  }
+  function sendPulse() {
+    var r = $('.route'); if (!r) return;
+    r.classList.remove('go'); void r.offsetWidth; r.classList.add('go');
+  }
+
+  // 주파수 다이얼 — 지수 e 는 log10(Hz). 3(1kHz) ~ 12.5(약 3,000GHz)
+  var E_MIN = 3, E_MAX = 12.5, E_FM = 8;
+  function trimNum(x, sf) { return Number(x.toPrecision(sf)).toString(); }
+  function fmtFreq(e) {
+    var f = Math.pow(10, e), v, u;
+    if (f < 1e6) { v = f / 1e3; u = 'kHz'; } else if (f < 1e9) { v = f / 1e6; u = 'MHz'; }
+    else if (f < 1e12) { v = f / 1e9; u = 'GHz'; } else { v = f / 1e12; u = 'THz'; }
+    return trimNum(v, 3) + ' ' + u;
+  }
+  function fmtLen(e, sf) {
+    var m = C / Math.pow(10, e), v, u;
+    if (m >= 1000) { v = m / 1000; u = 'km'; } else if (m >= 1) { v = m; u = 'm'; }
+    else if (m >= 0.01) { v = m * 100; u = 'cm'; } else if (m >= 0.001) { v = m * 1000; u = 'mm'; }
+    else { v = m * 1e6; u = 'μm'; }
+    return trimNum(v, sf) + ' ' + u;
+  }
+  function wavePath(e) {
+    var cycles = 1.5 + (e - E_MIN) / (E_MAX - E_MIN) * 11.5, W = 1000, H = 100, n = 320, d = '';
+    for (var i = 0; i <= n; i++) {
+      var x = W * i / n, y = H / 2 - 40 * Math.sin(2 * Math.PI * cycles * i / n);
+      d += (i ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+    }
+    return d;
+  }
+  function dialView(D, t) {
+    var wrap = turnsAttr(el('div', 'dial'), t);
+    var svgNS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'wave'); svg.setAttribute('viewBox', '0 0 1000 100'); svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    var path = document.createElementNS(svgNS, 'path'); svg.appendChild(path); wrap.appendChild(svg);
+
+    var wl = el('div', 'wl');
+    wl.appendChild(el('span', '', D.low)); wl.appendChild(el('span', '', D.high)); wrap.appendChild(wl);
+    wrap.appendChild(el('p', 'dtitle', D.title));
+
+    var slider = el('input', 'freq'); slider.type = 'range'; slider.min = E_MIN; slider.max = E_MAX; slider.step = 0.01; slider.value = E_FM;
+    slider.setAttribute('aria-label', '주파수 다이얼');
+    wrap.appendChild(slider);
+
+    var ticks = el('div', 'ticks');
+    (D.ticks || []).forEach(function (tk) {
+      var s = el('span', 'tick' + (tk.row2 ? ' row2' : '') + (tk.hl ? ' hl' : ''), tk.label);
+      s.style.left = ((tk.e - E_MIN) / (E_MAX - E_MIN) * 100) + '%';
+      ticks.appendChild(s);
+    });
+    if (D.endLabels) {
+      var a = el('span', 'tick', D.endLabels[0]); a.style.left = '0%'; ticks.appendChild(a);
+      var b = el('span', 'tick', D.endLabels[1]); b.style.left = '100%'; ticks.appendChild(b);
+    }
+    wrap.appendChild(ticks);
+
+    var out = el('div', 'out'), o1 = el('span'), o2 = el('span');
+    out.appendChild(o1); out.appendChild(o2); wrap.appendChild(out);
+    var dyn = el('p', 'dyn'); dyn.setAttribute('aria-live', 'polite'); wrap.appendChild(dyn);
+    if (D.fmButton) {
+      var row = el('div', 'dialrow');
+      var fm = el('button', 'btn ghost', D.fmButton); fm.type = 'button';
+      fm.addEventListener('click', function () { dialTo(E_FM, 1200); });
+      row.appendChild(fm); wrap.appendChild(row);
+    }
+    if (D.formula) wrap.appendChild(el('p', 'fine', D.formula));
+    wrap.appendChild(el('p', 'fine', D.caption));
+
+    dialEls = { slider: slider, path: path, o1: o1, o2: o2, dyn: dyn, D: D };
+    slider.addEventListener('input', function () { cancelDial(); paintDial(parseFloat(slider.value)); });
+    paintDial(E_FM);
+    return wrap;
+  }
+  function paintDial(e) {
+    if (!dialEls) return;
+    var D = dialEls.D;
+    dialEls.slider.value = e;
+    dialEls.path.setAttribute('d', wavePath(e));
+    var nearFm = Math.abs(e - E_FM) < 0.12;
+    if (D.mode === 'words') {
+      var fast = e >= (E_MIN + E_MAX) / 2;
+      dialEls.o1.textContent = fast ? '물결이 빠르게 출렁여요' : '물결이 천천히 출렁여요';
+      dialEls.o2.textContent = fast ? '물결 하나가 짧아요' : '물결 하나가 길어요';
+      dialEls.dyn.textContent = '';
+    } else {
+      dialEls.o1.textContent = D.fLabel + ' ' + fmtFreq(e);
+      dialEls.o2.textContent = D.lLabel + ' ' + fmtLen(e, D.sf);
+      dialEls.dyn.textContent = nearFm && D.fmSentence ? D.fmSentence : '';
+    }
+  }
+  var dialRaf = null;
+  function cancelDial() { if (dialRaf) { cancelAnimationFrame(dialRaf); dialRaf = null; } }
+  function dialTo(target, ms) {
+    if (!dialEls) return;
+    cancelDial();
+    var from = parseFloat(dialEls.slider.value), t0 = performance.now();
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { paintDial(target); return; }
+    (function step(now) {
+      var p = Math.min(1, (now - t0) / ms), k = p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      paintDial(from + (target - from) * k);
+      dialRaf = p < 1 ? requestAnimationFrame(step) : null;
+    })(t0);
+  }
+
+  // ── 말하는 대목에 맞춘 강조 ────────────────────────────────────────
+  function applyHighlight() {
+    var cur = state.turn ? TURNS.indexOf(state.turn) : -1;
+    $$('[data-turns]').forEach(function (e) {
+      e.classList.remove('now', 'seen', 'later');
+      if (cur < 0) return;
+      var idx = e.getAttribute('data-turns').split(' ').map(function (t) { return TURNS.indexOf(t); });
+      if (idx.indexOf(cur) >= 0) e.classList.add('now');
+      else if (Math.max.apply(null, idx) < cur) e.classList.add('seen');
+      else if (Math.min.apply(null, idx) > cur) e.classList.add('later');
+    });
+  }
+  function runActions(turn, ms) {
+    var cue = CUES[state.slide];
+    ((cue.actions || {})[turn] || []).forEach(function (a) {
+      if (a.type === 'pulse') sendPulse();
+      if (a.type === 'dial') {
+        if (a.from != null && dialEls) paintDial(a.from);
+        dialTo(a.to, a.ms != null ? a.ms : ms * 0.9);
+      }
+    });
+  }
+
+  // ── 공연 시뮬레이션(감독의 say 흐름을 흉내 낸다) ───────────────────────
+  var seq = [], run = null, gap = null, ticker = null;
+  function buildSeq() {
+    var cue = CUES[state.slide], L = cue.lv[state.lv], s = [{ role: 'mc', turn: 'open', text: cue.open }];
+    for (var i = 0; i < cue.n; i++) {
+      if (i > 0) s.push({ role: 'mc', turn: 'ask' + i, text: L.ask[i] });
+      s.push({ role: 'docent', turn: 'docent' + i, text: L.ans[i] });
+    }
+    s.push({ role: 'mc', turn: 'after', text: cue.after });
+    return s;
+  }
+  function chunkMs(t) { return Math.max(1100, t.length / CPS * 1000) / speed(); }
+  function startUtter(i) {
+    var u = seq[i]; state.turn = u.turn; applyHighlight();
+    var chunks = chunksOf(u.text), total = chunks.reduce(function (a, c) { return a + chunkMs(c); }, 0);
+    run = { i: i, role: u.role, chunks: chunks, k: 0, t0: performance.now(), dur: chunkMs(chunks[0]) };
+    hudShow(u.role, chunks[0]);
+    runActions(u.turn, total);
+    if (!ticker) ticker = setInterval(tick, 50);
+  }
+  function tick() {
+    if (!run) return;
+    var now = performance.now(), p = Math.min(1, (now - run.t0) / run.dur);
+    hudProgress(run.role, run.chunks[run.k], p);
+    if (p < 1) return;
+    run.k++;
+    if (run.k < run.chunks.length) { run.t0 = now; run.dur = chunkMs(run.chunks[run.k]); hudShow(run.role, run.chunks[run.k]); return; }
+    endUtter();
+  }
+  function endUtter() {
+    var i = run.i; setMode(huds[run.role], 'fading'); run = null;
+    if (i + 1 < seq.length) gap = setTimeout(function () { startUtter(i + 1); }, 500 / speed());
+    else { state.running = false; paintBtns(); }
+  }
+  function stopSim() { clearTimeout(gap); gap = null; clearInterval(ticker); ticker = null; run = null; cancelDial(); }
+  function playSim() {
+    stopSim(); hudClear(); seq = buildSeq(); state.running = true; paintBtns(); startUtter(0);
+  }
+  function nextUtter() {
+    if (!state.running) { playSim(); return; }
+    var i = run ? run.i : -1; clearTimeout(gap); gap = null;
+    if (run) { setMode(huds[run.role], 'idle'); run = null; }
+    if (i + 1 < seq.length) startUtter(i + 1); else { state.running = false; paintBtns(); }
+  }
+  function resetSim() {
+    stopSim(); state.running = false; state.turn = null; hudClear(); applyHighlight(); paintBtns();
+    if (dialEls) paintDial(E_FM);
+  }
+
+  // ── 위 도구줄 ──────────────────────────────────────────────────────
+  function paintBtns() {
+    var vis = visibleIdx(), at = vis.indexOf(state.slide);
+    $('#slidesel').value = String(state.slide);
+    $('#prev').disabled = at <= 0;
+    $('#nextslide').disabled = at < 0 || at >= vis.length - 1;
+    $('#pos').textContent = (at + 1) + ' / ' + vis.length;
+    $$('#levels button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-lv') === state.lv)); });
+    $$('#courses button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-c') === state.course)); });
+    $('#play').textContent = state.running ? '↻ 처음부터' : '▶ 시뮬레이션';
+  }
+  function fillSelect() {
+    var sel = $('#slidesel'); sel.textContent = '';
+    visibleIdx().forEach(function (i) {
+      var o = el('option', '', CUES[i].no + ' ' + CUES[i].title); o.value = String(i); sel.appendChild(o);
+    });
+  }
+  function buildBar() {
+    LEVELS.forEach(function (l) {
+      var b = el('button', '', l.name); b.type = 'button'; b.setAttribute('data-lv', l.key);
+      b.addEventListener('click', function () { setLevel(l.key); });
+      $('#levels').appendChild(b);
+    });
+    COURSES.forEach(function (c) {
+      var b = el('button', '', c.name + ' ' + c.ids.length); b.type = 'button'; b.setAttribute('data-c', c.name);
+      b.addEventListener('click', function () { setCourse(c.name); });
+      $('#courses').appendChild(b);
+    });
+    $('#slidesel').addEventListener('change', function (ev) { setSlide(parseInt(ev.target.value, 10)); });
+    $('#prev').addEventListener('click', function () { stepSlide(-1); });
+    $('#nextslide').addEventListener('click', function () { stepSlide(1); });
+    $('#play').addEventListener('click', playSim);
+    $('#next').addEventListener('click', nextUtter);
+    $('#reset').addEventListener('click', resetSim);
+    fillSelect();
+  }
+  function stepSlide(d) {
+    var vis = visibleIdx(), at = vis.indexOf(state.slide) + d;
+    if (at >= 0 && at < vis.length) setSlide(vis[at]);
+  }
+  function setSlide(i) { stopSim(); state.running = false; state.turn = null; hudClear(); state.slide = i; renderSlide(); paintBtns(); }
+  function setLevel(k) { stopSim(); state.running = false; state.turn = null; hudClear(); state.lv = k; renderSlide(); paintBtns(); }
+  function setCourse(name) {
+    state.course = name; fillSelect();
+    var vis = visibleIdx();
+    if (vis.indexOf(state.slide) < 0) { setSlide(vis[0]); return; }   // 코스에 없는 장이면 코스의 첫 장으로
+    paintBtns();
+  }
+
+  document.addEventListener('keydown', function (ev) {
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test((ev.target || {}).tagName || '')) return;
+    if (ev.key === 'ArrowRight') stepSlide(1);
+    else if (ev.key === 'ArrowLeft') stepSlide(-1);
+    else if (ev.key === 'n' || ev.key === 'N') nextUtter();
+  });
+
+  buildBar();
+  var q = new URLSearchParams(location.search);
+  if (q.get('level') && CUES[0].lv[q.get('level')]) state.lv = q.get('level');
+  if (q.get('course') && COURSES.some(function (c) { return c.name === q.get('course'); })) { state.course = q.get('course'); fillSelect(); }
+  if (q.get('cue')) { var ci = CUES.map(function (c) { return c.id; }).indexOf(q.get('cue')); if (ci >= 0) state.slide = ci; }
+  else if (q.get('slide') && CUES[+q.get('slide')]) state.slide = +q.get('slide');
+  if (visibleIdx().indexOf(state.slide) < 0) state.slide = visibleIdx()[0];
+  renderSlide(); paintBtns();
+
+  // 화면 확인·실서비스 연결용. `freeze` 는 시간을 멈춘 채 한 순간을 그린다(스크린샷), 나머지는 감독 연결 지점이다.
+  window.hud = {
+    freeze: function (i, k, p, prevRole) {
+      stopSim(); hudClear(); seq = buildSeq(); var u = seq[i], ch = chunksOf(u.text);
+      state.turn = u.turn; applyHighlight();
+      if (prevRole && i > 0) {            // 직전 말(상대 구역)은 흐려지는 중으로 보인다
+        var pu = seq[i - 1], pc = chunksOf(pu.text), ph = huds[pu.role];
+        ph.done.textContent = ''; ph.rest.textContent = pc[pc.length - 1]; setMode(ph, 'fading'); clearTimeout(ph.timer);
+      }
+      hudShow(u.role, ch[k]); hudProgress(u.role, ch[k], p);
+      runActions(u.turn, 3000);
+    },
+    seqLength: function () { return buildSeq().length; },
+    // 이 장에서 각 구역이 띄울 가장 긴 조각 — 가리는 면적이 최대일 때를 시험하려고(`tests/test_handout_hud.py`)
+    worstChunks: function () {
+      var best = { mc: '', docent: '' };
+      buildSeq().forEach(function (u) { chunksOf(u.text).forEach(function (c) { if (c.length > best[u.role].length) best[u.role] = c; }); });
+      return best;
+    },
+    showBoth: function (mcText, docentText) {
+      hudClear(); hudShow('mc', mcText); setMode(huds.mc, 'fading'); clearTimeout(huds.mc.timer);
+      hudShow('docent', docentText); hudProgress('docent', docentText, 0.5);
+    },
+    setSlide: setSlide, setLevel: setLevel, setCourse: setCourse, play: playSim, next: nextUtter, reset: resetSim,
+    chunksOf: chunksOf, state: state
+  };
+})();
+</script>
+</body>
+</html>

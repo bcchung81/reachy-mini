@@ -1,0 +1,129 @@
+id: 03-theory
+levels:
+  초등:
+    headline: 전파는 눈에 안 보이는 물결이에요
+    items:
+    - t: 물결
+      b: 연못의 물결처럼 멀리 퍼져 가요. 전파는 물이 없는 텅 빈 곳도 지나가요.
+    - t: 주파수
+      b: 물결이 얼마나 빠르게 출렁이는지예요.
+    - t: 파장
+      b: 물결 하나의 길이예요. 빠르게 출렁일수록 짧아져요.
+    remember: 빠르게 출렁일수록 물결 하나는 짧아져요.
+    visual:
+      type: dial
+      mode: words
+      low: 천천히 출렁여요 · 물결 하나 — 길어요
+      high: 빠르게 출렁여요 · 물결 하나 — 짧아요
+      title: 다이얼을 돌려 보세요. 물결이 어떻게 바뀔까요?
+      endLabels:
+      - 느리게
+      - 빠르게
+      caption: 그림은 느낌만 보여 줘요.
+  중고등:
+    headline: 주파수가 높을수록 파장은 짧아져요
+    items:
+    - t: 전자기파
+      b: 전기와 자기가 서로를 밀어 주며 퍼져 나가요. 소리와 달리 텅 빈 우주 공간에서도 가요.
+    - t: 주파수 (Hz)
+      b: 1초에 몇 번 출렁이는지예요. 단위 헤르츠는 전파를 처음 증명한 헤르츠에서 왔어요.
+    - t: 파장
+      b: 한 번 출렁이는 동안 나아간 거리예요. 주파수와 반비례해요.
+    remember: 주파수가 높아지면 파장은 짧아져요. 둘은 반비례예요.
+    visual:
+      type: dial
+      mode: num
+      low: 주파수 낮음 · 파장 길다
+      high: 주파수 높음 · 파장 짧다
+      title: 주파수 다이얼 — 돌려서 파장을 확인해 보세요
+      ticks:
+      - e: 3
+        label: 1kHz
+      - e: 6
+        label: 1MHz
+      - e: 9
+        label: 1GHz
+      - e: 12
+        label: 1THz
+      fLabel: 주파수
+      lLabel: 파장 약
+      sf: 1
+      formula: 주파수 ↑ → 파장 ↓ (반비례)
+      caption: 그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요.
+  일반:
+    headline: 파장은 빛의 속도를 주파수로 나눈 값이에요
+    items:
+    - t: 전파
+      b: 빛과 같은 전자기파의 한 갈래예요. 진공에서도 가고, 그때는 빛의 속도로 달려요.
+    - t: 주파수
+      b: 1초 동안 진동하는 횟수예요. 1회가 1헤르츠, 1,000회가 1킬로헤르츠예요.
+    - t: 파장
+      b: 빛의 속도 ÷ 주파수예요. 100메가헤르츠 FM 라디오 전파의 파장은 약 3m예요.
+    remember: 주파수가 높을수록 파장은 짧아져요.
+    visual:
+      type: dial
+      mode: num
+      low: 주파수 낮음 · 파장 길다
+      high: 주파수 높음 · 파장 짧다
+      title: 주파수 다이얼 — 돌려서 파장을 확인해 보세요
+      ticks:
+      - e: 3
+        label: 1kHz
+      - e: 6
+        label: 1MHz
+      - e: 9
+        label: 1GHz
+      - e: 12
+        label: 1THz
+      - e: 8
+        label: FM 라디오 100MHz
+        row2: true
+        hl: true
+      fLabel: 주파수
+      lLabel: 파장 = 약
+      sf: 1
+      fmSentence: 100메가헤르츠 FM 라디오 전파는 파장이 약 3미터예요.
+      fmButton: FM 라디오 100MHz 로 맞추기
+      formula: 파장 = 빛의 속도 ÷ 주파수 · 예) 100MHz FM 라디오 → 약 3m
+      caption: 그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요.
+  전문가:
+    headline: 전파는 3,000GHz보다 낮은 주파수의 전자기파다
+    items:
+    - t: 전파법상 정의
+      b: 인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것.
+    - t: ITU 전파규칙
+      b: 그 범위를 3,000GHz보다 낮은 주파수로 잡는다.
+    - t: 빛의 속도 c
+      b: 299,792,458m/s. 측정값이 아니라 미터의 정의가 고정한 값이라 정확하다.
+    remember: λ = c ÷ f 이고, c 는 근삿값이 아니라 정의로 고정된 정확한 값이다.
+    visual:
+      type: dial
+      mode: num
+      low: 주파수 낮음 · 파장 길다
+      high: 주파수 높음 · 파장 짧다
+      title: 주파수 다이얼 — 돌려서 파장을 확인해 보세요
+      ticks:
+      - e: 3
+        label: 1kHz
+      - e: 6
+        label: 1MHz
+      - e: 9
+        label: 1GHz
+      - e: 12
+        label: 1THz
+      - e: 8
+        label: FM 라디오 100MHz
+        row2: true
+        hl: true
+      - e: 12.4771
+        label: 3,000GHz
+        row2: true
+        hl: true
+      fLabel: f =
+      lLabel: λ = c ÷ f =
+      sf: 4
+      fmSentence: FM 라디오 100MHz 근처다. 파장은 약 3m다.
+      fmButton: FM 라디오 100MHz 로 맞추기
+      formula: λ = c ÷ f · c = 299,792,458 m/s (정확값)
+      caption: 그림의 물결 수는 느낌을 보여 주려고 줄여 그렸어요(실제 비율 아님). 숫자는 파장 = 빛의 속도 ÷ 주파수로 계산했어요.
+    source: 근거 · 국가법령정보센터 — 전파법 제2조 · ITU Radio Regulations No. 1.5 · Wikipedia — Speed of light (신뢰 등급 B)
