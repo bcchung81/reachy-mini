@@ -1,10 +1,25 @@
+# 파이썬 환경 — uv 가 .venv 를 다시 만든다(인터프리터는 .venv/bin/python 하나뿐)
 .venv/
-.gst-registry.bin
-.disabled-gst-plugins/
 __pycache__/
 *.pyc
-.DS_Store
+.pytest_cache/
+
+# GStreamer 우회 — reachy.sh sim 이 기동할 때 머신별로 만든다
+.gst-registry.bin
+.disabled-gst-plugins/
+
+# 실행 로그 — ./reachy.sh logs 가 읽는 자리
 *.log
 .demo-logs/
+
+# 에이전트·도구 작업물(로컬 전용)
 .superpowers/
 .worktrees/
+.firecrawl/
+.claude/settings.local.json
+.claude/*.lock
+
+# macOS
+.DS_Store
+스크린샷 *.png
+Screenshot *.png
