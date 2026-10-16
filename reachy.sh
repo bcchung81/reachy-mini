@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Reachy Mini 단일 진입점 — 시뮬레이터도 시연 스택도 여기서 띄운다.
 #
-#   ./reachy.sh start --sim|--robot   시연 전부 기동(추론 3종·로봇 2대·무대감독+대시보드). --dry-run 은 계획만
+#   ./reachy.sh start --sim|--robot   **시나리오 시연** 전부 기동(추론 3종·로봇 2대·무대감독+대시보드) → 콘솔 s 로 공연 시작. --dry-run 은 계획만
 #   ./reachy.sh sim                    시뮬 데몬만 (3D 뷰어 + 오디오 + 카메라)
 #   ./reachy.sh sim --scene minimal    테이블 + 사과/크루아상/오리
 #   ./reachy.sh sim --headless         3D 창 없이  (⚠ 카메라 스트림도 꺼진다)
 #   ./reachy.sh sim --no-media         오디오·카메라 끄고 모션만
-#   ./reachy.sh demo                   전체 스택(LLM·STT·TTS·데몬) + 마이크 대화
+#   ./reachy.sh demo                   1대 자유 대화(시나리오 아님) — 전체 스택(LLM·STT·TTS·데몬) + 마이크 대화
 #   ./reachy.sh demo --text            키보드로 대화 — 마이크가 말썽일 때
 #   ./reachy.sh demo --no-robot        시뮬 없이 대화·음성만 — 최후 폴백
 #   ./reachy.sh demo --exit-clean      앱을 나갈 때 서버까지 함께 내린다
@@ -20,6 +20,12 @@
 #   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
 #   ./reachy.sh bake [--check|--level 일반|--limit N|--force|--prune]   고정 대사를 TTS 캐시에 굽기(4수준 약 38분, 바뀐 문장만 다시)
 #   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
+#
+# 큐시트 시나리오를 로봇 2대(사회자·도슨트)로 돌리려면 `start --sim`(시뮬) 또는 `start --robot`
+# (실기)이다. `start` 는 띄우기만 하고 **공연을 자동으로 시작하지 않는다** — 로봇이 붙으면
+# 이 터미널의 감독 콘솔(또는 대시보드 시작 버튼)에서 `s` 로 시작한다.
+#   콘솔: s 시작 · e 종료(첫 큐로) · n 다음 · p 이전 · a 비상정지 · r 이 큐 다시 · q 끄기 (전체 목록은 ?)
+# `demo` 는 1대 자유 대화라 시나리오가 돌지 않는다.
 #
 # `start` 는 시연 한 벌이고 나머지는 **부품**이다(1대 개발·실기 운영에 쓴다). `start` 는
 # 무대감독 콘솔이 이 터미널에 뜬다 — q/Ctrl-C 로 끝내면 이 실행이 띄운 것(시뮬: 데몬·앱,
