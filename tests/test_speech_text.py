@@ -101,6 +101,23 @@ def test_글자_수_상한을_넘기_전_문장까지만_남긴다():
     assert cap_length(raw, max_sentences=10, max_chars=12) == ("가나다라마.바사아자차.", True)
 
 
+def test_상한을_근소하게_넘는_문장은_통째로_남긴다():
+    """실측(2026-10-06 단독): 141자 답이 140자 상한에 1자 걸려 요점이 든 둘째 문장(87자)이 통째로 잘렸다.
+    1자 때문에 답이 질문과 상관없는 첫 문장만 남았다. 상한은 말의 길이를 묶는 장치지 문장을 버리는 칼이 아니다."""
+    first = "가" * 53 + "."          # 54자
+    second = "나" * 86 + "."         # 87자 → 합 141자
+    raw = first + second
+    assert cap_length(raw, max_sentences=3, max_chars=140) == (raw, False)
+
+
+def test_상한의_1할까지는_남기고_그_이상은_자른다():
+    first = "가" * 53 + "."          # 54자
+    fits = first + "나" * 99 + "."   # 합 154자 = 140 × 1.1 — 남긴다
+    over = first + "나" * 100 + "."   # 합 155자 — 자른다
+    assert cap_length(fits, max_sentences=3, max_chars=140) == (fits, False)
+    assert cap_length(over, max_sentences=3, max_chars=140) == (first, True)
+
+
 def test_첫_문장은_상한을_넘어도_통째로_남긴다():
     """문장 중간에서 자르면 TTS 가 말을 뚝 끊는다 — 그게 조금 긴 것보다 나쁘다."""
     raw = "이 문장은 상한보다 훨씬 길지만 잘리면 안 됩니다.다음 문장은 버린다."

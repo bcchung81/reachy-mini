@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Callable
 
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.server import serve as _ws_serve
 
 from stage.camera import CameraRelay
@@ -186,6 +187,16 @@ class StageServer:
                     continue
 
                 self._dispatch(role, msg)
+        except ConnectionClosed as exc:
+            # **닫기 프레임 없이 끊긴 연결**(앱 강제 종료·와이파이 순단·전원) — 정상 종료는 `for` 가 조용히 끝내지만
+            # 이쪽은 예외로 나온다(2026-10-06). 여기서 새면 websockets 가 "connection handler failed" 와 전체 스택을
+            # 로그에 찍어, 실기에서 와이파이가 끊길 때마다 진짜 원인이 스택에 묻힌다. 대시보드 핸들러는 이미 잡고 있었다
+            # (`DashboardServer.handler`). 거기와 달리 **로봇이 사라진 일은 운영자가 알아야 하므로** 원인을 한 줄 남긴다
+            # — 뒤의 finally 가 "연결이 끊어졌다" 와 1인 모드 전환을 이어서 알린다.
+            self._warn(
+                f"[{role or '미등록'}] 닫기 인사 없이 끊겼다({type(exc).__name__}) — "
+                "앱이 죽었거나 와이파이·전원이 끊겼는지 본다"
+            )
         finally:
             if role is not None:
                 # 한 번만 계산해서 삭제와 on_disconnect 둘 다 이 값으로 문을

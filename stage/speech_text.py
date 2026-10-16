@@ -143,6 +143,10 @@ def speakable(text: str) -> tuple[str, list[str]]:
     return s, changes
 
 
+# 분량 상한을 문장 경계에서 봐주는 폭 — `cap_length` docstring 의 실측 근거.
+LENGTH_TOLERANCE = 1.1
+
+
 def cap_length(text: str, max_sentences: int, max_chars: int) -> tuple[str, bool]:
     """문장 경계에서 분량 상한을 건다. (결과, 잘랐는지).
 
@@ -151,7 +155,9 @@ def cap_length(text: str, max_sentences: int, max_chars: int) -> tuple[str, bool
     자르므로 상한 역할을 못 한다.
 
     - 문장을 앞에서부터 담다가 문장 수가 `max_sentences` 에 닿거나 누적 길이가
-      `max_chars` 를 넘으면 멈춘다. 길이는 원문 앞에서부터의 글자 수다.
+      `max_chars` 의 `LENGTH_TOLERANCE` 배를 넘으면 멈춘다. 길이는 원문 앞에서부터의 글자 수다.
+    - **상한은 1할까지 봐준다**(2026-10-06). 칼같이 자르면 141자 답이 140자 상한에 1자 걸려 요점이 든 둘째
+      문장(87자)을 통째로 잃었다 — 말 길이는 1할 차이로 달라지지 않지만 답은 달라진다.
     - **첫 문장은 길어도 통째로 남긴다.** 문장 중간 절단은 TTS 가 말을 뚝 끊어
       조금 긴 것보다 나쁘다.
     - 잘라도 원문의 간격을 그대로 둔다 — 새로 이어 붙이지 않는다.
@@ -163,7 +169,7 @@ def cap_length(text: str, max_sentences: int, max_chars: int) -> tuple[str, bool
     cut_end = spans[0][1]
     kept = 1
     for _, end in spans[1:]:
-        if kept >= max_sentences or end > max_chars:
+        if kept >= max_sentences or end > max_chars * LENGTH_TOLERANCE:
             break
         cut_end = end
         kept += 1

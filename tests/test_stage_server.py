@@ -224,6 +224,34 @@ class _StubWS:
         pass  # 이 테스트는 감독이 보내는 지시를 보지 않는다
 
 
+class _AbruptWS(_StubWS):
+    """hello 뒤 닫기 프레임 없이 끊긴다 — 앱 강제 종료·와이파이 순단·전원."""
+
+    def __next__(self):
+        if not self._sent_hello:
+            self._sent_hello = True
+            return self._hello
+        from websockets.exceptions import ConnectionClosedError
+        raise ConnectionClosedError(None, None)
+
+
+def test_닫기_프레임_없이_끊겨도_트레이스백_대신_한_줄로_알린다():
+    """실측(2026-10-06 시뮬): 사회자 앱을 강제로 끄자 감독 로그에 "connection handler failed" 와 전체 스택이 찍혔다.
+    `for raw in ws` 가 비정상 종료를 예외로 내는데 핸들러가 안 잡아서 websockets 가 대신 찍는다. 실기에서는 와이파이가
+    끊길 때마다 같은 일이 나고, 진짜 원인(`연결이 끊어졌다`)이 스택에 묻힌다 — 대시보드 핸들러는 이미 잡고 있었다."""
+    warnings: list[str] = []
+    s = StageServer(
+        CueSheet([Cue("c1", "첫째", "사회자 대사", "지시", "partner",
+                      points=(Turn("", {"일반": "도슨트 대사"}),))]),
+        generate=lambda role, brief, history: "도슨트 대사",
+        warn=warnings.append,
+    )
+    hello_msg = json.dumps({"type": "hello", "role": "mc", "unit_id": None, "version": "1.9.0"})
+    s.handler(_AbruptWS(hello_msg, threading.Event()))      # 예외가 새면 여기서 터진다
+    assert any("[mc]" in w and "닫기 인사 없이" in w for w in warnings), warnings
+    assert any("[mc]" in w and "연결이 끊어졌다" in w for w in warnings), warnings
+
+
 def test_빠른_재연결에서_새_연결을_끊긴_것으로_보고하지_않는다():
     """review finding 2 — `_conns` 삭제는 `is ws` 로 지키면서 `on_disconnect`
     는 무조건 불렀다. 같은 role 로 빠르게 재연결하면(새 연결이 이미 그
