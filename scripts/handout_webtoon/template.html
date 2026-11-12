@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전파체험관 교육자료 — 웹툰 칸</title>
+<!--
+  웹툰 칸 연출 시안(초등·중고등) — `python -m scripts.handout_webtoon.build` 가 만든 파일이다. 직접 고치지 않는다.
+  틀은 `scripts/handout_webtoon/template.html`(엔진) · `scenes.js`(칸 그림) · `storyboard.yaml`(콘티).
+  글은 handout-hud 의 검증된 데이터, 음성은 고정 대사 TTS 캐시를 이어 붙인 것.
+
+  표현 기법은 aimotion 157 「칸 너머로 점프」(https://github.com/kstost/cokacmotion, MIT © 2026 kstost)에서 **기술만** 가져왔다:
+  스크롤이 곧 시간(정지 위치·최소 저크 이동) · 속도장 위의 읽기 시간 σ(s)=∫ds/v 와 그 역함수 · 여백 = 쉼 · 다각형 clip 칸과 층 시차 y−f·d ·
+  칸 깨기(테두리 위 층 + 합집합 clip, 화면 공간 베지어 + 스크롤) · 집중선 · 말풍선 꼬리(타원 매개변수 각) · 스트립 지도 레일.
+  장면·소재·색·구도·문구는 이 대본에서 새로 지었다. 데모는 칸에 머무는 시간을 읽을거리에서 정했지만 여기서는 **실제 음성 길이**이고,
+  여백 높이는 빌더가 넣은 쉼에 이동이 꼭 맞도록 거꾸로 푼다.
+
+  외부 리소스를 부르지 않는다(전시장은 오프라인). 글자는 캔버스에 그리지 않고 DOM textContent 로만 넣는다.
+  그림은 t 의 순수 함수다 — `?lv=초등&cue=02&t=40` 으로 한 순간을 멈춰 볼 수 있다. `?check=1` 은 두 수준 × 모든 큐를 지어 경고를 모은다.
+-->
+<style>
+:root{--ink:#0E2433;--sig:#0B7FB5;--teal:#0A6F84;--amber:#B96F00;--mcbg:#DDF1F5;--docbg:#FFEFD6;--paper:#FBFCFD;--bg:#E4EDF3;--bar:#0E2433;--muted:#52636F}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0B1A26;color:var(--ink);overflow:hidden;word-break:keep-all;
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+.bar{height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--bar);color:#fff;font-size:14px}
+.bar b{font-weight:800;letter-spacing:.02em;white-space:nowrap}
+.bar select{background:#1B3A4F;color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:5px 12px;min-height:32px;font:inherit;max-width:260px}
+.round{width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.55);background:transparent;padding:0;font-size:17px;line-height:1}
+.seg{display:flex;border:1px solid rgba(255,255,255,.45);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:5px 14px;min-height:32px;white-space:nowrap}
+.seg button+button{border-left:1px solid rgba(255,255,255,.3)}
+.seg button[aria-pressed="true"]{background:#fff;color:var(--bar);font-weight:800}
+.pill{border:1px solid rgba(255,255,255,.55);background:transparent;border-radius:999px;padding:5px 14px;min-height:32px;white-space:nowrap}
+.pill.go{background:#fff;color:var(--bar);font-weight:800}
+#scrub{flex:1;min-width:80px;accent-color:#7FD3F5}
+#time{font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}
+.note{opacity:.7;white-space:nowrap}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7FD3F5;outline-offset:2px}
+.fit{position:relative;height:calc(100vh - 48px);overflow:hidden}
+.stage{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:0 0;background:var(--bg);overflow:hidden}
+
+/* 가운데 스트립 열 — 캔버스(칸 그림·풍선 모양·레일) 위에 DOM(풍선 글·이름표)이 같은 스트립 좌표로 얹힌다 */
+.view{position:absolute;left:470px;top:0;width:690px;height:900px;
+  -webkit-mask-image:linear-gradient(transparent,#000 34px,#000 866px,transparent);mask-image:linear-gradient(transparent,#000 34px,#000 866px,transparent)}
+.view canvas{position:absolute;left:0;top:0;width:690px;height:900px;display:block}
+.sroot{position:absolute;left:10px;top:0;width:640px;height:1px;will-change:transform}
+.pn{position:absolute;left:0;top:0;width:640px;pointer-events:none}
+.pin{position:absolute;left:0;top:0;width:640px;height:100%;transform-origin:0 0}
+.lab{position:absolute;left:0;top:0;visibility:hidden;transform-origin:0 0}
+.lab>span{position:absolute;left:0;top:0;transform:translate(-50%,-50%);display:block;text-align:center;white-space:nowrap;font-weight:800;line-height:1.22}
+.lab small{display:block;font-weight:700}
+.l-sign>span{background:#fff;border:3px solid var(--ink);border-radius:4px;padding:4px 12px;font-size:21px;color:var(--ink)}
+.l-tag>span{background:var(--amber);color:#fff;border:3px solid var(--ink);border-radius:999px;padding:4px 16px;font-size:20px}
+.l-tagt>span{background:var(--teal);color:#fff;border:3px solid var(--ink);border-radius:999px;padding:4px 16px;font-size:20px}
+.l-fact>span{background:#fff;border:3px solid var(--ink);border-radius:10px;padding:8px 16px;font-size:30px;color:var(--ink);box-shadow:5px 6px 0 rgba(14,36,51,.22)}
+.l-fact small{font-size:16px;color:var(--muted);margin-top:3px}
+.l-q>span{font-size:96px;color:var(--teal);-webkit-text-stroke:3px var(--ink);line-height:1}
+.l-big>span{font-size:42px;color:#F2B64B;-webkit-text-stroke:7px var(--ink);paint-order:stroke fill;letter-spacing:.02em}
+.l-gut>span{background:#fff;border:3px solid var(--ink);padding:6px 12px;font-size:18px;color:var(--ink);box-shadow:6px 6px 0 #C9D9E4;white-space:normal;width:max-content;max-width:260px}
+.bl{position:absolute;left:0;top:0;visibility:hidden;font-size:21px;line-height:1.38;font-weight:700;letter-spacing:-.2px;color:var(--ink);text-align:center;text-wrap:balance}
+.bl .rest{opacity:.42}
+
+/* 옆 열 — 왼쪽 사회자(큐·제목·기억해 두기), 오른쪽 도슨트(포인트 카드) */
+.cue-tag{position:absolute;left:40px;top:28px;max-width:400px;background:var(--ink);color:#fff;font-weight:800;font-size:19px;padding:7px 16px;border-radius:6px 16px 16px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lvl{position:absolute;right:30px;top:30px;font-size:15px;font-weight:800;color:var(--muted)}
+.robot{position:absolute;width:176px;height:176px;margin:-88px 0 0 -88px;border-radius:50%;border:5px solid var(--ink);display:flex;align-items:center;justify-content:center;will-change:transform}
+.robot img{width:142px;height:142px;display:block}
+.robot.mc{left:240px;top:186px;background:var(--mcbg)}
+.robot.doc{left:1375px;top:186px;background:var(--docbg)}
+.robot.doc img{transform:scaleX(-1)}
+.robot .ring{position:absolute;inset:-14px;border-radius:50%;border:6px solid transparent}
+.robot.mc.on .ring{border-color:var(--teal)}
+.robot.doc.on .ring{border-color:var(--amber)}
+.who{position:absolute;top:286px;transform:translateX(-50%);font-weight:800;font-size:20px;color:#fff;padding:5px 18px;border-radius:999px;border:3px solid var(--ink)}
+.who.mc{left:240px;background:var(--teal)}
+.who.doc{left:1375px;background:var(--amber)}
+.headline{position:absolute;left:44px;top:348px;width:392px;font-size:31px;font-weight:800;line-height:1.32;letter-spacing:-.01em;visibility:hidden}
+.headline:before{content:"";display:block;width:56px;height:6px;border-radius:3px;background:var(--sig);margin-bottom:14px}
+.remember{position:absolute;left:40px;bottom:40px;width:400px;background:#fff;border:4px solid var(--ink);border-radius:8px;padding:14px 18px 16px;
+  box-shadow:7px 8px 0 var(--amber);visibility:hidden}
+.remember b{display:inline-block;background:var(--amber);color:#fff;font-size:17px;padding:3px 12px;border-radius:999px;margin-bottom:8px}
+.remember p{margin:0;font-size:22px;font-weight:800;line-height:1.4}
+.cards{position:absolute;left:1180px;top:338px;width:392px}
+.card{background:#fff;border:3px solid var(--ink);border-radius:8px;padding:12px 16px 13px;margin-bottom:14px;visibility:hidden;box-shadow:5px 6px 0 rgba(14,36,51,.16)}
+.card.on{border-color:var(--amber);box-shadow:6px 7px 0 var(--amber)}
+.card h3{margin:0 0 5px;font-size:21px;font-weight:800;line-height:1.3}
+.card h3 i{font-style:normal;color:var(--amber);margin-right:10px}
+.card p{margin:0;font-size:17px;font-weight:600;line-height:1.45;color:#33454f}
+.start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(8,20,30,.55);z-index:5}
+.start button{font-size:30px;font-weight:800;padding:22px 44px;border:4px solid var(--ink);border-radius:12px;background:#fff;color:var(--ink);box-shadow:8px 9px 0 var(--amber)}
+.start small{display:block;font-size:16px;font-weight:600;margin-top:6px;color:var(--muted)}
+.start[hidden]{display:none}
+</style>
+</head>
+<body>
+<header class="bar">
+  <b>웹툰 칸 시안</b>
+  <div class="seg" id="lvseg" role="group" aria-label="수준 고르기"></div>
+  <button type="button" class="round" id="prev" aria-label="이전 장">‹</button>
+  <select id="cues" aria-label="장 고르기"></select>
+  <button type="button" class="round" id="nextc" aria-label="다음 장">›</button>
+  <button type="button" class="pill go" id="play">▶ 재생</button>
+  <input type="range" id="scrub" min="0" max="1" step="0.01" value="0" aria-label="재생 위치">
+  <span id="time">0:00 / 0:00</span>
+  <span class="note" id="note"></span>
+</header>
+<div class="fit" id="fit">
+  <div class="stage" id="stage">
+    <div class="cue-tag" id="cuetag"></div>
+    <div class="robot mc" id="rb-mc"><span class="ring"></span><img alt="사회자 로봇" src="__ICON__"></div>
+    <div class="who mc">사회자</div>
+    <div class="headline" id="headline"></div>
+    <div class="remember" id="remember"><b>기억해 두기</b><p id="remtext"></p></div>
+    <div class="robot doc" id="rb-doc"><span class="ring"></span><img alt="도슨트 로봇" src="__ICON__"></div>
+    <div class="who doc">도슨트</div>
+    <div class="cards" id="cards"></div>
+    <div class="view" id="view"><canvas id="cv" width="690" height="900"></canvas></div>
+  </div>
+  <div class="start" id="start"><button type="button" id="startbtn">▶ 공연 시작<small id="startsub">로봇 목소리가 나와요</small></button></div>
+</div>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+/*__LIVE__*/
+</script>
+<script>
+(async function () {
+  'use strict';
+  const DATA = JSON.parse(document.getElementById('data').textContent), LEVELS = DATA.levels;
+  // ── 무대 치수(무대 1600×900 의 px). 스트립 좌표: x 0..640(열 안), y 아래로. 화면 y = 스트립 y − s(t)
+  const W = 1600, H = 900, VW = 690, VH = 900, SX = 10, SW = 640, XL = 22, XR = 618, SIL = [140, 500];
+  const ANCHOR = 450;                       // 눈이 쉬는 화면 y — 칸의 가운데를 여기에 데려와 멈춘다
+  // 속도장(데모의 V_PAGE 2600 / V_GUTTER 520 / EDGE 420 은 1920 높이 무대 값 — 900 높이 열에 맞춰 줄였다)
+  const V_PAGE = 1500, V_GUTTER = 300, EDGE = 200, MOVE0 = 0.3, GMIN = 26, GMAX = 1600;
+  const SL_T = 34, SL_B = 110;              // 기울어진 칸: 위 변은 오른쪽이 34 낮고, 아래 변은 오른쪽이 110 낮다(데모와 반대로 기울임)
+  const ART_H = { wide: 290, normal: 250, slant: 286, free: 330 };
+  const TAU = Math.PI * 2, DEG = Math.PI / 180;
+  const COL = { ink: '#0E2433', ink2: '#1B3A4F', sig: '#0B7FB5', sig2: '#59AED6', sig3: '#C4E3F2', teal: '#0A6F84', teal2: '#57B5C3', teal3: '#CDEBEF',
+    amber: '#B96F00', amber2: '#EBA53A', amber3: '#FBE2B5', mcbg: '#DDF1F5', docbg: '#FFEFD6', paper: '#FBFCFD', sky: '#E2F0F7', sky2: '#C6E2F0',
+    land: '#B9D3A6', land2: '#8DB27F', sea: '#8CC8E2', sea2: '#4F9EC4', cream: '#FFF9EC', skin: '#F2D3B1', hair: '#3B2A22', red: '#D0573A',
+    grey: '#9FB0BB', grey2: '#D8E2E9', white: '#FFFFFF', night: '#132C40', shade: '#D3DEE6' };
+  const $ = (s) => document.querySelector(s);
+  const cv = $('#cv'), ctx = cv.getContext('2d'), view = $('#view');
+  let K = 1, STAGE_SC = 1;
+
+  // ───────────────────────────────────────────── 작은 도구(결정적 — 난수는 시드 rand 만, 시계는 장면 시각 t 만)
+  function rand(seed) { let a = seed >>> 0; return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
+  const lerp = (a, b, k) => a + (b - a) * k;
+  const smooth = (v) => { v = clamp(v); return v * v * (3 - 2 * v); };
+  const MJ = (u) => { u = clamp(u); return u * u * u * (10 + u * (-15 + 6 * u)); };          // 최소 저크
+  const outCubic = (u) => { u = clamp(u); return 1 - (1 - u) ** 3; };
+  const outBack = (u, k = 1.7) => { u = clamp(u) - 1; return 1 + (k + 1) * u * u * u + k * u * u; };
+  const pop = (t, t0, d = 0.32, k = 2.2) => (t < t0 ? 0 : outBack((t - t0) / d, k));
+  function mk(w, h) { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; }
+  function path(c, P) { c.beginPath(); c.moveTo(P[0][0], P[0][1]); for (let i = 1; i < P.length; i++) c.lineTo(P[i][0], P[i][1]); c.closePath(); }
+  function pathAdd(c, P) { c.moveTo(P[0][0], P[0][1]); for (let i = 1; i < P.length; i++) c.lineTo(P[i][0], P[i][1]); c.closePath(); }
+  const rectPoly = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  function bbox(P) { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of P) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); } return { x0, y0, x1, y1 }; }
+  const bez = (a, b, c, d, u) => { const v = 1 - u; return v * v * v * a + 3 * v * v * u * b + 3 * v * u * u * c + u * u * u * d; };
+  const WARN = [], ISSUES = [];
+  const warn = (m) => { if (WARN.indexOf(m) < 0) WARN.push(m); console.warn(m); };
+  const issue = (m) => { if (ISSUES.indexOf(m) < 0) ISSUES.push(m); };
+
+  // 로봇 아이콘(칸 안 그림에도 쓴다)
+  const iconImg = new Image(); iconImg.src = $('#rb-mc img').src; await iconImg.decode();
+  const iconFlip = mk(160, 160); { const c = iconFlip.getContext('2d'); c.translate(160, 0); c.scale(-1, 1); c.drawImage(iconImg, 0, 0); }
+
+/*__SCENES__*/
+
+  // ───────────────────────────────────────────── 속도장: 읽는 선이 칸 그림 위면 빠르게, 빈 여백 위면 느리게
+  // (aimotion 157 strip.js:52·58 의 식 — MIT © 2026 kstost. 여백 소속도 g 를 양 끝 smoothstep 두 개의 곱으로)
+  function gutterG(gs, y) { let g = 0; for (const G of gs) g = Math.max(g, smooth((y - G.y0 + EDGE / 2) / EDGE) * smooth((G.y1 - y + EDGE / 2) / EDGE)); return g; }
+  const pace = (gs, y) => V_PAGE + (V_GUTTER - V_PAGE) * gutterG(gs, y);
+
+  // ───────────────────────────────────────────── 칸 기하
+  function geom(pn) {
+    const y0 = pn.y0, h = pn.h;
+    pn.poly = pn.kind === 'slant' ? [[XL, y0], [XR, y0 + SL_T], [XR, y0 + h + SL_B], [XL, y0 + h]]
+      : pn.kind === 'silent' ? rectPoly(SIL[0], y0, SIL[1], y0 + h)
+      : pn.kind === 'free' ? rectPoly(0, y0, SW, y0 + h) : rectPoly(XL, y0, XR, y0 + h);
+    const P = pn.poly; pn.bb = bbox(P);
+    pn.topMean = (P[0][1] + P[1][1]) / 2; pn.botMean = (P[2][1] + P[3][1]) / 2; pn.botMax = Math.max(P[2][1], P[3][1]);
+    pn.focus = (pn.bb.y0 + pn.bb.y1) / 2;
+  }
+
+  // ───────────────────────────────────────────── 장면 짓기 — 칸 재기 → 여백 풀기 → σ 표 → 그림 굽기 → DOM
+  function Scene(li, ci) {
+    const lv = LEVELS[li], cue = lv.cues[ci];
+    const sc = { li, ci, level: lv.name, cue, items: cue.items, visual: cue.visual, panels: [], balloons: [], labels: [], COL, iconImg, iconFlip };
+    const said = cue.utt.map((u) => u.s.map((s) => s.x).join(' ')).join(' ');
+    sc.has = (kw) => said.indexOf(kw) >= 0;
+    /** 이름표 글이 그 큐 대사에 실제로 나온 낱말인지 — 아니면 경고(검증된 카드 글은 이걸 거치지 않고 그대로 쓴다) */
+    sc.word = (kw) => { if (!sc.has(kw)) warn('[' + lv.name + ' ' + cue.id + '] 대사에 없는 낱말: ' + kw); return kw; };
+    /** 큐 대사에서 kw 가 from 이후 처음 나오는 때(글자 위치 비례 — 캐시 음성에는 낱말 시각이 없다). 없으면 경고 */
+    sc.w = (kw, from = 0) => {
+      for (const u of cue.utt) for (const s of u.s) { const k = s.x.indexOf(kw); if (k < 0) continue; const t = s.t0 + (s.t1 - s.t0) * k / s.x.length - 0.12; if (t >= from - 0.01) return Math.max(0, t); }
+      warn('[' + lv.name + ' ' + cue.id + '] 대사에 없는 낱말: ' + kw); return from;
+    };
+    sc.U = (turn) => cue.utt.find((u) => u.turn === turn);
+    return sc;
+  }
+
+  const scenes = {};
+  function getScene(li, ci) { const k = li + ':' + ci; if (!scenes[k]) scenes[k] = build(li, ci); return scenes[k]; }
+
+  function build(li, ci) {
+    const sc = Scene(li, ci), cue = sc.cue;
+    const root = document.createElement('div'); root.className = 'sroot'; root.style.visibility = 'hidden'; view.appendChild(root); sc.root = root;
+    // 1) 칸마다 말풍선을 재고 높이를 정한다
+    cue.panels.forEach((p, i) => {
+      const pn = Object.assign({ i }, p); sc.panels.push(pn);
+      pn.bls = [];
+      if (pn.kind === 'silent') { pn.h = 300; return; }
+      const u = sc.U(pn.u), band = pn.kind === 'band', maxW = band ? 300 : 360;
+      u.s.slice(pn.a, pn.b).forEach((s, j) => {
+        const el = document.createElement('div'); el.className = 'bl';
+        const done = document.createElement('span'), rest = document.createElement('span'); rest.className = 'rest'; rest.textContent = s.x;
+        el.appendChild(done); el.appendChild(rest); el.style.maxWidth = maxW + 'px'; root.appendChild(el);
+        // 줄 너비를 실제 글자 상자로 재서 풍선을 글에 맞춘다(무대가 CSS 로 축소돼 있으니 화면 크기를 축소율로 나눈다)
+        const rg = document.createRange(); rg.selectNodeContents(el); let x0 = 1e9, x1 = -1e9;
+        for (const r of rg.getClientRects()) { x0 = Math.min(x0, r.left); x1 = Math.max(x1, r.right); }
+        const tw = Math.min(maxW, Math.ceil((x1 - x0) / STAGE_SC) + 4); el.style.width = tw + 'px';
+        const th = el.offsetHeight;
+        pn.bls.push({ el, done, rest, s, tw, th, a: tw / 2 * 1.13 + 22, b: th / 2 * 1.2 + 15, n: -1 });
+      });
+      pn.sideX = pn.role === 'mc' ? [band ? XL : XL, band ? 392 : XR] : [band ? 248 : XL, XR];
+      let y = 20;
+      pn.bls.forEach((B, j) => { B.dy = y + B.b; y = B.dy + B.b + 12; });
+      pn.stackH = y + 2;
+      pn.top = pn.kind === 'slant' ? SL_T : 0;
+      pn.h = band ? Math.max(pn.stackH + 6, 176) : pn.top + pn.stackH + ART_H[pn.kind];
+    });
+    // 2) 위에서부터 놓으며 여백을 푼다: 이동 시간 MOVE0 + ∫dy/v 가 빌더가 넣은 쉼과 같아지는 여백 높이 G 를 이분 탐색
+    const P = sc.panels, gs = [];
+    P[0].y0 = 60; geom(P[0]);
+    for (let i = 0; i + 1 < P.length; i++) {
+      const a = P[i], b = P[i + 1], want = b.t0 - a.t1;
+      b.y0 = 0; geom(b); const topOff = b.topMean - b.bb.y0;
+      const place = (G) => { b.y0 = a.botMean + G - topOff; geom(b); return { y0: a.botMean, y1: b.topMean }; };
+      const gmin = (a.botMax - a.botMean) + GMIN + topOff;
+      const mt = (G) => { const gut = place(G), all = gs.concat([gut]); let T = 0; for (let y = a.focus; y < b.focus; y += 2) { const d = Math.min(2, b.focus - y); T += d / pace(all, y + d / 2); } return MOVE0 + T; };
+      let lo = gmin, hi = GMAX, G;
+      if (mt(lo) >= want) G = lo; else if (mt(hi) <= want) G = hi;
+      else { for (let k = 0; k < 40; k++) { const m = (lo + hi) / 2; if (mt(m) < want) lo = m; else hi = m; } G = (lo + hi) / 2; }
+      gs.push(place(G)); a.gap = G; a.want = want;
+    }
+    sc.gutters = gs;
+    sc.stops = P.map((p) => p.focus - ANCHOR);
+    sc.top = P[0].bb.y0 - 60; sc.end = P[P.length - 1].bb.y1 + 60;
+    // 3) σ(s) = ∫ ds / v(s + ANCHOR) — 1px 표(사다리꼴). 이동은 픽셀이 아니라 이 읽기 시간 위에서 최소 저크로
+    //    (aimotion 157 strip.js:61·64·97 — MIT © 2026 kstost)
+    const s0 = Math.floor(sc.stops[0]) - 2, s1 = Math.ceil(sc.stops[sc.stops.length - 1]) + 2, n = s1 - s0;
+    const SIG = new Float64Array(n + 1);
+    for (let k = 1; k <= n; k++) SIG[k] = SIG[k - 1] + 0.5 * (1 / pace(gs, s0 + k - 1 + ANCHOR) + 1 / pace(gs, s0 + k + ANCHOR));
+    sc.sig = (s) => { const x = s - s0, i = clamp(Math.floor(x), 0, n - 1), f = x - i; return SIG[i] + (SIG[i + 1] - SIG[i]) * f; };
+    sc.sigInv = (v) => { let a = 0, b = n; while (b - a > 1) { const m = (a + b) >> 1; if (SIG[m] < v) a = m; else b = m; } const d = SIG[b] - SIG[a]; return s0 + a + (d > 0 ? (v - SIG[a]) / d : 0); };
+    sc.moves = [];
+    for (let i = 0; i + 1 < P.length; i++) {
+      const a = P[i], b = P[i + 1], sa = sc.stops[i], sb = sc.stops[i + 1], m = MOVE0 + sc.sig(sb) - sc.sig(sa);
+      const t1 = b.t0, t0 = Math.max(a.t0 + 0.25, t1 - m);
+      sc.moves.push({ t0, t1, s0: sa, s1: sb, g0: sc.sig(sa), g1: sc.sig(sb), m, early: Math.max(0, a.t1 - t0) });
+    }
+    // 4) 말풍선 자리 — 같은 사람이 이어 말하면 지그재그로 쌓고 목으로 잇는다. 첫 풍선 꼬리는 칸 밖, 말하는 로봇 쪽을 가리킨다
+    for (const pn of P) {
+      const [xa, xb] = pn.sideX || [XL, XR], left = pn.role === 'mc';
+      pn.bls.forEach((B, j) => {
+        const ind = (j % 2) * 34;
+        B.cx = left ? xa + 16 + B.a + ind : xb - 16 - B.a - ind;
+        B.cy = pn.y0 + pn.top + B.dy;
+        B.t0 = B.s.t0 - 0.08;
+        if (j === 0) {
+          B.tip = [left ? XL - 34 : XR + 34, B.cy + B.b * 0.42];
+          const ang = Math.atan2((B.tip[1] - B.cy) / B.b, (B.tip[0] - B.cx) / B.a);      // 타원 매개변수 각(aimotion 157 art.js:371)
+          B.r0 = sePt(B, ang - 0.24, 0.84); B.r1 = sePt(B, ang + 0.24, 0.84);
+          B.px = (B.r0[0] + B.r1[0]) / 2; B.py = (B.r0[1] + B.r1[1]) / 2;
+        } else {
+          // 같은 사람의 다음 풍선은 꼬리 대신 앞 풍선과 목으로 잇는다. 목의 양 끝은 두 풍선 **안쪽**(0.8)에 둬야 끝 선이 채움에 덮인다
+          const A0 = pn.bls[j - 1], ang = Math.atan2((A0.cy - B.cy) / B.b, (A0.cx - B.cx) / B.a), back = Math.atan2((B.cy - A0.cy) / A0.b, (B.cx - A0.cx) / A0.a), q = sePt(B, ang, 1);
+          B.prev = A0; B.px = q[0]; B.py = q[1]; B.neck = [sePt(B, ang, 0.8), sePt(A0, back, 0.8)];
+        }
+        B.el.style.left = (B.cx - B.tw / 2) + 'px'; B.el.style.top = (B.cy - B.th / 2) + 'px';
+        B.el.style.transformOrigin = (B.px - B.cx + B.tw / 2) + 'px ' + (B.py - B.cy + B.th / 2) + 'px';
+        sc.balloons.push(B);
+      });
+    }
+    // 5) 칸 그림 — 장면 함수가 굽는 층·움직이는 것·이름표·칸 깨기 출발/도착점을 돌려준다
+    P.forEach((pn, i) => {
+      const box = pn.kind === 'band' ? { x0: pn.role === 'mc' ? 392 : XL, x1: pn.role === 'mc' ? XR : 248, y0: pn.y0 + 6, y1: pn.y0 + pn.h - 6 }
+        : { x0: pn.bb.x0, x1: pn.bb.x1, y0: pn.y0 + pn.top + (pn.stackH || 0), y1: pn.y0 + pn.h };
+      box.w = box.x1 - box.x0; box.h = box.y1 - box.y0; box.cx = (box.x0 + box.x1) / 2; box.cy = (box.y0 + box.y1) / 2;
+      pn.A = box;
+      if (i + 1 < P.length) pn.gutBelow = { y0: pn.botMax, y1: P[i + 1].bb.y0 };
+      const fn = ART[pn.art];
+      if (!fn) { warn('[' + sc.level + ' ' + cue.id + '] 그림 함수 없음: ' + pn.art); pn.res = { layers: [] }; return; }
+      pn.res = fn(sc, pn, box) || { layers: [] };
+    });
+    // 6) 칸 깨기 — 기울어진 칸 → 여백 → 침묵 칸
+    const bi = P.findIndex((p) => p.brk);
+    if (bi >= 0) {
+      const A = P[bi], B = P[bi + 1], mv = sc.moves[bi], from = A.res.from, to = B.res.to;
+      if (!from || !to || !BRK[A.brk]) warn('[' + sc.level + ' ' + cue.id + '] 칸 깨기 설정 없음: ' + A.brk);
+      else {
+        const gut = [A.poly[3], A.poly[2], [XR, B.bb.y0], [XL, B.bb.y0]].map((q) => q.slice());
+        gut[0] = [XL, A.poly[3][1]]; gut[1] = [XR, A.poly[2][1]];
+        const S0 = [from[0], from[1] - sc.stops[bi]], S3 = [to[0], to[1] - sc.stops[bi + 1]];
+        const dir = Math.sign(S3[0] - S0[0]) || 1;
+        sc.brk = { A, B, bi, mv, from, to, gut, kind: A.brk, draw: BRK[A.brk], S0, S3,
+          S1: [S0[0] + dir * 70, S0[1] - 120], S2: [S3[0] - dir * 40, S3[1] - 130], T0: mv.t0, T1: mv.t1, show: mv.t0 - 0.35 };
+        A.launch = mv.t0;
+        { const e = brkAt(sc, mv.t1 - 0.06); sc.brk.endAng = Math.atan2(e.vy, e.vx); }
+        // 집중선: 출발점 둘레에서 칸 가장자리로부터 안쪽으로 그어지는 쐐기(aimotion 157 main.js:216 — MIT © 2026 kstost)
+        const r = rand(0x157 + ci * 31 + li * 7); sc.burst = [];
+        for (let k = 0; k < 96; k++) sc.burst.push({ a: TAU * (k + 0.8 * r()) / 96, rIn: lerp(70, 190, r()), w: lerp(3, 15, r() * r()), delay: 0.12 * r(), al: lerp(0.35, 0.85, r()) });
+      }
+    }
+    // 7) DOM — 칸마다 clip-path 상자(그 칸 다각형) 안에 이름표. 풍선 글은 칸 밖(테두리 위)
+    root.style.height = Math.ceil(sc.end) + 'px';
+    for (const pn of P) {
+      const box = document.createElement('div'); box.className = 'pn'; box.style.height = Math.ceil(sc.end) + 'px';
+      if (pn.kind !== 'free') box.style.clipPath = 'polygon(' + pn.poly.map((q) => q[0] + 'px ' + q[1] + 'px').join(',') + ')';
+      const pin = document.createElement('div'); pin.className = 'pin'; box.appendChild(pin); root.insertBefore(box, root.firstChild);
+      pn.pin = pin; pn.labs = [];
+      for (const L of (pn.res.labels || [])) pn.labs.push(makeLabel(L, pin));
+      for (const L of (pn.res.gut || [])) { const g = makeLabel(L, root); g.gutter = true; pn.labs.push(g); }
+    }
+    for (const B of sc.balloons) root.appendChild(B.el);            // 풍선 글이 이름표보다 위
+    // 8) 굽기
+    bake(sc);
+    // 9) 배치 점검(`?check=1` 에서 모은다) — 칸이 열보다 크거나, 풍선이 칸 밖으로 나가거나, 이름표가 풍선·칸 경계와 겹치면
+    for (const pn of P) {
+      const tag = '[' + sc.level + ' ' + cue.id + ' 칸' + (pn.i + 1) + ' ' + pn.art + '] ';
+      if (pn.bb.y1 - pn.bb.y0 > VH - 70) issue(tag + '칸 높이 ' + Math.round(pn.bb.y1 - pn.bb.y0) + 'px — 열(' + VH + ')에 다 안 들어간다');
+      for (const B of pn.bls) if (B.cx - B.a < pn.bb.x0 - 2 || B.cx + B.a > pn.bb.x1 + 2) issue(tag + '풍선이 칸 밖으로: ' + B.s.x);
+      for (const L of pn.labs) {
+        const r = labRect(L);
+        if (!L.gutter && (r.x0 < pn.bb.x0 - 1 || r.x1 > pn.bb.x1 + 1 || r.y0 < pn.bb.y0 - 1 || r.y1 > pn.bb.y1 + 1)) issue(tag + '이름표가 칸 밖으로: ' + L.text);
+        for (const B of sc.balloons) if (r.x0 < B.cx + B.a * 0.92 && r.x1 > B.cx - B.a * 0.92 && r.y0 < B.cy + B.b * 0.9 && r.y1 > B.cy - B.b * 0.9) issue(tag + '이름표 "' + L.text + '" 가 풍선과 겹친다: ' + B.s.x.slice(0, 12));
+        for (const M of pn.labs) if (M !== L && M.i > L.i) { const q = labRect(M); if (r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0) issue(tag + '이름표끼리 겹친다: ' + L.text + ' / ' + M.text); }
+        if (sc.level === '초등' && /\d/.test(L.text + (L.sub || ''))) warn('[초등 ' + cue.id + '] 초등 화면에 숫자: ' + L.text);
+      }
+    }
+    if (sc.level === '초등') for (const it of sc.items) if (/\d/.test(it.t + it.b)) warn('[초등 ' + cue.id + '] 초등 카드에 숫자: ' + it.t);
+    root.style.visibility = ''; root.style.display = 'none';
+    return sc;
+  }
+  /** 초타원 |x/a|^n + |y/b|^n = 1 위(또는 k 배 안쪽)의 점 — 매개변수 각 θ */
+  const SE_N = 3.1;
+  function sePt(B, th, k) { const c = Math.cos(th), s = Math.sin(th); return [B.cx + k * B.a * Math.sign(c) * Math.abs(c) ** (2 / SE_N), B.cy + k * B.b * Math.sign(s) * Math.abs(s) ** (2 / SE_N)]; }
+  function sePath(c, B) { const N = 72; c.moveTo(...sePt(B, 0, 1)); for (let k = 1; k < N; k++) c.lineTo(...sePt(B, TAU * k / N, 1)); c.closePath(); }
+  let labN = 0;
+  function makeLabel(L, parent) {
+    const d = document.createElement('div'); d.className = 'lab l-' + (L.c || 'tag');
+    const sp = document.createElement('span'); if (L.w) { sp.style.whiteSpace = 'normal'; sp.style.width = L.w + 'px'; }
+    sp.appendChild(document.createTextNode(L.t));
+    if (L.sub) { const sm = document.createElement('small'); sm.textContent = L.sub; sp.appendChild(sm); }
+    d.appendChild(sp); parent.appendChild(d);
+    const o = { el: d, sp, text: L.t, sub: L.sub, x: L.x, y: L.y, at: L.at == null ? 0 : L.at, rot: (L.rot || 0) * DEG, f: L.f || 0, i: labN++, sw: sp.offsetWidth, sh: sp.offsetHeight, k: -1 };
+    d.style.transform = 'translate(' + o.x + 'px,' + o.y + 'px) rotate(' + o.rot + 'rad)';
+    return o;
+  }
+  const labRect = (L) => ({ x0: L.x - L.sw / 2, x1: L.x + L.sw / 2, y0: L.y - L.sh / 2, y1: L.y + L.sh / 2 });
+
+  /** 층을 칸 bbox + 위아래 여유(|f|·최대 d — 칸이 보이는 동안 층이 밀리는 만큼)로 굽는다. d=0 이면 구운 구도 그대로 */
+  function bake(sc) {
+    for (const pn of sc.panels) {
+      pn.layers = [];
+      for (const Ly of (pn.res.layers || [])) {
+        const f = Ly.f || 0, m = Math.ceil(Math.abs(f) * (VH + pn.bb.y1 - pn.bb.y0)) + 8;
+        const x0 = pn.bb.x0 - 24, y0 = pn.bb.y0 - m, w = pn.bb.x1 - pn.bb.x0 + 48, h = pn.bb.y1 - pn.bb.y0 + 2 * m;
+        const c = mk(w * K, h * K), g = c.getContext('2d'); g.scale(K, K); g.translate(-x0, -y0);
+        g.lineJoin = 'round'; g.lineCap = 'round';
+        Ly.paint(g, pn);
+        pn.layers.push({ c, x: x0, y: y0, w, h, f, front: !!Ly.front });
+      }
+    }
+  }
+  function rebakeAll() { for (const k in scenes) bake(scenes[k]); }
+
+  // ───────────────────────────────────────────── 시간 → 스크롤
+  function scrollAt(sc, t) {
+    const mv0 = sc.moves[0];
+    if (!mv0 || t < mv0.t0) return sc.stops[0] - 150 * (1 - outCubic(t / 0.9));      // 첫 칸이 아래에서 올라와 자리 잡는다
+    for (const mv of sc.moves) {
+      if (t < mv.t0) return mv.s0;
+      if (t <= mv.t1) return sc.sigInv(mv.g0 + (mv.g1 - mv.g0) * MJ((t - mv.t0) / (mv.t1 - mv.t0)));
+    }
+    return sc.stops[sc.stops.length - 1];
+  }
+  /** 깨고 나오는 물체: 화면 공간 베지어 S(p) + 카메라 항 s(t). 밖에서는 카메라 항을 얼려 도착한 칸에 머문다
+   *  (aimotion 157 strip.js:116~133 — MIT © 2026 kstost) */
+  function brkAt(sc, t) {
+    const B = sc.brk;
+    const prog = (tt) => { const u = clamp((tt - B.T0) / (B.T1 - B.T0)); return 0.2 * (1 - (1 - clamp(u / 0.16)) ** 2) + 0.8 * MJ(u); };
+    const cam = (tt) => scrollAt(sc, clamp(tt, B.T0, B.T1));
+    const pos = (tt) => { const p = prog(tt); return [bez(B.S0[0], B.S1[0], B.S2[0], B.S3[0], p), bez(B.S0[1], B.S1[1], B.S2[1], B.S3[1], p) + cam(tt)]; };
+    const h = 1 / 120, a = pos(t - h), b = pos(t + h), c = pos(t);
+    return { x: c[0], y: c[1], vx: (b[0] - a[0]) / (2 * h), vy: (b[1] - a[1]) / (2 * h), p: prog(t) };
+  }
+
+  // ───────────────────────────────────────────── 한 장면 그리기(t 의 순수 함수)
+  function shake(t, t0, amp) { const u = t - t0; return u < 0 || u > 0.5 ? [0, 0] : [amp * Math.exp(-u / 0.1) * Math.sin(TAU * 23 * u), amp * Math.exp(-u / 0.1) * Math.cos(TAU * 19 * u)]; }
+  function pushK(pn, t) { return pn.kind === 'silent' ? 1 : 1 + 0.035 * smooth((t - pn.t0) / (pn.t1 - pn.t0 + 0.8)); }
+  function draw(sc, t) {
+    const s = scrollAt(sc, t), c = ctx;
+    const [ox, oy] = sc.brk ? shake(t, sc.brk.T0, 6) : [0, 0];
+    c.setTransform(K, 0, 0, K, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+    c.clearRect(0, 0, VW, VH);
+    c.fillStyle = COL.paper; c.fillRect(0, 0, SW + 2 * SX, VH);
+    c.fillStyle = 'rgba(14,36,51,.07)'; c.fillRect(SW + 2 * SX - 2, 0, 2, VH);
+    c.translate(SX + ox, oy - s);
+    const vis = (pn) => pn.bb.y1 > s - 60 && pn.bb.y0 < s + VH + 60;
+    sc.panels.forEach((pn, i) => {
+      if (!vis(pn)) return;
+      const d = sc.stops[i] - s, k = pushK(pn, t), A = pn.A;
+      c.save(); path(c, pn.poly); c.clip();
+      c.translate(A.cx, A.cy); c.scale(k, k); c.translate(-A.cx, -A.cy);
+      for (const L of pn.layers) if (!L.front) c.drawImage(L.c, L.x, L.y - L.f * d, L.w, L.h);
+      if (pn.res.dyn) { c.save(); pn.res.dyn(c, t, d, pn); c.restore(); }
+      for (const L of pn.layers) if (L.front) c.drawImage(L.c, L.x, L.y - L.f * d, L.w, L.h);
+      c.restore();
+      if (pn.launch != null && t >= pn.launch) { c.save(); path(c, pn.poly); c.clip(); actionBeat(c, sc, pn, t); c.restore(); }
+      if (pn.kind === 'free') {                           // 테두리 없는 칸: 선 대신 위아래가 종이색으로 걷힌다(종이에서 피어나 종이로 녹는다)
+        const g = c.createLinearGradient(0, pn.bb.y0, 0, pn.bb.y0 + 150); g.addColorStop(0, COL.paper); g.addColorStop(1, 'rgba(251,252,253,0)');
+        c.fillStyle = g; c.fillRect(pn.bb.x0, pn.bb.y0 - 2, pn.bb.x1 - pn.bb.x0, 152);
+        const h = c.createLinearGradient(0, pn.bb.y1 - 90, 0, pn.bb.y1); h.addColorStop(0, 'rgba(251,252,253,0)'); h.addColorStop(1, COL.paper);
+        c.fillStyle = h; c.fillRect(pn.bb.x0, pn.bb.y1 - 90, pn.bb.x1 - pn.bb.x0, 92);
+      } else { c.strokeStyle = COL.ink; c.lineWidth = 4; c.lineJoin = 'miter'; path(c, pn.poly); c.stroke(); }
+    });
+    if (sc.brk && (vis(sc.brk.A) || vis(sc.brk.B)) && t >= sc.brk.show) brkLayer(c, sc, t);
+    // 말풍선 모양 — 칸마다 외곽선을 먼저 모두 긋고 채움을 나중에 해서 풍선·꼬리·목이 한 덩어리가 된다(aimotion 157 art.js:364)
+    for (const pn of sc.panels) {
+      if (!vis(pn) || !pn.bls.length) continue;
+      const on = pn.bls.filter((B) => t >= B.t0);
+      if (!on.length) continue;
+      const fill = pn.role === 'mc' ? COL.mcbg : COL.docbg;
+      // 몸·꼬리·목은 **따로** 칠한다 — 한 경로에 넣으면 감김 방향이 서로 반대인 곳이 nonzero 에서 구멍이 되어 외곽선이 글 위로 비친다
+      const parts = (B) => {
+        const out = [(c) => sePath(c, B)];
+        if (B.tip) out.push((c) => { const mid = [(B.r0[0] + B.tip[0]) / 2, (B.r0[1] + B.tip[1]) / 2], bend = [-(B.tip[1] - B.py) * 0.16, (B.tip[0] - B.px) * 0.16];
+          c.moveTo(B.r0[0], B.r0[1]); c.quadraticCurveTo(mid[0] + bend[0], mid[1] + bend[1], B.tip[0], B.tip[1]);
+          c.quadraticCurveTo((B.r1[0] + B.tip[0]) / 2 + bend[0] * 0.4, (B.r1[1] + B.tip[1]) / 2 + bend[1] * 0.4, B.r1[0], B.r1[1]); c.closePath(); });
+        if (B.prev) out.push((c) => { const P = B.prev, dx = P.cx - B.cx, dy = P.cy - B.cy, l = Math.hypot(dx, dy) || 1, nx = -dy / l * 12, ny = dx / l * 12;
+          const [a, b] = B.neck; c.moveTo(a[0] + nx, a[1] + ny); c.lineTo(b[0] + nx, b[1] + ny); c.lineTo(b[0] - nx, b[1] - ny); c.lineTo(a[0] - nx, a[1] - ny); c.closePath(); });
+        return out;
+      };
+      for (const pass of [0, 1]) for (const B of on) {
+        const k = lerp(0.3, 1, pop(t, B.t0, 0.3, 2.2));
+        c.save(); c.globalAlpha = clamp((t - B.t0) / 0.07);
+        c.translate(B.px, B.py); c.scale(k, k); c.translate(-B.px, -B.py);
+        for (const p of parts(B)) { c.beginPath(); p(c);
+          if (pass === 0) { c.strokeStyle = COL.ink; c.lineWidth = 7; c.lineJoin = 'round'; c.stroke(); } else { c.fillStyle = fill; c.fill(); } }
+        c.restore();
+      }
+    }
+    c.setTransform(K, 0, 0, K, 0, 0);
+    rail(c, sc, s);
+    return { s, ox, oy };
+  }
+  /** 가장 센 박자: 기울어진 칸 배경이 밤색으로 가라앉고 집중선이 출발점으로 모인다 */
+  function actionBeat(c, sc, pn, t) {
+    const T = pn.launch, k = outCubic((t - T) / 0.12), B = sc.brk, cx = B.from[0], cy = B.from[1], R = 900;
+    c.globalAlpha = 0.74 * k; c.fillStyle = COL.night; c.fillRect(pn.bb.x0 - 10, pn.bb.y0 - 10, pn.bb.x1 - pn.bb.x0 + 20, pn.bb.y1 - pn.bb.y0 + 20);
+    c.fillStyle = COL.cream;
+    for (const L of sc.burst) {
+      const g = outCubic((t - T - L.delay) / 0.16); if (g <= 0) continue;
+      const rin = lerp(R, L.rIn, g), ca = Math.cos(L.a), sa = Math.sin(L.a), hw = L.w / 2;
+      c.globalAlpha = L.al * k; c.beginPath(); c.moveTo(cx + ca * rin, cy + sa * rin);
+      c.lineTo(cx + ca * R - sa * hw, cy + sa * R + ca * hw); c.lineTo(cx + ca * R + sa * hw, cy + sa * R - ca * hw); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  /** 칸 깨기 층: 테두리까지 다 그은 뒤 그린다. clip = 기울어진 칸 ∪ 여백 ∪ 침묵 칸(모두 시계 방향 — nonzero 로 이음매 없이 합쳐진다)
+   *  (aimotion 157 main.js:315 — MIT © 2026 kstost) */
+  function brkLayer(c, sc, t) {
+    const B = sc.brk, flying = t >= B.T0, st = flying ? brkAt(sc, t) : { x: B.from[0], y: B.from[1], vx: 0, vy: 0, p: 0 };
+    // 몸 방향 = 속도 방향, 도착 30% 앞부터는 가로(0)로 눕는다 — 멈춘 칸에서 세로로 서 있으면 '닿았다' 가 아니라 '떨어진다' 로 읽힌다.
+    // 상태를 쌓지 않으니(t 의 식) 어느 순서로 찾아가도 같은 그림이다
+    const sp = Math.hypot(st.vx, st.vy);
+    let a = 0;
+    if (flying) { const va = (t >= B.T1 - 0.05 || sp < 30) ? B.endAng : Math.atan2(st.vy, st.vx), w = smooth((st.p - 0.7) / 0.3); a = va * (1 - w); }
+    const kk = flying ? 1 : outBack((t - B.show) / 0.35, 2.4);           // 출발 직전 안테나 끝에서 튀어나온다
+    c.save(); c.beginPath(); pathAdd(c, B.A.poly); pathAdd(c, B.gut); pathAdd(c, B.B.poly); c.clip();
+    if (flying) {                                       // 여백 위에만 납작한 그림자 — 물체가 종이에서 떠 있다
+      c.save(); path(c, B.gut); c.clip(); B.draw(c, { x: st.x + 10, y: st.y + 14, ang: a, t, mode: 'shadow', sp, COL }); c.restore();
+      const kk = clamp((sp - 220) / 1100);
+      if (kk > 0.01) {                                  // 속도의 반대쪽으로 끌리는 이동 줄
+        const ux = -st.vx / sp, uy = -st.vy / sp, nx = -uy, ny = ux; c.strokeStyle = COL.ink; c.lineCap = 'round';
+        for (const [o, l0, l1, w] of [[-40, 70, 210, 3.5], [-16, 90, 280, 3], [10, 95, 300, 3.5], [34, 80, 230, 2.5]]) {
+          const bx = st.x + nx * o + ux * l0, by = st.y + ny * o + uy * l0;
+          c.globalAlpha = 0.6 * kk; c.lineWidth = w; c.beginPath(); c.moveTo(bx, by); c.lineTo(bx + ux * (l1 - l0) * kk, by + uy * (l1 - l0) * kk); c.stroke();
+        }
+        c.globalAlpha = 1;
+      }
+    }
+    B.draw(c, { x: st.x, y: st.y, ang: a, t: Math.min(t, B.T1), k: kk, mode: flying ? 'halo' : 'rest', sp, COL });
+    c.restore();
+  }
+  /** 오른쪽 레일: 스트립 전체 지도(칸 = 말하는 사람 색 덩어리, 여백 = 빈칸)와 지금 보는 창 */
+  function rail(c, sc, s) {
+    const RX = SW + 2 * SX + 13, Y0 = 70, Y1 = 830, k = (Y1 - Y0) / (sc.end - sc.top);
+    c.fillStyle = 'rgba(255,255,255,.85)'; c.beginPath(); c.roundRect(RX - 12, Y0 - 14, 24, Y1 - Y0 + 28, 12); c.fill();
+    c.strokeStyle = 'rgba(14,36,51,.18)'; c.lineWidth = 2; c.stroke();
+    const mx = (x) => RX - 8 + 16 * x / SW, my = (y) => Y0 + (y - sc.top) * k;
+    for (const pn of sc.panels) {
+      const P = pn.poly.map(([x, y]) => [mx(x), my(y)]);
+      if (pn.kind === 'free') { const g = c.createLinearGradient(0, P[0][1], 0, P[0][1] + 18); g.addColorStop(0, 'rgba(10,111,132,0)'); g.addColorStop(1, 'rgba(10,111,132,.55)'); c.fillStyle = g; }
+      else c.fillStyle = pn.role === 'mc' ? 'rgba(10,111,132,.62)' : pn.role === 'docent' ? 'rgba(185,111,0,.7)' : 'rgba(14,36,51,.4)';
+      path(c, P); c.fill();
+    }
+    const y0 = my(s), y1 = my(s + VH);
+    c.fillStyle = 'rgba(11,127,181,.12)'; c.beginPath(); c.roundRect(RX - 11, y0, 22, y1 - y0, 6); c.fill();
+    c.strokeStyle = COL.sig; c.lineWidth = 3; c.stroke();
+    const ya = my(s + ANCHOR); c.fillStyle = COL.sig; c.beginPath(); c.moveTo(RX - 19, ya - 6); c.lineTo(RX - 12, ya); c.lineTo(RX - 19, ya + 6); c.closePath(); c.fill();
+  }
+
+  // ───────────────────────────────────────────── DOM(글자)
+  function dom(sc, t, fr) {
+    sc.root.style.transform = 'translate(' + (SX + fr.ox).toFixed(1) + 'px,' + (fr.oy - fr.s).toFixed(1) + 'px)';
+    for (const B of sc.balloons) {
+      const on = t >= B.t0;
+      if (!on) { if (B.vis !== 0) { B.el.style.visibility = 'hidden'; B.vis = 0; } continue; }
+      const k = lerp(0.3, 1, pop(t, B.t0, 0.3, 2.2)), al = clamp((t - B.t0) / 0.07);
+      const key = k.toFixed(3) + al.toFixed(2);
+      if (B.key !== key) { B.el.style.transform = 'scale(' + k.toFixed(3) + ')'; B.el.style.opacity = al.toFixed(2); B.key = key; }
+      if (B.vis !== 1) { B.el.style.visibility = 'visible'; B.vis = 1; }
+      const n = Math.round(B.s.x.length * clamp((t - B.s.t0) / (B.s.t1 - B.s.t0)));   // 말한 만큼 진하게
+      if (n !== B.n) { B.done.textContent = B.s.x.slice(0, n); B.rest.textContent = B.s.x.slice(n); B.n = n; }
+    }
+    sc.panels.forEach((pn, i) => {
+      const d = sc.stops[i] - fr.s, k = pushK(pn, t), A = pn.A;
+      const tr = 'translate(' + A.cx + 'px,' + A.cy + 'px) scale(' + k.toFixed(4) + ') translate(' + (-A.cx) + 'px,' + (-A.cy) + 'px)';
+      if (pn.tr !== tr) { pn.pin.style.transform = tr; pn.tr = tr; }
+      for (const L of pn.labs) {
+        const kk = t < L.at ? 0 : lerp(0.4, 1, pop(t, L.at, 0.3, 2.0));
+        if (kk !== L.k) {
+          L.el.style.visibility = kk > 0 ? 'visible' : 'hidden';
+          L.el.style.transform = 'translate(' + L.x + 'px,' + (L.y - L.f * d).toFixed(1) + 'px) rotate(' + L.rot + 'rad) scale(' + kk.toFixed(3) + ')';
+          L.k = kk;
+        }
+      }
+    });
+  }
+  // 옆 열: 지금 말하는 로봇이 까딱이고 테두리가 켜진다 · 제목은 도슨트가 처음 말할 때 · 카드는 그 포인트를 말하기 시작할 때 · 기억해 두기는 받아치기에서
+  const side = { mc: $('#rb-mc'), doc: $('#rb-doc') };
+  function sideDom(sc, t, live) {
+    const cue = sc.cue;
+    // 지금 말하는 로봇: 미리보기는 발화 표의 시각으로, 공연은 감독이 알려 준 발화(LiveFollow.speaking())로
+    let now = null;
+    if (live !== undefined) now = live ? { role: live.role, t0: (cue.utt.find((u) => u.turn === live.turn) || { t0: t }).t0 } : null;
+    else for (const u of cue.utt) if (t >= u.t0 - 0.05 && t <= u.t1 + 0.1) now = u;
+    for (const [role, el] of [['mc', side.mc], ['docent', side.doc]]) {
+      const on = now && now.role === role, bob = on ? -6 * Math.abs(Math.sin(Math.PI * 3.1 * (t - now.t0))) : 0;
+      el.classList.toggle('on', !!on); el.style.transform = 'translateY(' + bob.toFixed(1) + 'px)';
+    }
+    const d0 = sc.U('docent0'), aft = sc.U('after');
+    const show = (el, t0) => { const e = outCubic((t - t0) / 0.4); el.style.visibility = t >= t0 ? 'visible' : 'hidden'; el.style.opacity = e.toFixed(2); el.style.transform = 'translateY(' + ((1 - e) * 16).toFixed(1) + 'px)'; };
+    show($('#headline'), d0 ? d0.t0 : 0);
+    show($('#remember'), aft ? aft.t0 : cue.dur);
+    // 카드 i 는 콘티에서 그 카드를 그리는 칸(item: i)이 시작될 때 놓인다 — 턴 번호와 포인트 번호는 같지 않다
+    // (02 는 도슨트 0턴이 '발명·발견' 도입이고 카드 1번 '맥스웰'은 1턴에서 말한다). 콘티에 없으면 도슨트 i턴 시작
+    if (!sc.cardT) sc.cardT = cue.items.map((it, i) => { const p = sc.panels.find((q) => q.card === i) || sc.panels.find((q) => q.item === i), u = sc.U('docent' + i); return (p ? p.t0 : u ? u.t0 : cue.dur) - 0.1; });
+    let last = -1; sc.cardT.forEach((t0, i) => { if (t >= t0) last = i; });
+    sc.cardEls.forEach((el, i) => { const t0 = sc.cardT[i], e = outCubic((t - t0) / 0.35);
+      el.style.visibility = t >= t0 ? 'visible' : 'hidden'; el.style.opacity = e.toFixed(2); el.style.transform = 'translateX(' + ((1 - e) * 36).toFixed(1) + 'px)';
+      el.classList.toggle('on', i === last && (!aft || t < aft.t0)); });
+  }
+  function mountSide(sc) {
+    const cue = sc.cue;
+    $('#cuetag').textContent = cue.no + ' · ' + cue.title;
+    $('#headline').textContent = cue.headline;
+    $('#remtext').textContent = cue.remember;
+    const box = $('#cards'); box.textContent = '';
+    sc.cardEls = cue.items.map((it, i) => { const d = document.createElement('div'); d.className = 'card';
+      const h = document.createElement('h3'), n = document.createElement('i'); n.textContent = String(i + 1); h.appendChild(n); h.appendChild(document.createTextNode(it.t));
+      const p = document.createElement('p'); p.textContent = it.b; d.appendChild(h); d.appendChild(p); box.appendChild(d); return d; });
+  }
+
+  // ───────────────────────────────────────────── 재생 — 장면 시계는 clock() 하나다
+  // 미리보기: 이 페이지가 트는 캐시 음성의 currentTime. 공연: 로봇 2대가 말하고 화면은 감독의 발화 라벨을 따라간다
+  // (LiveFollow — scripts/handout_live/live_follow.js 를 빌더가 인라인한다). 감독 대시보드가 준 주소(`/stage/webtoon`)면 공연이
+  // 기본이고 `?preview` 면 미리보기, 파일로 열면 `?live` 일 때만 공연이다(그 판단은 모듈이 한다 — lf.enabled).
+  // 장면·말풍선·낱말 시각(sc.w)·옆 열은 clock() 만 본다.
+  const q = new URLSearchParams(location.search);
+  const lvParam = q.get('lv') || '';
+  let LI = Math.max(0, LEVELS.findIndex((l) => l.name === lvParam || l.key === lvParam)), CI = 0;
+  // 관람객(운영자)이 직접 고른 수준이 감독 수준보다 이긴다(10-01 계획 결정 3) — 주소의 lv 나 수준 버튼이 '직접 고름'
+  let manualLevel = LEVELS.some((l) => l.name === lvParam || l.key === lvParam);
+  const frozen = q.get('t') != null ? parseFloat(q.get('t')) : null;
+  if (q.get('cue')) CI = Math.max(0, LEVELS[LI].cues.findIndex((c) => c.id.slice(0, 2) === q.get('cue').slice(0, 2)));
+  const audios = {};
+  fitStage();                                              // 장면을 짓기 전에 무대 축소율·굽기 배율부터(onCue 가 바로 지을 수 있다)
+  let lf = null, LIVE = false, liveMiss = false, shown = null, liveT = 0, liveLast = null, liveSync = true;
+  if (frozen == null && typeof LiveFollow !== 'undefined' && LiveFollow) {
+    // 발화 표는 수준마다 시각이 다르다(대사가 다르다) — 모듈에는 '지금 고른 수준의 표' 를 돌려주는 얇은 껍데기를 넘긴다.
+    // 큐 id·순서는 두 수준이 같다(빌더가 같은 콘티 큐 목록으로 만든다).
+    const liveCues = LEVELS[0].cues.map((c, i) => ({ id: c.id, get utt() { return LEVELS[LI].cues[i].utt; }, get dur() { return LEVELS[LI].cues[i].dur; } }));
+    lf = LiveFollow.create({ cues: liveCues, level: () => LEVELS[LI].name,
+      onCue: (i) => { if (i >= 0 && i < LEVELS[LI].cues.length && i !== CI) { CI = i; show(LI, i); paint(); liveSync = true; } },
+      // 감독 수준이 이 페이지가 담은 수준(초등·중고등)이면 따라 바꾼다. 직접 고른 수준이 있으면 그대로(모듈이 '수준이 다르다' 배지를 띄운다)
+      onLevel: (lv) => { const k = LEVELS.findIndex((l) => l.name === lv); if (k >= 0 && k !== LI && !manualLevel) setLevelLive(k); } });
+    LIVE = !!lf.enabled;
+  } else if (frozen == null && q.has('live')) {
+    LIVE = true; liveMiss = true;                          // 실패는 소리 내서 — 공연을 기대했는데 모듈이 빠진 파일이다
+    console.warn('공연 모드 모듈(LiveFollow)이 이 파일에 없다 — scripts/handout_live/live_follow.js 가 있는 상태로 다시 빌드한다');
+  }
+  // 공연 모드에서는 오디오를 만들지도 틀지도 않는다(로봇이 말한다) — Audio 는 미리보기에서만 생긴다
+  const audio = (li, ci) => { if (LIVE) return null; const k = li + ':' + ci; if (!audios[k]) { const a = new Audio(LEVELS[li].cues[ci].audio); a.preload = 'auto';
+    a.addEventListener('ended', () => { if (ci + 1 < LEVELS[li].cues.length && li === LI && ci === CI) setCue(LI, ci + 1, true); }); audios[k] = a; } return audios[k]; };
+  function setLevelLive(k) { LI = k; show(LI, CI); paint(); liveSync = true; }
+  // 공연 시각을 화면 시각으로: 감독 시각이 앞으로 뛰면(다음 발화가 콘티의 쉼보다 일찍 시작) 빠르기 1 + 차이/1초 로 쫓아간다.
+  // 그대로 따라가면 칸 사이 이동(여백 = 쉼 구간)이 통째로 건너뛰어져 칸이 순간이동한다. 특히 로봇은 침묵 칸(약 3.2초)만큼 쉬지
+  // 않으므로 칸 깨기가 이 쫓기 구간에서 2~3배속으로 지나가고, 화면은 받아치기 첫머리에 1초 남짓 늦게 따라붙는다.
+  // 첫 동기화·새 큐·수준 전환·4초 넘게 앞뒤로 간 것은 바로 맞춘다(중간에 들어와 0초부터 쫓아가면 한참 뒤처진다 — 헤드리스로 확인함).
+  // 지수 접근(raw − 차이·e^(−dt/τ))은 쓰지 않는다 — 말하는 동안 목표가 초당 1씩 움직이면 τ 만큼 늘 뒤처진다. 이 식은 차이가 0 으로 간다.
+  // dt 를 자르지 않는다: 오래 못 그렸으면(탭이 가려짐) 바로 따라잡는 게 맞다. 이 쫓기만 실제 시간(performance.now)을 쓴다 —
+  // 그림 자체는 여전히 시각 t 의 순수 함수다.
+  function liveClock() {
+    const now = performance.now() / 1000, dt = liveLast == null ? 0 : now - liveLast; liveLast = now;
+    if (!lf || lf.cue() < 0) return 0;
+    if (lf.phase() === 'qa') return liveT;                 // 관람객 질문 흐름: 장면을 멈춘다(생성 답의 글은 싣지 않는다 — 검수 전 글)
+    const raw = lf.time();
+    if (liveSync || raw < liveT - 0.5 || raw - liveT > 4) { liveT = raw; liveSync = false; }
+    else if (raw > liveT) liveT = Math.min(raw, liveT + dt * (1 + (raw - liveT) / 1.0));
+    return liveT;
+  }
+  function clock() { if (frozen != null) return frozen; if (LIVE) return liveClock(); const a = audio(LI, CI); return a ? a.currentTime : 0; }
+  function fitStage() {
+    const fit = $('#fit'), s = Math.min(fit.clientWidth / W, fit.clientHeight / H), st = $('#stage');
+    st.style.transform = 'translate(' + (-W * s / 2) + 'px,' + (-H * s / 2) + 'px) scale(' + s + ')';
+    STAGE_SC = s; K = clamp(s * (window.devicePixelRatio || 1), 1, 2); cv.width = VW * K; cv.height = VH * K;
+  }
+  function show(li, ci) {
+    const sc = getScene(li, ci);
+    if (shown && shown !== sc) shown.root.style.display = 'none';
+    sc.root.style.display = ''; shown = sc; mountSide(sc);
+    for (const B of sc.balloons) { B.vis = -1; B.key = ''; B.n = -1; }
+    for (const pn of sc.panels) { pn.tr = ''; for (const L of pn.labs) L.k = -1; }
+    return sc;
+  }
+  function setCue(li, ci, play) {
+    Object.values(audios).forEach((a) => a.pause());
+    LI = li; CI = ci; const a = audio(li, ci); if (a) a.currentTime = 0; show(li, ci); paint();
+    if (play && a) a.play();
+  }
+  function paint() {
+    const lv = LEVELS[LI];
+    $('#cues').textContent = '';
+    lv.cues.forEach((c, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = c.no + ' ' + c.title; $('#cues').appendChild(o); });
+    $('#cues').value = String(CI); $('#scrub').max = lv.cues[CI].dur;
+    $('#prev').disabled = CI === 0; $('#nextc').disabled = CI === lv.cues.length - 1;
+    [...$('#lvseg').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === LI)));
+    $('#note').textContent = LIVE ? lv.name + ' · 공연 따라가기' + (liveMiss ? ' — 공연 모듈 없음(다시 빌드)' : '') : lv.name + ' · 캐시 음성(' + DATA.cache + ')';
+    $('#startsub').textContent = lv.name + ' · 로봇 목소리가 나와요';
+  }
+  LEVELS.forEach((l, i) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = l.name;
+    b.addEventListener('click', () => {
+      manualLevel = true;                                  // 직접 고름 — 이제 감독 수준이 바뀌어도 이 수준을 지킨다
+      if (LIVE) { setLevelLive(i); return; }
+      const a = audio(LI, CI), playing = a && !a.paused; $('#start').hidden = true; setCue(i, Math.min(CI, l.cues.length - 1), playing); }); $('#lvseg').appendChild(b); });
+  $('#cues').addEventListener('change', function () { $('#start').hidden = true; setCue(LI, +this.value, true); this.blur(); });
+  $('#prev').addEventListener('click', () => { if (CI > 0) { $('#start').hidden = true; setCue(LI, CI - 1, true); } });
+  $('#nextc').addEventListener('click', () => { if (CI + 1 < LEVELS[LI].cues.length) { $('#start').hidden = true; setCue(LI, CI + 1, true); } });
+  function toggle() { const a = audio(LI, CI); if (!a) return; $('#start').hidden = true; if (a.paused) { if (a.ended || a.currentTime >= LEVELS[LI].cues[CI].dur - 0.05) a.currentTime = 0; a.play(); } else a.pause(); }
+  $('#play').addEventListener('click', toggle);
+  $('#startbtn').addEventListener('click', () => { $('#start').hidden = true; setCue(LI, CI, true); });
+  $('#scrub').addEventListener('input', function () { const a = audio(LI, CI); if (a) a.currentTime = parseFloat(this.value); });
+  document.addEventListener('keydown', (ev) => { if (LIVE || /^(SELECT|INPUT)$/.test((ev.target || {}).tagName || '')) return;
+    const a = audio(LI, CI);
+    if (ev.key === ' ') { ev.preventDefault(); toggle(); }
+    else if (ev.key === 'ArrowRight' && CI + 1 < LEVELS[LI].cues.length) setCue(LI, CI + 1, !a.paused);
+    else if (ev.key === 'ArrowLeft' && CI > 0) setCue(LI, CI - 1, !a.paused); });
+  const fmt = (s) => { s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + Math.floor(s % 60)).slice(-2); };
+  if (LIVE) {                                              // 공연 모드: 재생·탐색 컨트롤을 숨긴다(무대가 진행한다)
+    for (const id of ['#prev', '#cues', '#nextc', '#play', '#scrub', '#time']) { $(id).hidden = true; $(id).style.display = 'none'; }
+    $('#start').hidden = true;
+    for (const el of [document.documentElement, document.body]) el.setAttribute('data-live', liveMiss ? 'missing' : '1');
+  }
+
+  fitStage();
+  // `?check=1` — 두 수준 × 모든 큐를 지어 '대사에 없는 낱말'·초등 숫자 경고를 body[data-warn], 배치 문제를 body[data-issues] 에 적는다
+  if (q.get('check')) {
+    LEVELS.forEach((l, li) => l.cues.forEach((c, ci) => getScene(li, ci)));
+    document.body.setAttribute('data-warn', JSON.stringify(WARN));
+    document.body.setAttribute('data-issues', JSON.stringify(ISSUES));
+    document.body.setAttribute('data-gaps', JSON.stringify(Object.values(scenes).map((sc) => ({ lv: sc.level, cue: sc.cue.id,
+      gaps: sc.panels.slice(0, -1).map((p, i) => ({ want: +p.want.toFixed(2), G: Math.round(p.gap), m: +sc.moves[i].m.toFixed(2), early: +sc.moves[i].early.toFixed(2) })) }))));
+  }
+  if (frozen != null) $('#start').hidden = true;
+  if (LIVE && lf && lf.cue() >= 0) CI = lf.cue();
+  setCue(LI, CI, false);
+  let rz = null;
+  window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { fitStage(); rebakeAll(); last = -1; }, 250); });
+  let last = -1;
+  (function loop() {
+    const t = clock();
+    if (t !== last || frozen == null) {
+      const sc = shown, fr = draw(sc, t); dom(sc, t, fr); sideDom(sc, t, lf ? lf.speaking() : undefined); last = t;
+    }
+    if (frozen == null && !LIVE) { const a = audio(LI, CI); $('#scrub').value = t; $('#time').textContent = fmt(t) + ' / ' + fmt(LEVELS[LI].cues[CI].dur); $('#play').textContent = a.paused ? '▶ 재생' : '❚❚ 멈춤'; }
+    requestAnimationFrame(loop);
+  })();
+  window.webtoon = { getScene, scrollAt, draw, scenes };
+  // 종이 무대(window.paperStage)와 같은 모양 — 조율자의 통합 테스트가 읽는다
+  window.webtoonStage = { live: lf || { enabled: false }, cue: () => CI, clock, level: () => LEVELS[LI].name,
+    audios: () => Object.keys(audios).length, getScene, draw, setCue };
+  document.documentElement.setAttribute('data-ready', '1');
+})();
+</script>
+</body>
+</html>

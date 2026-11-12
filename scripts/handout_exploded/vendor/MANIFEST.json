@@ -1,0 +1,43 @@
+{
+  "package": "three",
+  "version": "0.186.1",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/three/-/three-0.186.1.tgz",
+  "tarball_integrity": "sha512-blFeqb49wRCSGUGj7gtpfnSGHy2lwDk94RhUmS1c/hTby70kvChbWpkJ4Pm1390LqzzvTmzgXKHPEafJwCb8jA==",
+  "tarball_shasum": "6d50f70c2c437f844179bbb56d6f5b774e1ca38a",
+  "published": "2026-09-24T14:42:21.301Z",
+  "fetched": "2026-11-12",
+  "note": "원본 그대로(수정 없음). 빌더가 three.module.js 의 './three.core.js' 한 곳만 'three/core' 로 바꿔 import map 의 data: URL 로 싣는다.",
+  "files": {
+    "three.core.js": {
+      "from": "package/build/three.core.js",
+      "sha256": "9edde002b066a9a05676a6127f67735b62baf399bdea529f2f7e31657da769e6",
+      "bytes": 1458113
+    },
+    "three.module.js": {
+      "from": "package/build/three.module.js",
+      "sha256": "9052042d676cb0fdc1ddfefe193053f34b7ac0513a616fdac4535d49987812ea",
+      "bytes": 662772
+    },
+    "RoomEnvironment.js": {
+      "from": "package/examples/jsm/environments/RoomEnvironment.js",
+      "sha256": "55f466192cc84298755a424c5e040345006b2ee1455589b3b54126c2ea4123f4",
+      "bytes": 4960
+    },
+    "LightProbeGenerator.js": {
+      "from": "package/examples/jsm/lights/LightProbeGenerator.js",
+      "sha256": "e609630d1f399c79dcf4a3f8063c81cb2344a0765df1ddf6335ccca3b40ffa98",
+      "bytes": 7728
+    },
+    "RoundedBoxGeometry.js": {
+      "from": "package/examples/jsm/geometries/RoundedBoxGeometry.js",
+      "sha256": "c5feab96123858ed8823c889b238dc8734adab7e760e3cfd21e7f3f2f3e348e3",
+      "bytes": 6470
+    },
+    "three-LICENSE": {
+      "from": "package/LICENSE",
+      "sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+      "bytes": 1081
+    }
+  }
+}

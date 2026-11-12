@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전파체험관 교육자료 — 분해도 무대</title>
+<!--
+  분해도 무대(전문가 수준) 시안 — `python -m scripts.handout_exploded.build` 가 만든 파일이다. 직접 고치지 않는다.
+  틀은 `scripts/handout_exploded/template.html`(엔진) · `tables.yaml`(큐마다 부품 표) · `scenes.js`(부품 모양) · `parts.js`(형상 도구) ·
+  `layout.js`(설명선 배치). 글은 handout-hud 의 검증된 카드(전문가), 음성은 고정 대사 TTS 캐시를 이어 붙인 것.
+
+  표현 기법은 aimotion 148 「분해도」(https://github.com/kstost/cokacmotion, MIT License, Copyright (c) 2026 kstost)에서 **기술만**
+  가져왔다: 부품 표가 정하는 장면 그래프 · 부모 좌표계의 분해 벡터 · 바깥 부품이 앞장서는 순서 곡선(back.out / back.in) ·
+  3D 기준점 투영 + 가중 등위 회귀(PAVA) 설명선 · 엇갈리지 않는 꺾인 지시선 · 역방향 껍질 외곽선 · 딸깍(카메라 밀림) ·
+  무광 면은 구면 조화 LightProbe, 금속만 환경 반사. 소재·색·구도·문구는 이 대본에서 새로 지었다(손전등·남색 스튜디오·호박색 없음).
+  옮긴 코드(pava·필렛 단면·분해 곡선)는 MIT 고지를 따른다:
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation
+    files (the "Software"), to deal in the Software without restriction … The above copyright notice and this permission notice
+    shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY.
+    (전문: scripts/handout_exploded/LICENSE-aimotion)
+  three.js 0.186.1(MIT License, Copyright © 2010-2026 three.js authors — 전문 scripts/handout_exploded/vendor/three-LICENSE)를
+  import map 의 data: URL 로 내장했다. 외부 리소스를 부르지 않는다(전시장은 오프라인).
+
+  글자는 캔버스에 그리지 않고 DOM textContent 로만 넣는다(라벨·말풍선·카드). 2D 캔버스에는 지시선·점·전파 고리만.
+  그림은 t 의 순수 함수다 — `?cue=02&t=40` 으로 한 순간을 멈춰 볼 수 있다. `?check=1` 은 두 장을 모두 지어
+  '대사에 없는 낱말' 경고를 body[data-warn] 에 적는다. `?bench=1` 은 프레임 시간을 재서 body[data-bench] 에 적는다.
+  `?live`(또는 `?live=ws://…`)는 공연 모드 — 로봇 2대가 말하고 화면은 LiveFollow(scripts/handout_live/live_follow.js)의 시계를 따라간다.
+-->
+<style>
+:root{--ink:#0E2433;--sig:#0B7FB5;--mist:#E8F3F8;--rule:#C3D9E6;--bg:#F3F7FA;--mc:#0A6F84;--mcbg:#DDF1F5;--doc:#8F5300;--docbg:#FFEFD6;--muted:#52636F;--bar:#0E2433}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b1a26;color:var(--ink);overflow:hidden;word-break:keep-all;
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+.bar{height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--bar);color:#fff;font-size:14px}
+.bar b{font-weight:800;letter-spacing:.02em}
+.bar select{background:#1B3A4F;color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:5px 12px;min-height:32px;font:inherit;max-width:300px}
+.round{width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.55);background:transparent;padding:0;font-size:17px;line-height:1}
+.pill{border:1px solid rgba(255,255,255,.55);background:transparent;border-radius:999px;padding:5px 14px;min-height:32px;white-space:nowrap}
+.pill.go{background:#fff;color:var(--bar);font-weight:800}
+#scrub{flex:1;min-width:80px;accent-color:#7FD3F5}
+#time{font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}
+.note{opacity:.7;white-space:nowrap}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7FD3F5;outline-offset:2px}
+.fit{position:relative;height:calc(100vh - 48px);overflow:hidden}
+.stage{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:0 0;overflow:hidden;
+  background:radial-gradient(ellipse 46% 62% at 50% 50%,#FFFFFF 0%,#F3F7FA 55%,#E3EEF5 100%)}
+.stage canvas{position:absolute;left:0;top:0;width:1600px;height:900px;display:block}
+.grid{position:absolute;inset:0;pointer-events:none;opacity:.55;
+  background-image:linear-gradient(rgba(14,36,51,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(14,36,51,.045) 1px,transparent 1px);
+  background-size:40px 40px;-webkit-mask-image:radial-gradient(ellipse 40% 55% at 50% 50%,#000 30%,transparent 80%);mask-image:radial-gradient(ellipse 40% 55% at 50% 50%,#000 30%,transparent 80%)}
+.labels{position:absolute;inset:0;pointer-events:none}
+.cl{position:absolute;top:0;max-width:300px;will-change:transform,opacity;display:none}
+.cl.L{text-align:right}
+.cl .nm{display:flex;align-items:baseline;gap:9px;font-size:23px;font-weight:800;line-height:30px;color:var(--ink);letter-spacing:-.01em}
+.cl.L .nm{flex-direction:row-reverse}
+.cl .nm em{font-style:normal;font:600 15px/30px "SF Mono",Menlo,Consolas,monospace;color:rgba(14,36,51,.5)}
+.cl .nm b{font-weight:800;border-bottom:3px solid transparent;padding-bottom:1px}
+.cl small{display:block;font-size:16px;line-height:21px;font-weight:600;color:var(--muted);margin-top:2px}
+.chip{position:absolute;left:24px;top:22px;padding:6px 14px;border-radius:999px;background:var(--ink);color:#fff;font-size:16px;font-weight:800;letter-spacing:.01em}
+.head{position:absolute;left:300px;right:300px;top:20px;text-align:center;font-size:30px;line-height:1.3;font-weight:800;color:var(--ink);letter-spacing:-.015em}
+.head small{display:block;font-size:14px;font-weight:700;color:var(--sig);letter-spacing:.18em;margin-bottom:4px}
+.robot{position:absolute;top:120px;width:150px;text-align:center}
+.robot img{width:132px;height:132px;display:block;margin:0 auto;border-radius:50%;border:2px solid #fff;will-change:transform}
+.robot span{display:inline-block;margin-top:8px;padding:3px 12px;border-radius:999px;font-size:15px;font-weight:800;color:#fff}
+.robot.mc{left:38px} .robot.mc img{background:var(--mcbg)} .robot.mc span{background:var(--mc)}
+.robot.docent{right:38px} .robot.docent img{background:var(--docbg)} .robot.docent span{background:var(--doc)}
+.bubble{position:absolute;top:322px;width:214px;padding:12px 14px;border-radius:16px;font-size:18px;line-height:1.45;font-weight:700;visibility:hidden;
+  box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.bubble.on{visibility:visible} .bubble.fade{opacity:.4} .bubble .rest{opacity:.38}
+#b-mc{left:12px;background:var(--mcbg);color:#0a5566;border-top-left-radius:4px}
+#b-docent{right:12px;background:var(--docbg);color:#6e4100;border-top-right-radius:4px}
+.point{position:absolute;left:300px;right:300px;bottom:18px;min-height:76px;padding:12px 20px;border-radius:14px;background:rgba(255,255,255,.86);
+  border:1px solid var(--rule);box-shadow:0 2px 6px rgba(0,0,0,.06);font-size:17px;line-height:1.5;font-weight:600;color:#33454f;visibility:hidden}
+.point b{display:block;font-size:20px;font-weight:800;color:var(--ink);margin-bottom:2px}
+.point b i{font-style:normal;font:700 15px "SF Mono",Menlo,Consolas,monospace;color:var(--sig);margin-right:10px}
+.point.rem{background:var(--sig);border-color:var(--sig);color:#fff}
+.point.rem b{color:#fff} .point.rem b i{color:rgba(255,255,255,.85);font:800 15px/1 -apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;letter-spacing:.12em}
+.start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(11,26,38,.55);z-index:5}
+.start button{font-size:30px;font-weight:800;padding:22px 44px;border:0;border-radius:16px;background:#fff;color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.start small{display:block;font-size:16px;font-weight:600;margin-top:6px;color:var(--muted)}
+.start[hidden]{display:none}
+</style>
+<script type="importmap">__IMPORTMAP__</script>
+</head>
+<body>
+<header class="bar">
+  <b>분해도 무대 시안</b>
+  <button type="button" class="round" id="prev" aria-label="이전 장">‹</button>
+  <select id="cues" aria-label="장 고르기"></select>
+  <button type="button" class="round" id="nextc" aria-label="다음 장">›</button>
+  <button type="button" class="pill go" id="play">▶ 재생</button>
+  <input type="range" id="scrub" min="0" max="1" step="0.01" value="0" aria-label="재생 위치">
+  <span id="time">0:00 / 0:00</span>
+  <span class="note" id="note"></span>
+</header>
+<div class="fit" id="fit">
+  <div class="stage" id="stage">
+    <div class="grid"></div>
+    <canvas id="gl" width="1600" height="900"></canvas>
+    <canvas id="ov" width="1600" height="900"></canvas>
+    <div class="labels" id="labels"></div>
+    <div class="chip" id="chip"></div>
+    <div class="head" id="head"><small id="lv"></small><span id="headline"></span></div>
+    <div class="robot mc"><img id="i-mc" src="__ICON__" alt=""><span>사회자</span></div>
+    <div class="robot docent"><img id="i-docent" src="__ICON__" alt=""><span>도슨트</span></div>
+    <div class="bubble" id="b-mc"><span class="done"></span><span class="rest"></span></div>
+    <div class="bubble" id="b-docent"><span class="done"></span><span class="rest"></span></div>
+    <div class="point" id="point"><b><i id="p-no"></i><span id="p-t"></span></b><span id="p-b"></span></div>
+  </div>
+  <div class="start" id="start"><button type="button" id="startbtn">▶ 공연 시작<small>로봇 목소리가 나와요 · 01부터 이어서</small></button></div>
+</div>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+/*__LIVE__*/
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/RoomEnvironment.js';
+import { LightProbeGenerator } from 'three/addons/LightProbeGenerator.js';
+import { RoundedBoxGeometry } from 'three/addons/RoundedBoxGeometry.js';
+
+var DATA = JSON.parse(document.getElementById('data').textContent), CUES = DATA.cues;
+var W = 1600, H = 900;
+var $ = function (s) { return document.querySelector(s); };
+var WARN = [], cw = console.warn; console.warn = function () { WARN.push(Array.prototype.join.call(arguments, ' ')); cw.apply(console, arguments); };
+var q = new URLSearchParams(location.search);
+
+// ───────────────────────────────────────────── 작은 도구(이징은 aimotion _lib/stage.js 와 같은 식)
+function clamp(v, a, b) { a = a == null ? 0 : a; b = b == null ? 1 : b; return v < a ? a : v > b ? b : v; }
+function lerp(a, b, k) { return a + (b - a) * k; }
+function smooth(v) { v = clamp(v); return v * v * (3 - 2 * v); }
+var ease = {
+  outCubic: function (p) { return 1 - Math.pow(1 - p, 3); }, inCubic: function (p) { return p * p * p; },
+  inOutCubic: function (p) { return p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2; },
+  outExpo: function (p) { return p >= 1 ? 1 : 1 - Math.pow(2, -10 * p); },
+  outBack: function (p, c) { c = c == null ? 1.7 : c; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); }
+};
+function backIn(q, c) { return (c + 1) * q * q * q - c * q * q; }
+function mixHex(a, b, k) { var pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16), ch = function (s) { return Math.round(lerp((pa >> s) & 255, (pb >> s) & 255, clamp(k))); };
+  return 'rgb(' + ch(16) + ',' + ch(8) + ',' + ch(0) + ')'; }
+
+/*__LAYOUT__*/
+/*__PARTS__*/
+/*__SCENES__*/
+
+// ───────────────────────────────────────────── 렌더러 · 빛 · 환경(한 번)
+var glc = $('#gl'), ovc = $('#ov'), og = ovc.getContext('2d'), K = 1;
+// WebGL 이 안 열리는 PC(GPU·드라이버 없음, 최신 Chrome 은 소프트웨어 대체를 기본으로 안 켠다)에서는 조용히 빈 화면이 되지 않게
+// 화면에 크게 알리고 멈춘다 — 시연장에서 원인을 바로 알 수 있어야 한다
+var renderer;
+try { renderer = new THREE.WebGLRenderer({ canvas: glc, antialias: true, alpha: true, preserveDrawingBuffer: q.get('t') != null }); }   // 버퍼 보존은 멈춘 화면 캡처용만
+catch (e) {
+  var gm = document.createElement('div'); gm.textContent = '이 PC 에서 3D(WebGL)를 열 수 없습니다 — 그래픽 가속을 켜거나 Chrome 을 --enable-unsafe-swiftshader 로 띄우세요';
+  gm.style.cssText = 'position:fixed;inset:auto 24px 24px 24px;z-index:99;background:#B3261E;color:#fff;font-weight:800;font-size:20px;padding:16px 20px;border-radius:12px';
+  document.body.appendChild(gm); document.documentElement.setAttribute('data-error', 'webgl'); throw e;
+}
+renderer.setClearColor(0x000000, 0);
+// Neutral 톤 매핑: 밝은 바탕에서 HUD 재질 색이 ACES 처럼 탁해지지 않게(데모의 ACES 를 그대로 쓰지 않는 이유)
+renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.VSMShadowMap;
+var scene = new THREE.Scene();
+var pmrem = new THREE.PMREMGenerator(renderer), room = new RoomEnvironment();
+var envTex = pmrem.fromScene(room, 0, .1, 100, { size: 128 }).texture;
+// 무광 면 채움: 같은 방을 구면 조화 9계수로 줄인 LightProbe — 큐브 맵을 화면 전체에서 매 픽셀 읽지 않는다
+var cubeRT = new THREE.WebGLCubeRenderTarget(32, { type: THREE.HalfFloatType });
+new THREE.CubeCamera(.1, 100, cubeRT).update(renderer, room);
+var probe = await LightProbeGenerator.fromCubeRenderTarget(renderer, cubeRT); cubeRT.dispose();
+probe.intensity = 1.0;
+var key = new THREE.DirectionalLight('#ffffff', 2.1), rim = new THREE.DirectionalLight('#d4e6f2', 1.1), hemi = new THREE.HemisphereLight('#ffffff', '#c3d2dc', .35);
+key.castShadow = true; key.shadow.mapSize.set(1024, 1024); key.shadow.radius = 9; key.shadow.blurSamples = 10; key.shadow.bias = -.0006;
+scene.add(key, key.target, rim, hemi, probe);
+var floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.ShadowMaterial({ color: '#0E2433', opacity: .13 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; floor.renderOrder = -1; scene.add(floor);
+var camera = new THREE.PerspectiveCamera(24, W / H, .5, 400);
+var BG = new THREE.Color(PAL.bg), TMP = new THREE.Color();
+var hullCache = new WeakMap();
+
+// ───────────────────────────────────────────── 한 장(큐) 짓기: 표 → 장면 그래프 · 시각 · 라벨 · 카메라 맞춤
+var labelsEl = $('#labels');
+/** 큐 대사에서 kw 가 from 이후 처음 나오는 때(문장 안 글자 위치 비례 — 캐시 음성에는 낱말 시각이 없다). role 이면 그 역할 대사만 */
+function wordTime(cue, kw, from, role) {
+  for (var i = 0; i < cue.utt.length; i++) { var u = cue.utt[i]; if (role && u.role !== role) continue;
+    for (var j = 0; j < u.s.length; j++) { var s = u.s[j], k = s.x.indexOf(kw); if (k < 0) continue;
+      var t = s.t0 + (s.t1 - s.t0) * k / s.x.length - .12; if (t >= from - .01) return Math.max(0, t); } }
+  console.warn('[' + cue.id + '] 대사에 없는 낱말:', kw); return null;
+}
+function U(cue, turn) { return cue.utt.filter(function (u) { return u.turn === turn; })[0]; }
+/** 라벨 낱말 대조(빌더의 check_table 과 같은 규칙) — 대사 + 검증 카드에 없는 낱말이면 경고 */
+function checkWords(cue, text, where) {
+  var corpus = cue.utt.map(function (u) { return u.s.map(function (s) { return s.x; }).join(' '); }).join('\n') + '\n' + cue.card.join('\n');
+  (text || '').split(/[\s·—()\/]+/).filter(Boolean).forEach(function (w) { if (corpus.indexOf(w) < 0) console.warn('[' + cue.id + '] 대사에 없는 낱말:', w, '(' + where + ')'); });
+}
+
+var scenes = [];
+function getScene(ci) {
+  if (scenes[ci]) return scenes[ci];
+  var cue = CUES[ci], sc = { cue: cue, root: new THREE.Group(), parts: [], byId: {} };
+  var T_EXP = U(cue, 'docent0').t0 + .1, T_RE = U(cue, 'after').t0, T_CLICK = T_RE + 1.05, T_ON = T_CLICK + .32;
+  Object.assign(sc, { T_EXP: T_EXP, T_RE: T_RE, T_CLICK: T_CLICK, T_ON: T_ON });
+  var maxDist = Math.max.apply(null, cue.parts.map(function (r) { return r.dist; }).concat([1e-6]));
+  var maxRank = Math.max.apply(null, cue.parts.map(function (r) { return r.order; }).concat([1]));
+  // ── 표의 행마다 부품 하나: 모양 · 재질(부품마다 따로 — "나머지 흐리게" 를 부품 단위 색 섞기로) · 외곽선 껍질
+  cue.parts.forEach(function (row) {
+    var p = Object.assign({}, row), M = makeMaterials(envTex);
+    var mk = SHAPES[cue.id] && SHAPES[cue.id][row.shape];
+    if (!mk) { console.warn('[' + cue.id + '] 모양이 없다:', row.shape); mk = function () { return new THREE.Group(); }; }
+    p.M = M; p.shape = mk(KIT, M); p.g = new THREE.Group(); p.g.add(p.shape);
+    p.mats = Object.keys(M).map(function (k) { return M[k]; });
+    p.hullMat = hullMaterial(); p.hullMat.uniforms.uW.value = row.hull || .06; p.hulls = [];
+    // 메시를 먼저 모으고 나서 껍질을 붙인다 — 순회 도중에 자식을 붙이면 그 껍질(Mesh)을 다시 만나 끝없이 껍질을 붙인다(스택 넘침)
+    var meshes = []; p.shape.traverse(function (o) { if (o.isMesh) meshes.push(o); });
+    meshes.forEach(function (o) { o.receiveShadow = false;
+      var hn = hullCache.get(o.geometry); if (!hn) { hn = hullNormals(o.geometry); hullCache.set(o.geometry, hn); o.geometry.setAttribute('hullN', new THREE.BufferAttribute(hn, 3)); }
+      var h = new THREE.Mesh(o.geometry, p.hullMat); h.renderOrder = 2; h.castShadow = false; h.visible = false; o.add(h); p.hulls.push(h); });
+    p.rest = new THREE.Vector3().fromArray(row.rest); p.dirV = new THREE.Vector3().fromArray(row.dir).normalize();
+    p.tiltAxis = new THREE.Vector3(Math.cos(row.phi || 0), 0, Math.sin(row.phi || 0));
+    p.spin = row.spin || 0; p.tilt = row.tilt || [0, 0]; p.over = row.over || 1.5; p.delay = row.delay || 0;
+    // 순서 곡선(aimotion 148): 단계 사이 간격이 뒤로 갈수록 좁아져(sin 분포) 바깥이 앞장서고 안쪽이 바짝 따라붙는다 → 한 동작으로 읽힌다
+    p.tLeave = row.leave ? wordTime(cue, row.leave, T_EXP - .5, 'docent') : null;
+    p.t0 = (p.tLeave != null ? p.tLeave : T_EXP + .55 * Math.sin(Math.PI / 2 * (row.order / maxRank))) + p.delay;
+    p.dur = .95 + .45 * Math.sqrt(row.dist / maxDist);
+    p.t1end = T_CLICK - .07 * (maxRank - row.order) - p.delay;     // 재조립: 안쪽이 먼저 닫히고 가장 바깥이 딸깍에 닫힌다
+    p.t1dur = .5 + .22 * Math.sqrt(row.dist / maxDist);
+    sc.parts.push(p); sc.byId[p.id] = p;
+  });
+  sc.parts.forEach(function (p) { (p.parent ? sc.byId[p.parent].g : sc.root).add(p.g); });
+  // ── 강조 사건: say 낱말을 도슨트가 말하는 때. 같은 때의 낱말은 한 사건으로 묶는다
+  var ev = [];
+  sc.parts.forEach(function (p) { (p.say || []).forEach(function (w) { var t = wordTime(cue, w, T_EXP - .5, 'docent'); if (t == null) return;
+    var e = ev.filter(function (x) { return Math.abs(x.t - t) < .05; })[0]; if (e) e.ids.push(p.id); else ev.push({ t: t, ids: [p.id], w: w }); }); });
+  ev.sort(function (a, b) { return a.t - b.t; });
+  ev.forEach(function (e, i) {   // 끝: 다음 사건이나, 그 낱말이 든 도슨트 턴이 끝나고 0.5초 — 사회자가 묻는 동안은 아무것도 강조하지 않는다
+    var u = cue.utt.filter(function (x) { return x.role === 'docent' && e.t >= x.t0 - .3 && e.t <= x.t1; })[0];
+    e.end = Math.min(i + 1 < ev.length ? ev[i + 1].t : 1e9, u ? u.t1 + .5 : e.t + 3, T_RE - .1); });
+  sc.events = ev;
+  // ── 설명선: 처음 언급되는 순서로 번호. 나오는 때 = 첫 say(분해가 거의 끝난 뒤, 따로 떨어지는 부품은 떨어진 뒤)
+  var lab = sc.parts.filter(function (p) { return p.label; });
+  lab.forEach(function (p) { var ts = ev.filter(function (e) { return e.ids.indexOf(p.id) >= 0; }).map(function (e) { return e.t; });
+    p.tin = Math.max(ts.length ? ts[0] - .15 : T_EXP + 2, p.tLeave != null ? p.tLeave + .9 : T_EXP + 1.6);
+    checkWords(cue, p.label, p.id + ' label'); checkWords(cue, p.sub, p.id + ' sub'); });
+  lab.sort(function (a, b) { return a.tin - b.tin; }).forEach(function (p, i) { p.no = i + 1; p.tout = T_RE + .025 * i; });
+  lab.forEach(function (p) {
+    var d = document.createElement('div'); d.className = 'cl ' + p.side;
+    var nm = document.createElement('div'); nm.className = 'nm'; var em = document.createElement('em'); em.textContent = ('0' + p.no).slice(-2);
+    var b = document.createElement('b'); b.textContent = p.label; nm.appendChild(em); nm.appendChild(b); d.appendChild(nm);
+    if (p.sub) { var s = document.createElement('small'); s.textContent = p.sub; d.appendChild(s); }
+    p.el = d; p.elName = b; d.style.visibility = 'hidden'; d.style.display = 'block'; labelsEl.appendChild(d);
+    var hgt = d.offsetHeight; p.above = 15; p.below = hgt - 15; p.lw = d.offsetWidth;
+    d.style.display = 'none'; d.style.visibility = ''; labelsEl.removeChild(d);
+  });
+  sc.labeled = lab;
+  sc.links = (cue.links || []).map(function (l) { return { from: sc.byId[l.from], to: sc.byId[l.to], a: new THREE.Vector3().fromArray(l.from_at), b: new THREE.Vector3().fromArray(l.to_at),
+    t: l.say ? wordTime(cue, l.say, T_EXP - .5, 'docent') : T_EXP }; });
+  // 점등 대상
+  sc.lamps = []; sc.emits = [];
+  sc.parts.forEach(function (p) { if (p.shape.userData.lamp) sc.lamps.push(p.M.lamp); if (p.shape.userData.emit) sc.emits.push({ p: p, v: p.shape.userData.emit }); });
+  // ── 카메라 맞춤: 조립(A)·분해(E) 상태의 경계 상자를 투영해, 분해 기둥이 가운데 열(설명선 열 사이) 안에 들게 거리·렌즈 이동을 푼다
+  var v = cue.view; sc.az = v.az; sc.el = v.el; sc.yaw0 = v.yaw0 || -1.4;
+  scene.add(sc.root);
+  // 분해는 단계가 있다: 0턴 시작에 다 같이(따로 떨어질 부품은 붙은 채) → leave 낱말마다 그 부품이 떨어진 상태. 단계마다 맞춤을 풀어
+  // 카메라가 그 사이를 옮겨 간다 — 한 번에 마지막 상태로 맞추면 멀리 떨어질 부품 때문에 처음부터 전부 작아진다
+  var azE = [v.az[0], (v.az[0] + v.az[1]) / 2, v.az[1]], OV = 1.08;   // 1.08: back.out 넘침까지 담는다
+  sc.stages = [{ t: T_EXP, fit: fitView(sc, function (p) { return p.tLeave != null ? 0 : OV; }, azE, 178, 600, 462) }];
+  sc.parts.filter(function (p) { return p.tLeave != null && p.tLeave < T_RE; }).map(function (p) { return p.tLeave; }).sort(function (a, b) { return a - b; })
+    .forEach(function (tl) { sc.stages.push({ t: tl, fit: fitView(sc, function (p) { return p.tLeave == null || p.tLeave <= tl + 1e-6 ? OV : 0; }, azE, 178, 600, 462) }); });
+  sc.fitE = sc.stages[sc.stages.length - 1].fit;
+  sc.fitA = fitView(sc, 0, [v.az[0] - .5, v.az[0] - .25, v.az[0], v.az[1] + .12], 250, 470, 470);
+  sc.floorY = Math.min.apply(null, sc.stages.map(function (s) { return s.fit.minY; }).concat([sc.fitA.minY])) - .35;
+  scene.remove(sc.root);
+  scenes[ci] = sc; return sc;
+}
+/** 부품 상태를 e(0 조립 · 1 분해 — 수 또는 부품마다 정하는 함수)로 두고 월드 경계 상자의 꼭짓점들을 모은다 */
+function cornersAt(sc, e) {
+  sc.root.position.set(0, 0, 0); sc.root.quaternion.identity();
+  sc.parts.forEach(function (p) { p.g.position.copy(p.rest).addScaledVector(p.dirV, p.dist * (typeof e === 'function' ? e(p) : e)); p.g.quaternion.identity(); });
+  sc.root.updateMatrixWorld(true);
+  var pts = [], box = new THREE.Box3();
+  sc.parts.forEach(function (p) { box.setFromObject(p.shape); if (box.isEmpty()) return;
+    for (var i = 0; i < 8; i++) pts.push(new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z)); });
+  return pts;
+}
+function placeCam(target, az, el, d) {
+  camera.position.set(target.x + d * Math.sin(az) * Math.cos(el), target.y + d * Math.sin(el), target.z + d * Math.cos(az) * Math.cos(el));
+  camera.up.set(0, 1, 0); camera.lookAt(target); camera.clearViewOffset(); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+}
+/** 반폭 hw·높이 hh(무대 px) 안에 들어가는 가장 가까운 거리(이분 탐색)와, 그때 내용의 가운데를 (800, cy) 로 옮기는 렌즈 이동 */
+function fitView(sc, e, azs, hw, hh, cy) {
+  var pts = cornersAt(sc, e), c = new THREE.Box3().setFromPoints(pts).getCenter(new THREE.Vector3()), minY = 1e9, v = new THREE.Vector3();
+  pts.forEach(function (p) { minY = Math.min(minY, p.y); });
+  function ext(d, az) { placeCam(c, az, sc.el, d); var x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    pts.forEach(function (p) { v.copy(p).project(camera); var x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); });
+    return [x0, x1, y0, y1]; }
+  var lo = 2, hi = 400;
+  for (var it = 0; it < 40; it++) { var mid = (lo + hi) / 2, ok = azs.every(function (az) { var r = ext(mid, az); return (r[1] - r[0]) / 2 <= hw && r[3] - r[2] <= hh; }); if (ok) hi = mid; else lo = mid; }
+  var r = ext(hi, azs[Math.floor(azs.length / 2)]);
+  return { d: hi, c: c, sx: (r[0] + r[1]) / 2 - W / 2, sy: (r[2] + r[3]) / 2 - cy, minY: minY };
+}
+
+// ───────────────────────────────────────────── 한 순간 그리기 (t 의 순수 함수)
+function explodeOf(p, t, sc) {
+  if (t < sc.T_RE) { var u = clamp((t - p.t0) / p.dur); return { e: u <= 0 ? 0 : ease.outBack(u, p.over), u: u, back: 0 }; }
+  var qq = clamp((t - (p.t1end - p.t1dur)) / p.t1dur); return { e: 1 - backIn(qq, 1.1), u: 1, back: qq };
+}
+function hiOf(sc, id, t) {
+  var w = 0; sc.events.forEach(function (e) { if (e.ids.indexOf(id) < 0) return; w = Math.max(w, smooth((t - e.t) / .25) * (1 - smooth((t - e.end) / .35))); });
+  return w;
+}
+var shown = -1, v3 = new THREE.Vector3(), q4 = new THREE.Quaternion(), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
+function camState(sc, t) {
+  var A = sc.fitA, az, d, c, sx, sy;
+  // 분해 쪽 맞춤 = 단계 맞춤을 시각에 따라 이어 붙인 것(떨어지는 낱말 0.3초 전부터 1.6초에 걸쳐 옮겨 간다)
+  var E = { d: sc.stages[0].fit.d, c: sc.stages[0].fit.c.clone(), sx: sc.stages[0].fit.sx, sy: sc.stages[0].fit.sy };
+  for (var si = 1; si < sc.stages.length; si++) { var F = sc.stages[si].fit, ws = ease.inOutCubic(clamp((t - sc.stages[si].t + .3) / 1.6)); if (ws <= 0) break;
+    E.d = lerp(E.d, F.d, ws); E.c.lerp(F.c, ws); E.sx = lerp(E.sx, F.sx, ws); E.sy = lerp(E.sy, F.sy, ws); }
+  // 카메라는 분해보다 먼저 물러난다(부품이 넘침 곡선으로 날아가는 동안 화면 밖으로 나가지 않게)
+  var kIn = ease.outCubic(clamp((t - .2) / 2.6)), kEx = ease.inOutCubic(clamp((t - sc.T_EXP + .45) / 1.6)), kRe = ease.inOutCubic(clamp((t - sc.T_RE) / (sc.T_CLICK - sc.T_RE + .2)));
+  var drift = clamp((t - sc.T_EXP) / Math.max(1, sc.T_RE - sc.T_EXP));
+  // 사회자 오프닝 내내 조립체를 천천히 돌려 보이고, 분해 뒤에는 설명 동안 천천히 돈다
+  az = lerp(sc.az[0] - .5, sc.az[0], ease.outCubic(clamp((t - .2) / Math.max(3, sc.T_EXP - .2)))) + (sc.az[1] - sc.az[0]) * drift + .12 * kRe;
+  var k = kEx * (1 - kRe);
+  d = lerp(A.d * lerp(1.15, 1, kIn), E.d, k) * (1 - .05 * smooth((t - sc.T_CLICK) / 3.5));
+  c = v3.copy(A.c).lerp(E.c, k).clone(); sx = lerp(A.sx, E.sx, k); sy = lerp(A.sy, E.sy, k);
+  return { az: az, d: d, c: c, sx: sx, sy: sy };
+}
+function draw(ci, t, opt) {
+  var sc = getScene(ci), cue = sc.cue;
+  if (shown !== ci) {
+    if (shown >= 0 && scenes[shown]) scene.remove(scenes[shown].root);
+    scene.add(sc.root); floor.position.y = sc.floorY; labelsEl.textContent = '';
+    sc.labeled.forEach(function (p) { p.el.style.display = 'none'; labelsEl.appendChild(p.el); p.vis = 0; });
+    var E = sc.fitE; key.position.set(E.c.x - 14, E.c.y + 30, E.c.z + 18); key.target.position.copy(E.c);
+    var R = E.d * .42; Object.assign(key.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 1, far: 120 }); key.shadow.camera.updateProjectionMatrix();
+    rim.position.set(E.c.x + 18, E.c.y + 12, E.c.z - 20);
+    $('#chip').textContent = cue.no + ' · ' + cue.title; $('#headline').textContent = cue.headline; $('#lv').textContent = DATA.level + ' 수준';
+    shown = ci;
+  }
+  // 조립체 자세: 처음에 돌며 들어온다
+  var kIn = ease.outCubic(clamp((t - .25) / 2.4));
+  sc.root.quaternion.setFromAxisAngle(Y, lerp(sc.yaw0, 0, kIn)).multiply(q4.setFromAxisAngle(Z, lerp(-.28, 0, kIn)));
+  sc.root.position.set(0, 0, 0);
+  var hiAny = 0, his = {};
+  sc.parts.forEach(function (p) { his[p.id] = hiOf(sc, p.id, t); hiAny = Math.max(hiAny, his[p.id]); });
+  var sway = smooth((t - sc.T_EXP - 2) / .8) * (1 - smooth((t - sc.T_RE) / .3));
+  sc.parts.forEach(function (p) {
+    var x = explodeOf(p, t, sc); p.e = x.e;
+    p.g.position.copy(p.rest).addScaledVector(p.dirV, p.dist * x.e);
+    var tilt = p.tilt[0] * Math.sin(Math.PI * x.u) * (1 - x.back) + p.tilt[1] * x.e + p.tilt[0] * .6 * Math.sin(Math.PI * x.back);
+    p.g.quaternion.setFromAxisAngle(p.tiltAxis, tilt);
+    p.g.rotateY(p.spin * x.e + .06 * Math.sin(t * .6 + (p.phi || 0)) * sway);
+    // 강조: 이 부품만 껍질 외곽선, 나머지는 바탕색 쪽으로 물러난다. ghost 부품은 떨어져 나간 뒤 흐리게 남는다
+    var w = his[p.id], ghost = p.ghost && p.tLeave != null ? smooth((t - p.tLeave - 1.2) / .6) * (1 - smooth((t - sc.T_RE) / .3)) : 0;
+    var dim = Math.max(.28 * hiAny * (1 - w), .5 * ghost * (1 - w));
+    p.dim = dim; p.w = w; p.ghostK = ghost;
+    p.mats.forEach(function (m) { m.color.copy(m.userData.base).lerp(BG, dim); if (m.envMap) m.envMapIntensity = .9 * (1 - .6 * dim); });
+    p.hullMat.uniforms.uOpacity.value = .95 * w; p.hulls.forEach(function (h) { h.visible = w > .002; });
+    // 강조가 시작되는 순간 한 번 살짝 커졌다 돌아온다(감쇠 사인 — 직전 프레임에 기대지 않는 닫힌 식)
+    var tl = -9; sc.events.forEach(function (e) { if (e.ids.indexOf(p.id) >= 0 && e.t <= t) tl = e.t; });
+    var pu = (t - tl) / .12; p.g.scale.setScalar(1 + (pu > 0 ? .05 * Math.exp(-pu) * Math.sin(Math.min(pu, Math.PI)) : 0));
+  });
+  // 점등: '기억해 두기' 뒤 딸깍 → 켜진다
+  var on = ease.outCubic(clamp((t - sc.T_ON) / .35));
+  sc.lamps.forEach(function (m) { m.emissiveIntensity = 1.9 * on; });
+  // 카메라(+ 딸깍: 빠르게 밀렸다 돌아오는 거리와 감쇠하는 기울기)
+  var cs = camState(sc, t), u = t - sc.T_CLICK, kz = u < 0 ? 0 : .035 * (u / .045) * Math.exp(1 - u / .045), roll = u < 0 ? 0 : .01 * Math.exp(-u / .16) * Math.sin(u * 2 * Math.PI * 6);
+  camera.position.set(cs.c.x + cs.d * (1 - kz) * Math.sin(cs.az) * Math.cos(sc.el), cs.c.y + cs.d * (1 - kz) * Math.sin(sc.el), cs.c.z + cs.d * (1 - kz) * Math.cos(cs.az) * Math.cos(sc.el));
+  camera.up.set(0, 1, 0); camera.lookAt(cs.c); camera.rotateZ(roll);
+  camera.setViewOffset(W, H, cs.sx, cs.sy, W, H); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+  scene.updateMatrixWorld(true);
+  renderer.render(scene, camera);
+  overlay(sc, t, hiAny, his, on);
+  dom(sc, t);
+  people(sc, t, opt);
+}
+
+// ───────────────────────────────────────────── 설명선 · 지시선 · 전파 고리 (2D 캔버스에는 글자 없음)
+var LXL = 540, LXR = 1060, TOP = 132, BOT = 790, GAP = 14, INK = '#0E2433', SIG = PAL.sig;
+/** 월드 점 → 무대 px(렌즈 이동이 투영 행렬에 들어 있어 그대로 맞는다) */
+function project(p) { var r = p.clone().project(camera); return [(r.x + 1) / 2 * W, (1 - r.y) / 2 * H, r.z]; }
+function overlay(sc, t, hiAny, his, on) {
+  og.setTransform(K, 0, 0, K, 0, 0); og.globalAlpha = 1; og.globalCompositeOperation = 'source-over'; og.setLineDash([]); og.lineCap = 'round'; og.lineJoin = 'round';
+  og.clearRect(0, 0, W, H);
+  var camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion), cols = { L: [], R: [] };
+  // 3D 기준점: 부품 축 위(앵커 높이)에서 반지름만큼 — 라벨 쪽(카메라 오른쪽/왼쪽)에서 카메라 쪽으로 0.6 rad 돌린 보이는 면 위
+  sc.labeled.forEach(function (p) {
+    var c = p.g.localToWorld(new THREE.Vector3(0, p.anchor[0], 0)), ax = Y.clone().applyQuaternion(p.g.getWorldQuaternion(new THREE.Quaternion()));
+    var sideV = camRight.clone().multiplyScalar(p.side === 'L' ? -1 : 1); sideV.addScaledVector(ax, -sideV.dot(ax)).normalize();
+    var tc = camera.position.clone().sub(c); var front = tc.addScaledVector(ax, -tc.dot(ax)).normalize();
+    var wpt = c.addScaledVector(sideV, p.anchor[1] * Math.cos(.6)).addScaledVector(front, p.anchor[1] * Math.sin(.6));
+    var s = project(wpt); cols[p.side].push({ p: p, ax: s[0], ay: s[1], w: 1 + 3 * his[p.id], above: p.above, below: p.below });
+  });
+  ['L', 'R'].forEach(function (side) {
+    var items = cols[side]; if (!items.length) return;
+    var res = LAYOUT.column(items, TOP, BOT, GAP); if (res.over && !sc.overWarned) { console.warn('[' + sc.cue.id + '] 설명선 열이 넘친다:', side); sc.overWarned = 1; }
+    var L = side === 'L', ends = L ? LXL + 12 : LXR - 12, diagX = L ? LXL + 42 : LXR - 42;
+    var busX = L ? Math.max(Math.min.apply(null, items.map(function (i) { return i.ax; })) - 26, diagX + 16) : Math.min(Math.max.apply(null, items.map(function (i) { return i.ax; })) + 26, diagX - 16);
+    items.forEach(function (it) {
+      var p = it.p, tin = p.tin, tout = p.tout, w = his[p.id];
+      var dotIn = clamp((t - tin) / .24), lineIn = ease.outCubic(clamp((t - tin - .06) / .4)), labIn = ease.outCubic(clamp((t - tin - .3) / .32));
+      var labOut = clamp((t - tout) / .14), lineOut = ease.inCubic(clamp((t - tout - .03) / .18)), dotOut = clamp((t - tout - .17) / .1);
+      var dimK = (1 - .4 * hiAny * (1 - w)) * (1 - .35 * p.ghostK * (1 - w));
+      var pts = [[it.ax, it.ay], [busX, it.ay], [diagX, it.y], [ends, it.y]], seg = [], Lsum = 0, i;
+      for (i = 1; i < pts.length; i++) { var l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); Lsum += l; }
+      var shownL = Lsum * lineIn * (1 - lineOut);
+      if (shownL > .5) {
+        og.globalAlpha = (w > 0 ? lerp(.62, 1, w) : .62) * dimK; og.strokeStyle = w > 0 ? mixHex(INK, SIG, w) : INK; og.lineWidth = 1.6 + 1.2 * w;
+        og.beginPath(); og.moveTo(pts[0][0], pts[0][1]); var acc = 0;
+        for (i = 1; i < pts.length; i++) { var sl = seg[i - 1]; if (acc + sl <= shownL) { og.lineTo(pts[i][0], pts[i][1]); acc += sl; continue; }
+          var f = (shownL - acc) / sl; og.lineTo(lerp(pts[i - 1][0], pts[i][0], f), lerp(pts[i - 1][1], pts[i][1], f)); break; }
+        og.stroke();
+      }
+      var ds = (dotIn > 0 ? ease.outBack(dotIn, 2.2) : 0) * (1 - dotOut);
+      if (ds > .01) { og.globalAlpha = dimK; og.fillStyle = '#ffffff'; og.beginPath(); og.arc(it.ax, it.ay, 8 * ds, 0, Math.PI * 2); og.fill();
+        og.fillStyle = w > 0 ? mixHex(INK, SIG, w) : INK; og.beginPath(); og.arc(it.ax, it.ay, (4.5 + 1.5 * w) * ds, 0, Math.PI * 2); og.fill(); }
+      p.lay = { y: it.y, la: labIn * (1 - labOut), labIn: labIn, labOut: labOut, dimK: dimK, w: w };
+    });
+  });
+  og.globalAlpha = 1;
+  // 두 부품을 잇는 점선(02: 보낸 쪽 안테나 → 받은 쪽) — 3D 이차 곡선을 투영해 길이를 따라 그어진다
+  sc.links.forEach(function (ln) {
+    if (ln.t == null) return; var k = ease.outCubic(clamp((t - ln.t - .5) / 1.3)) * (1 - smooth((t - sc.T_RE) / .3)); if (k <= .002) return;
+    var a = ln.from.g.localToWorld(ln.a.clone()), b = ln.to.g.localToWorld(ln.b.clone()), m = a.clone().lerp(b, .5); m.y += a.distanceTo(b) * .32;
+    og.strokeStyle = SIG; og.lineWidth = 3; og.setLineDash([10, 8]); og.globalAlpha = .95; og.beginPath();
+    var N = 48, n = Math.max(1, Math.round(N * k));
+    for (var i = 0; i <= n; i++) { var s = i / N, pa = a.clone().multiplyScalar((1 - s) * (1 - s)).addScaledVector(m, 2 * s * (1 - s)).addScaledVector(b, s * s), pr = project(pa);
+      if (i) og.lineTo(pr[0], pr[1]); else og.moveTo(pr[0], pr[1]); }
+    og.stroke(); og.setLineDash([]);
+    [project(a), project(b)].forEach(function (e2, j) { if (j && k < .98) return; og.fillStyle = SIG; og.beginPath(); og.arc(e2[0], e2[1], 5, 0, Math.PI * 2); og.fill(); });
+  });
+  // 딸깍: 조립체 가운데에서 고리 하나 + 짧은 섬광 · 점등 뒤: 안테나 끝에서 전파 고리가 차례로 퍼진다
+  var u = t - sc.T_CLICK;
+  if (u >= 0 && u < .55) { var c0 = project(sc.fitA.c), kk = u / .55; og.globalAlpha = .85 * Math.pow(1 - kk, 1.4); og.strokeStyle = SIG; og.lineWidth = 8 * (1 - kk) + 1;
+    og.beginPath(); og.arc(c0[0], c0[1], 40 + 260 * ease.outExpo(kk), 0, Math.PI * 2); og.stroke();
+    var fl = clamp(u / .22); if (fl < 1) { og.globalAlpha = .18 * (1 - fl) * (1 - fl); og.fillStyle = '#ffffff'; og.fillRect(0, 0, W, H); } }
+  if (on > 0) sc.emits.forEach(function (em) { var pr = project(em.p.shape.localToWorld(em.v.clone()));
+    for (var r = 0; r < 3; r++) { var ph = ((t - sc.T_ON) - r * .42); if (ph < 0) continue; ph = (ph % 1.26) / 1.26;
+      og.globalAlpha = on * .75 * (1 - ph) * (1 - ph); og.strokeStyle = SIG; og.lineWidth = 3 - 2 * ph; og.beginPath(); og.arc(pr[0], pr[1], 10 + 120 * ease.outCubic(ph), Math.PI * 1.05, Math.PI * 1.95); og.stroke(); }
+    og.globalAlpha = on; og.fillStyle = SIG; og.beginPath(); og.arc(pr[0], pr[1], 5, 0, Math.PI * 2); og.fill(); });
+  og.globalAlpha = 1;
+}
+
+// ───────────────────────────────────────────── DOM: 라벨 · 헤드라인 · 포인트 카드 · 로봇 · 말풍선
+function dom(sc, t) {
+  var cue = sc.cue;
+  sc.labeled.forEach(function (p) {
+    var L = p.lay; if (!L || L.la <= .002) { if (p.vis) { p.el.style.display = 'none'; p.vis = 0; } return; }
+    if (!p.vis) { p.el.style.display = 'block'; p.vis = 1; }
+    var x = p.side === 'L' ? LXL - p.lw + (1 - L.labIn) * 22 + L.labOut * 12 : LXR + (1 - L.labIn) * -22 - L.labOut * 12;
+    p.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + (L.y - p.above).toFixed(1) + 'px)';
+    p.el.style.opacity = (L.la * L.dimK).toFixed(3);
+    var rev = Math.min(1, L.labIn * 1.25) * 100;
+    p.el.style.clipPath = p.side === 'L' ? 'inset(-6px -6px -6px ' + (100 - rev).toFixed(1) + '%)' : 'inset(-6px ' + (100 - rev).toFixed(1) + '% -6px -6px)';
+    p.elName.style.color = L.w > 0 ? mixHex('#0E2433', PAL.sig, L.w) : '';
+    p.elName.style.borderBottomColor = L.w > 0 ? 'rgba(11,127,181,' + L.w.toFixed(3) + ')' : 'transparent';
+  });
+  $('#head').style.opacity = (.0 + smooth((t - sc.T_EXP + .2) / .5)).toFixed(3);
+  // 포인트 카드: 도슨트 i 턴 동안 그 포인트 · 받아치기부터 '기억해 두기'
+  var pt = $('#point'), cur = -1;
+  cue.utt.forEach(function (u2) { if (u2.role === 'docent' && t >= u2.t0 - .1) cur = +u2.turn.slice(6); });
+  var rem = t >= sc.T_RE - .05;
+  if (rem) { pt.className = 'point rem'; $('#p-no').textContent = '기억해 두기'; $('#p-t').textContent = ''; $('#p-b').textContent = cue.remember; pt.style.visibility = 'visible'; pt.style.opacity = smooth((t - sc.T_RE) / .4).toFixed(3); }
+  else if (cur >= 0 && cue.items[cur]) { var it = cue.items[cur], st = U(cue, 'docent' + cur).t0; pt.className = 'point'; $('#p-no').textContent = ('0' + (cur + 1)).slice(-2) + ' / ' + ('0' + cue.items.length).slice(-2);
+    $('#p-t').textContent = it.t; $('#p-b').textContent = it.b; pt.style.visibility = 'visible'; pt.style.opacity = smooth((t - st + .1) / .4).toFixed(3); }
+  else pt.style.visibility = 'hidden';
+}
+
+// 로봇·말풍선 — 3D 와 따로 매 프레임 갱신한다(공연 모드에서는 장면 시각이 멈춰도 말하는 로봇은 까딱여야 한다).
+// opt.live: 누가 말하는지는 LiveFollow.speaking() 이 정한다 · opt.qa: 관람객 질문 흐름 — 생성 답의 글은 싣지 않는다(검수 전 글)
+function people(sc, t, opt) {
+  opt = opt || {}; var cue = sc.cue;
+  ['mc', 'docent'].forEach(function (role) {
+    var el = $('#b-' + role), last = null, now = null, img = $('#i-' + role);
+    if (!opt.qa) cue.utt.forEach(function (u) { if (u.role !== role) return; u.s.forEach(function (s) { if (t >= s.t0 - .1) { last = s; now = t <= u.t1 + .15 ? u : null; } }); });
+    var talking = opt.live ? !!(opt.speaking && opt.speaking.role === role) : !!now, bt = opt.live ? performance.now() / 1000 : t;
+    img.style.transform = (role === 'docent' ? 'scaleX(-1) ' : '') + (talking ? 'translateY(' + (-5 * Math.abs(Math.sin(bt * 7.5))).toFixed(1) + 'px)' : '');
+    if (!last) { el.className = 'bubble'; return; }
+    var pr = clamp((t - last.t0) / (last.t1 - last.t0)), n = Math.round(last.x.length * pr);
+    el.querySelector('.done').textContent = last.x.slice(0, n); el.querySelector('.rest').textContent = last.x.slice(n);
+    el.className = 'bubble on' + (now ? '' : ' fade');
+  });
+}
+
+// ───────────────────────────────────────────── 크기 맞춤 · 재생
+function resize() {
+  var fit = $('#fit'), s = Math.min(fit.clientWidth / W, fit.clientHeight / H), st = $('#stage');
+  st.style.transform = 'translate(' + (-W * s / 2) + 'px,' + (-H * s / 2) + 'px) scale(' + s + ')';
+  // 그리기 버퍼: 화면 픽셀에 맞추되 2배를 넘지 않게(전시장 큰 화면에서 프레임 시간을 지킨다)
+  K = clamp(s * (window.devicePixelRatio || 1), .75, 2);
+  renderer.setPixelRatio(K); renderer.setSize(W, H, false); ovc.width = Math.round(W * K); ovc.height = Math.round(H * K);
+}
+// ───────────────────────────────────────────── 장면 시계 — 하나뿐이다
+// 미리보기 = 큐 음성의 currentTime. 공연 = 로봇 2대가 실제로 말하고 화면은 LiveFollow.time() 을 따라간다(오디오를 만들지도 틀지도
+// 않는다). 공연 모드인지는 모듈이 정한다 — 감독 대시보드가 준 `/stage/exploded` 면 기본이 공연, `?live` 면 file:// 에서도 공연,
+// `?preview` 면 미리보기. 장면·말풍선·낱말 시각(wordTime)은 전부 이 시계만 본다 — 발화 표(utt)의 턴 이름·시각 계산이 종이 무대
+// 빌더와 같아서 감독의 발화 라벨이 그대로 풀린다. 분해도는 전문가 한 수준뿐이라 감독 수준이 다르면 모듈 배지가 알리는 것으로 충분하다.
+var lf = window.LiveFollow ? window.LiveFollow.create({ cues: CUES, level: DATA.level,
+  onCue: function (i) { if (i >= 0 && i < CUES.length) { getScene(i); lastKey = ''; } } }) : null;
+var LIVE = !!(lf && lf.enabled);
+if (!lf && (q.has('live') || location.pathname.indexOf('/stage/') === 0)) {
+  console.warn('공연 모드 모듈(LiveFollow)이 이 빌드에 없다 — 대기 화면만 보인다(scripts/handout_live/live_follow.js 를 두고 다시 빌드)');
+    var nb = document.createElement('div'); nb.textContent = '공연 모드 모듈 없음 — 다시 빌드해야 로봇 발화를 따라갑니다';
+    nb.style.cssText = 'position:absolute;right:16px;bottom:16px;z-index:9;background:#B3261E;color:#fff;font-weight:800;padding:8px 14px;border-radius:10px;font-size:15px';
+    document.body.appendChild(nb);
+}
+var audios = LIVE ? [] : CUES.map(function (c) { var a = new Audio(c.audio); a.preload = 'auto'; return a; });
+var frozen = q.get('t') != null ? parseFloat(q.get('t')) : null, cur = 0, lastKey = '', held = {};
+function sceneClock() {
+  if (LIVE && frozen == null) {
+    var ci = lf ? lf.cue() : -1;
+    if (ci < 0 || ci >= CUES.length) return { ci: 0, t: 0, live: true, wait: true };     // 아직 모름 — 첫 장의 조립 상태로 기다린다
+    var ph = lf.phase(), t = lf.time();
+    // 관람객 질문 흐름: 장면을 그 큐의 마지막 대본 시각에 멈춘다(생성 답은 장면 시각이 아니다)
+    if (ph === 'qa') t = held[ci] != null ? held[ci] : t; else held[ci] = t;
+    return { ci: ci, t: t, live: true, qa: ph === 'qa', speaking: lf.speaking() };
+  }
+  return { ci: cur, t: frozen != null ? frozen : audios[cur].currentTime };
+}
+var fmt = function (s) { s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + Math.floor(s % 60)).slice(-2); };
+function setCue(i, play) { if (LIVE) return; audios.forEach(function (a) { a.pause(); }); cur = i; audios[i].currentTime = 0; lastKey = ''; paint(); if (play) audios[i].play(); }
+function paint() { $('#cues').value = String(cur); $('#scrub').max = CUES[cur].dur; $('#prev').disabled = cur === 0; $('#nextc').disabled = cur === CUES.length - 1; }
+CUES.forEach(function (c, i) { var o = document.createElement('option'); o.value = String(i); o.textContent = c.no + ' ' + c.title; $('#cues').appendChild(o); });
+if (LIVE) {
+  // 공연 모드: 재생·탐색 컨트롤이 없다(큐와 시각은 공연이 정한다). 접속 상태 배지는 LiveFollow 가 직접 그린다
+  ['#prev', '#cues', '#nextc', '#play', '#scrub', '#time'].forEach(function (s) { $(s).hidden = true; $(s).style.display = 'none'; });
+  $('#start').hidden = true; $('#note').textContent = DATA.level + ' 수준 · 공연 따라가기(소리는 로봇이 낸다)';
+  document.documentElement.setAttribute('data-live', '1');
+} else {
+  audios.forEach(function (a, i) { a.addEventListener('ended', function () { if (i + 1 < CUES.length) setCue(i + 1, true); }); });
+  $('#cues').addEventListener('change', function () { $('#start').hidden = true; setCue(+this.value, true); this.blur(); });
+  $('#prev').addEventListener('click', function () { if (cur > 0) { $('#start').hidden = true; setCue(cur - 1, true); } });
+  $('#nextc').addEventListener('click', function () { if (cur + 1 < CUES.length) { $('#start').hidden = true; setCue(cur + 1, true); } });
+  var toggle = function () { $('#start').hidden = true; var a = audios[cur]; if (a.paused) { if (a.ended || a.currentTime >= CUES[cur].dur - .05) a.currentTime = 0; a.play(); } else a.pause(); };
+  $('#play').addEventListener('click', toggle);
+  $('#startbtn').addEventListener('click', function () { $('#start').hidden = true; setCue(0, true); });
+  $('#scrub').addEventListener('input', function () { audios[cur].currentTime = parseFloat(this.value); });
+  document.addEventListener('keydown', function (ev) { if (ev.repeat || /^(SELECT|INPUT)$/.test((ev.target || {}).tagName || '')) return;
+    if (ev.code === 'Space') { ev.preventDefault(); toggle(); } else if (ev.code === 'ArrowRight' && cur + 1 < CUES.length) setCue(cur + 1, !audios[cur].paused); else if (ev.code === 'ArrowLeft' && cur > 0) setCue(cur - 1, !audios[cur].paused); });
+  $('#note').textContent = DATA.level + ' 수준 · 캐시 음성 재활용 · 01·02 시안';
+}
+
+resize();
+var rz = null; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { resize(); lastKey = ''; }, 200); });
+if (q.get('check')) { CUES.forEach(function (c, i) { getScene(i); }); document.body.setAttribute('data-warn', JSON.stringify(WARN)); }
+if (!LIVE && (frozen != null || q.get('bench'))) { cur = Math.max(0, CUES.map(function (c) { return c.id.slice(0, 2); }).indexOf(q.get('cue') || '01')); $('#start').hidden = true; }
+paint();
+// 셰이더를 한 번 다 엮어 둔다(첫 재생 프레임이 컴파일을 떠안지 않게) — 장면은 그 장에 들어갈 때 짓되 다음 장은 미리
+getScene(cur); draw(cur, frozen != null ? frozen : 0); renderer.compile(scene, camera);
+setTimeout(function () { if (cur + 1 < CUES.length) getScene(cur + 1); }, 300);
+if (q.get('bench')) {
+  // 프레임 시간: 그 장 전체에서 고르게 뽑은 시각을 그리고 1픽셀 읽기로 GPU 가 끝나기를 기다린다(헤드리스·전시장 PC 공통)
+  var gl = renderer.getContext(), px = new Uint8Array(4), N = +q.get('bench') > 1 ? +q.get('bench') : 90, ms = [], sc0 = getScene(cur);
+  for (var i = 0; i < 6; i++) { draw(cur, i); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+  for (i = 0; i < N; i++) { var tt = CUES[cur].dur * (i + .5) / N, a0 = performance.now(); draw(cur, tt); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); ms.push(performance.now() - a0); }
+  ms.sort(function (a, b) { return a - b; });
+  document.body.setAttribute('data-bench', JSON.stringify({ cue: CUES[cur].id, n: N, avg: +(ms.reduce(function (a, b) { return a + b; }, 0) / N).toFixed(2), p50: +ms[N >> 1].toFixed(2),
+    p95: +ms[Math.floor(N * .95)].toFixed(2), max: +ms[N - 1].toFixed(2), buffer: [glc.width, glc.height], gl: gl.getParameter(gl.RENDERER) }));
+}
+(function loop() {
+  var c = sceneClock(), k = c.ci + ':' + c.t.toFixed(3) + (c.qa ? ':qa' : '');
+  if (k !== lastKey) { draw(c.ci, c.t, c); lastKey = k; }
+  else if (c.live) people(getScene(c.ci), c.t, c);       // 장면이 멈춰도(질문 흐름) 말하는 로봇은 까딱인다
+  if (!LIVE && frozen == null) { $('#scrub').value = c.t; $('#time').textContent = fmt(c.t) + ' / ' + fmt(CUES[cur].dur); $('#play').textContent = audios[cur].paused ? '▶ 재생' : '❚❚ 멈춤'; }
+  requestAnimationFrame(loop);
+})();
+// 종이 무대(window.paperStage)와 같은 모양 — 조율자의 공연 통합 시험이 live·cue()·clock() 을 읽는다
+window.explodedStage = { draw: draw, getScene: getScene, setCue: setCue, sceneClock: sceneClock, warn: WARN, live: lf,
+  cue: function () { return sceneClock().ci; }, clock: function () { return sceneClock().t; } };
+document.documentElement.setAttribute('data-ready', '1');
+</script>
+</body>
+</html>

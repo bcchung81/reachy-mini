@@ -1,0 +1,78 @@
+# 분해도 무대 — 큐마다 부품 표 하나(데이터만). 엔진(template.html)은 같고 이 표만 바뀐다.
+#
+# 한 행 = 부품 하나. 기법은 aimotion 148 「분해도」의 부품 표(MIT © 2026 kstost)에서 가져왔다.
+#   shape   scenes.js 의 SHAPES[큐][shape] — 부품 모양(자기 중심이 원점, 긴 축 y)
+#   parent  함께 움직이는 부품(비우면 조립체 루트). 자식의 분해 벡터는 부모 좌표계 안이라 부모가 움직이면 같이 실려 나간다
+#   rest    조립 상태에서 부모 좌표계 안의 원점
+#   dir·dist  부모 좌표계 안의 분해 벡터(dir 은 빌더가 단위 벡터로 맞춘다). dist 0 = 움직이지 않는 기준 부품
+#   order   순서 단계(0 = 가장 바깥, 먼저 나가고 마지막에 닫힌다) · delay 같은 단계 안의 미세 지연(초)
+#   spin    완전히 분해됐을 때 자기 축을 도는 양(rad) · tilt [비행 중 최대, 휴지] · phi 기울기 축 방향 · over back.out 넘침
+#   anchor  [축 위 높이, 반지름] — 설명선 기준점(그 높이의 축 점에서 반지름만큼 라벨 쪽·카메라 쪽으로)
+#   side    설명선 열(L 왼쪽 / R 오른쪽) — 화면 위치로 정하지 않아 열이 바뀌며 튀지 않는다
+#   label·sub  라벨 글. **그 큐 대사 + 검증된 카드(전문가 수준)의 낱말에서만**(빌더와 ?check=1 이 대조한다)
+#              ⚠ 행이 흐름 매핑 {…} 이라 쉼표가 값을 자른다 — 쉼표가 든 글(3,500km)은 반드시 "따옴표" 로 감싼다(모르는 키가 생기면 빌더가 멈춘다)
+#   say     도슨트가 이 낱말을 말할 때 이 부품을 강조한다(처음 낱말에서 설명선이 나온다). 도슨트 대사에서만 찾는다
+#   leave   이 낱말을 말할 때 따로 떨어져 나간다(없으면 도슨트 0턴 시작에 다 같이 분해)
+#   ghost   강조가 끝난 뒤에도 흐리게 남는다(대사가 "아니다" 라고 한 것)
+# 큐 단위: view.az [분해 동안 처음, 끝](카메라 방위각, 천천히 돈다) · view.el 앙각 · view.yaw0 처음 들어올 때 조립체가 돌아 있는 양
+#          links  두 부품의 점을 잇는 점선(say 낱말부터 그어진다)
+
+01-intro:
+  view: {az: [0.36, 0.56], el: 0.30, yaw0: -1.5}
+  parts:
+    - {id: foundation, shape: foundation, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 2.2, order: 2, delay: 0.04,
+       spin: 0.18, tilt: [0.08, 0.015], phi: 0.3, over: 1.3, anchor: [0, 2.9], side: L,
+       label: 전파법 제66조, sub: 설립 근거, say: [전파법 제66조]}
+    - {id: pillar1, shape: pillar, parent: null, rest: [-2.7, 1.45, 1.75], dir: [-0.9, -1.65, 0.75], dist: 2.02, order: 3, delay: 0.03,
+       spin: 0.7, tilt: [0.16, 0.04], phi: 2.4, over: 1.7, anchor: [0.25, 0.46], side: L,
+       label: 방송통신융합 산업진흥, say: [방송통신융합 산업진흥]}
+    # 뒤 왼쪽 기둥은 카메라(앞 오른쪽)에서 가장 먼 자리라 바닥판에 가린다 — 바깥으로 더 빼고, 기준점은 보이는 아래쪽에
+    - {id: pillar2, shape: pillar, parent: null, rest: [-2.7, 1.45, -1.75], dir: [-1.4, -0.85, -0.45], dist: 1.70, order: 3, delay: 0.08,
+       spin: -0.6, tilt: [0.14, 0.03], phi: 0.9, over: 1.6, anchor: [-0.55, 0.46], side: L,
+       label: ICT기금 운용, say: [ICT기금 운용]}
+    - {id: pillar3, shape: pillar, parent: null, rest: [2.7, 1.45, 1.75], dir: [0.9, -0.95, 0.75], dist: 1.51, order: 3, delay: 0.05,
+       spin: -0.7, tilt: [0.16, 0.04], phi: 4.1, over: 1.7, anchor: [0.25, 0.46], side: R,
+       label: 전파산업진흥, say: [전파산업진흥]}
+    - {id: pillar4, shape: pillar, parent: null, rest: [2.7, 1.45, -1.75], dir: [0.9, 0.85, -0.75], dist: 1.45, order: 3, delay: 0.1,
+       spin: 0.6, tilt: [0.14, 0.03], phi: 5.4, over: 1.6, anchor: [0.25, 0.46], side: R,
+       label: 전파자원관리, say: [전파자원관리]}
+    - {id: floor, shape: floor, parent: null, rest: [0, 2.775, 0], dir: [0, 1, 0], dist: 1.43, order: 2, delay: 0,
+       spin: -0.35, tilt: [0.1, 0.02], phi: 3.3, over: 1.5, anchor: [0, 2.9], side: R,
+       label: 한국방송통신전파진흥원, sub: 진흥과 인력양성 기능, say: [진흥과 인력양성, 한국방송통신전파진흥원이에요]}
+    - {id: hall, shape: hall, parent: null, rest: [0, 4.0, 0], dir: [0, 1, 0], dist: 2.55, order: 1, delay: 0,
+       spin: 0.4, tilt: [0.12, 0.025], phi: 1.4, over: 1.6, anchor: [0, 2.8], side: L,
+       label: 대국민 전시 공간, sub: 시민과 직접 만나는 자리, say: [대국민 전시 공간]}
+    - {id: roof, shape: roof, parent: null, rest: [0, 5.18, 0], dir: [0, 1, 0], dist: 3.65, order: 0, delay: 0,
+       spin: -0.5, tilt: [0.14, 0.03], phi: 5.0, over: 1.5, anchor: [0.1, 2.9], side: R,
+       label: 전파체험관, sub: 2020년 11월 개관, say: [2020년 11월]}
+    - {id: mast, shape: mast, parent: roof, rest: [0, 1.78, 0], dir: [0, 1, 0], dist: 0.9, order: 1, delay: 0.05,
+       spin: 0.9, tilt: [0.1, 0.02], phi: 2.0, over: 1.8, anchor: [0.4, 0.2], side: R}
+
+02-history:
+  view: {az: [0.30, 0.52], el: 0.26, yaw0: -1.4}
+  parts:
+    - {id: plate, shape: plate, parent: null, rest: [0, 0, 0], dir: [1, -0.3, 0.6], dist: 3.0, order: 0, delay: 0,
+       spin: 0.9, tilt: [0.2, 0.07], phi: 1.0, over: 1.3, anchor: [0, 2.5], side: R, leave: 1785년, ghost: true,
+       label: 1785년 · 쿨롱 법칙, sub: 전자기학의 출발점 — 전파의 발견은 아니다, say: [1785년]}
+    - {id: pedestal, shape: pedestal, parent: null, rest: [0, 0.71, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0.25, tilt: [0, 0], phi: 0, over: 0, anchor: [0.06, 1.75], side: L,
+       label: 맥스웰 방정식 · 이론적 예언, sub: 전자기파의 존재를 예언, say: [이론적 예언, 맥스웰 방정식이]}
+    - {id: dipole, shape: dipole, parent: null, rest: [0, 2.09, 0], dir: [0, 1, 0], dist: 1.7, order: 1, delay: 0,
+       spin: -0.55, tilt: [0.14, 0.03], phi: 2.2, over: 1.7, anchor: [0.55, 2.2], side: L,
+       label: 헤르츠 · 실험적 증명, sub: 처음으로 결정적인 실험으로 증명, say: [실험적 증명, 헤르츠가]}
+    - {id: ring, shape: ring, parent: dipole, rest: [0, 0.12, -1.25], dir: [0.55, 0.3, -0.8], dist: 1.25, order: 2, delay: 0.06,
+       spin: 0.5, tilt: [0.12, 0.03], phi: 4.0, over: 1.8, anchor: [0.3, 0.75], side: L}
+    - {id: cabinet, shape: cabinet, parent: null, rest: [0, 3.81, 0], dir: [0, 1, 0], dist: 3.3, order: 0, delay: 0,
+       spin: 0.4, tilt: [0.12, 0.03], phi: 5.2, over: 1.5, anchor: [0.25, 1.0], side: L,
+       label: 마르코니 · 실용화, sub: 1909년 브라운과 함께 노벨 물리학상, say: [실용화가, 마르코니의]}
+    - {id: key, shape: key, parent: cabinet, rest: [-0.62, 0.81, 0.42], dir: [-0.75, 0.3, 0.7], dist: 1.5, order: 1, delay: 0.04,
+       spin: -0.7, tilt: [0.16, 0.04], phi: 0.6, over: 1.9, anchor: [0.12, 0.6], side: L,
+       label: 모스 부호, sub: 1901년 폴듀에서 보낸, say: [모스 부호]}
+    - {id: mast, shape: mast, parent: cabinet, rest: [0.75, 2.69, -0.2], dir: [0, 1, 0], dist: 1.0, order: 1, delay: 0.08,
+       spin: 0.8, tilt: [0.1, 0.02], phi: 3.0, over: 1.8, anchor: [0.9, 0.22], side: R,
+       label: 폴듀 (영국 콘월), sub: 실용 무선전신, say: [폴듀에서]}
+    - {id: receiver, shape: receiver, parent: cabinet, rest: [1.92, -0.45, -0.3], dir: [1, 0.25, 0.15], dist: 3.6, order: 1, delay: 0,
+       spin: -0.4, tilt: [0.1, 0.02], phi: 1.7, over: 1.2, anchor: [0, 0.55], side: R, leave: 세인트존스에서,
+       label: 세인트존스 (뉴펀들랜드), sub: "약 3,500km (2,200마일) · 지금도 논쟁거리", say: [세인트존스에서, 논쟁거리]}
+  links:
+    - {from: mast, from_at: [0, 1.4, 0], to: receiver, to_at: [0.3, 1.7, 0], say: 세인트존스에서}
