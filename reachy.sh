@@ -65,7 +65,19 @@ START_DIRECTOR_LOG="$LOG_DIR/start-director.log"
 SIM_PID_FILE="$LOG_DIR/sim.pid"
 TTS_PID_FILE="$LOG_DIR/tts.pid"
 TTS_PROXY_PID_FILE="$LOG_DIR/tts-proxy.pid"   # TTS 결과 캐시 프록시(tts_cache_proxy.py)
+GATEWAY_PID_FILE="$LOG_DIR/openai-gateway.pid" # LLM·STT OpenAI 게이트웨이(openai_gateway.py) — 스위치를 켰을 때만
 SCENE="minimal"
+
+# **LLM·STT 엔진**(2026-11-12, 계획 docs/superpowers/plans/2026-11-12-openai-gateway.md). local(기본, 지금 구성) | openai.
+# 하나라도 openai 면 로봇이 부르는 주소(:8080·:8090)에 게이트웨이가 서고, 로컬 서버(llamactl)는 안쪽 포트에 **loopback 으로만**
+# 뜬다 — OpenAI 실패·키 없음일 때의 폴백 자리다. 둘 다 local 이면 게이트웨이를 띄우지 않는다(지금과 같은 구성). 로봇 설정은
+# 그대로다(주소가 안 바뀐다). OpenAI 키는 저장소 루트 .env 에서 **게이트웨이 프로세스만** 읽는다 — 이 셸에 export 하지 않는다.
+# `TTS_ENGINE` 처럼 **이 스크립트를 부르는 명령 앞에** 붙인다 — 감독도 같은 값을 물려받아 전문가 수준 요청에 표지를 싣는다.
+LLM_ENGINE="${REACHY_LLM_ENGINE:-local}"
+STT_ENGINE="${REACHY_STT_ENGINE:-local}"
+LLM_INNER_PORT="${REACHY_LLM_INNER_PORT:-8081}"
+STT_INNER_PORT="${REACHY_STT_INNER_PORT:-8091}"
+gateway_on() { [ "$LLM_ENGINE" = "openai" ] || [ "$STT_ENGINE" = "openai" ]; }
 
 c_ok=$'\033[32m'; c_bad=$'\033[31m'; c_warn=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 say_ok()   { echo "${c_ok}OK${c_off}   $1"; }
@@ -212,6 +224,12 @@ wait_for() {  # url label timeout_s
 status() {
   up http://localhost:8080/health              && say_ok "LLM  :8080" || say_bad "LLM  :8080"
   up http://localhost:8090/health              && say_ok "STT  :8090" || say_bad "STT  :8090"
+  # 그 포트에 게이트웨이가 섰으면 어디로 가는지 한 줄 — 로컬 직결인지 OpenAI 인지 겉으로는 같아 보인다.
+  local gw
+  gw="$(curl -s -m 2 http://localhost:8080/health 2>/dev/null)"
+  case "$gw" in
+    *'"gateway"'*) echo "     ${c_dim}게이트웨이 앞 — $(printf '%s' "$gw" | grep -o 'llm=[a-z]*,stt=[a-z]*') · 키 $(printf '%s' "$gw" | grep -o '"key": "[^"]*"' | cut -d'"' -f4)${c_off}" ;;
+  esac
   up http://localhost:8000/api/state/full      && say_ok "데몬 :8000" || say_bad "데몬 :8000"
   if [ "$TTS_BACKEND" = "qwen" ]; then
     resolve_tts_voice
@@ -300,7 +318,9 @@ show_logs() {  # [줄수] [--no-follow]
   fi
   # tts-proxy.log — TTS 결과 캐시 프록시. "고정 대사인데 캐시 키가 다르다"(로봇 설정이 굽기와 달라져
   # 구운 소리가 조용히 안 쓰인다)가 여기에 WARNING 으로 남는다.
-  for f in "$LOG_DIR/tts.log" "$LOG_DIR/tts-proxy.log" "$LOG_DIR/sim.log" \
+  # openai-gateway.log — LLM·STT 게이트웨이(스위치를 켰을 때만). "OpenAI … 실패 — 로컬 … 으로 넘긴다" 가 여기 남는다 —
+  # 겉으로는 답이 나오니(로컬 폴백) 이 줄이 아니면 OpenAI 가 끊긴 줄 모른다.
+  for f in "$LOG_DIR/tts.log" "$LOG_DIR/tts-proxy.log" "$LOG_DIR/openai-gateway.log" "$LOG_DIR/sim.log" \
            "$LOG_DIR/start-daemon-mc.log" "$LOG_DIR/start-daemon-docent.log"; do
     [ -f "$f" ] || continue
     say_step "$(basename "$f") 끝부분"
@@ -327,11 +347,19 @@ stop_all() {
   kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"
   kill_pidfile "$TTS_PID_FILE" "TTS 서버"
   kill_pidfile "$SIM_PID_FILE" "시뮬 데몬"
+  kill_pidfile "$GATEWAY_PID_FILE" "OpenAI 게이트웨이"
   "$LLAMACTL" stop
+  # 게이트웨이를 켰을 때 llamactl 은 **안쪽 포트**에 띄웠다(pid 파일도 그 포트 이름이다). 스위치를 끈 채 `stop` 해도
+  # 남지 않게 그 포트도 본다 — 떠 있을 때만(아니면 "실행 중 아님" 두 줄이 매번 붙는다).
+  if pgrep -f "llama-server.*--port $LLM_INNER_PORT" >/dev/null 2>&1 \
+     || pgrep -f "stt_server.py.*--port $STT_INNER_PORT" >/dev/null 2>&1; then
+    LLM_PORT="$LLM_INNER_PORT" STT_PORT="$STT_INNER_PORT" "$LLAMACTL" stop
+  fi
   # llamactl 이 관리하지 않는 것 + 고아. 시뮬 데몬을 PID 파일로만 잡으면
   # 손으로 띄운 것이 살아남는다(실측: `stop` 후에도 :8000 이 응답했다).
   sweep "crispasr --server"            "CrispASR"
   sweep "tts_cache_proxy.py"           "TTS 캐시 프록시"
+  sweep "openai_gateway.py"            "OpenAI 게이트웨이"
   sweep "stt_server.py"                "STT 서버"
   sweep "reachy_mini.daemon.app.main"  "시뮬 데몬"
   # 아래 둘은 `demo`/`sim` 이 띄우는 것이 아니라 **따로 붙어 사는 것들**이라
@@ -415,12 +443,16 @@ already_up_binds_right() {  # label port...
 }
 
 start_llm_stt() {
+  llm_stt_engines_ok || return 1
+  # 스위치를 켰으면 게이트웨이 구성으로 간다. **꺼져 있으면 아래가 지금까지의 경로 그대로다.**
+  if gateway_on; then start_llm_stt_gateway; return $?; fi
   say_step "LLM(:8080) · STT(:8090) — bind $BIND_HOST"
   if up http://localhost:8080/health && up http://localhost:8090/health; then
     # 떠 있다고 원하는 주소로 듣는다는 보장이 없다. loopback 으로 떠 있던 것을
     # 그대로 두면 로봇에서 조용히 못 붙는다.
     already_up_binds_right "LLM/STT" 8080 8090 || return 1
     echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+    gateway_left_warn
     return 0
   fi
   [ -x "$LLAMACTL" ] || { say_bad "$LLAMACTL 을 찾을 수 없다"; return 1; }
@@ -448,8 +480,100 @@ start_llm_stt() {
 # 상관없이 끝에 붙여서, 거절(loopback 전용으로 떠 있다·llamactl 없음 — 이유를 이미 찍었다) 뒤에도
 # "로그: /tmp/llamactl…" 이 나와 엉뚱한 로그를 뒤지게 했다(최종 리뷰 M9). 경로는 llamactl.sh 의
 # LOGFILE/STT_LOGFILE 이다.
-llm_stt_log_hint() {
-  echo "   ${c_dim}로그: /tmp/llamactl-8080.log (LLM) · /tmp/llamactl-stt-8090.log (STT)${c_off}"
+llm_stt_log_hint() {  # [llm_port stt_port] — 게이트웨이 구성이면 안쪽 포트(llamactl 이 포트로 로그 이름을 짓는다)
+  echo "   ${c_dim}로그: /tmp/llamactl-${1:-8080}.log (LLM) · /tmp/llamactl-stt-${2:-8090}.log (STT)${c_off}"
+}
+
+# ── LLM·STT 게이트웨이 구성(스위치를 켰을 때만) ─────────────────────
+# 모르는 값을 조용히 local 로 읽으면 운영자는 OpenAI 로 도는 줄 안다 — 멈춘다.
+llm_stt_engines_ok() {
+  local e
+  for e in "$LLM_ENGINE" "$STT_ENGINE"; do
+    case "$e" in
+      local|openai) ;;
+      *) say_bad "REACHY_LLM_ENGINE / REACHY_STT_ENGINE 은 local 또는 openai 다 (받은 값: '$e')"; return 1 ;;
+    esac
+  done
+}
+
+# 스위치를 껐는데 :8080/:8090 에 지난 실행의 게이트웨이가 남아 있으면 요청이 여전히 OpenAI 로 간다 — 겉으로는
+# "이미 떠 있다" 로만 보인다. 경고만 한다(시연은 돈다), 되돌리는 법을 말한다.
+gateway_left_warn() {
+  local p
+  for p in 8080 8090; do
+    if curl -s -m 3 "http://localhost:$p/health" 2>/dev/null | grep -q '"gateway"'; then
+      say_warn "지난 실행의 OpenAI 게이트웨이가 :$p 에 떠 있다 — 스위치를 껐어도 요청이 게이트웨이를 지난다. ./reachy.sh stop 후 다시"
+      return 0
+    fi
+  done
+}
+
+# 게이트웨이 구성: ① 바깥 포트(:8080·:8090)에 누가 떠 있나 → ② 안쪽 로컬 서버(llamactl, loopback) → ③ 게이트웨이(BIND_HOST).
+# 바깥 포트에 게이트웨이가 아닌 것(예전 구성의 로컬 직결)이 있으면 게이트웨이가 그 포트를 못 잡는다 — 멈추고 stop 을 권한다.
+start_llm_stt_gateway() {
+  local p h n_gw=0
+  say_step "LLM(:8080 $LLM_ENGINE) · STT(:8090 $STT_ENGINE) — 게이트웨이 bind $BIND_HOST · 로컬 서버 안쪽 127.0.0.1:${LLM_INNER_PORT}·:$STT_INNER_PORT"
+  for p in 8080 8090; do
+    # `up`(200 만 본다)이 아니라 **응답이 있는가**로 본다 — 안쪽 로컬이 죽은 통과 모드의 게이트웨이는 503 을 주는데,
+    # 그것을 "안 떠 있다" 로 읽으면 새 게이트웨이가 포트를 못 잡고 옛 설정의 게이트웨이가 그대로 돈다.
+    h="$(curl -s -m 3 "http://localhost:$p/health" 2>/dev/null)"
+    [ -n "$h" ] || continue
+    case "$h" in
+      *"llm=$LLM_ENGINE,stt=$STT_ENGINE"*) n_gw=$((n_gw + 1)) ;;
+      *'"gateway"'*)
+        say_bad "설정이 다른 게이트웨이가 :$p 에 떠 있다($(printf '%s' "$h" | grep -o 'llm=[a-z]*,stt=[a-z]*')) — ./reachy.sh stop 후 다시"
+        return 1 ;;
+      *)
+        say_bad ":$p 에 게이트웨이가 아닌 서버(로컬 직결 — 예전 구성)가 떠 있다 — 게이트웨이가 그 포트를 못 잡는다. ./reachy.sh stop 후 다시"
+        return 1 ;;
+    esac
+  done
+
+  # ② 안쪽 로컬 서버 — loopback 으로만(로봇은 게이트웨이를 부른다). OpenAI 가 실패하면 여기로 넘어간다.
+  if up "http://127.0.0.1:$LLM_INNER_PORT/health" && up "http://127.0.0.1:$STT_INNER_PORT/health"; then
+    echo "   ${c_dim}안쪽 로컬 서버가 이미 떠 있다 — 건너뛴다${c_off}"
+  else
+    [ -x "$LLAMACTL" ] || { say_bad "$LLAMACTL 을 찾을 수 없다"; return 1; }
+    local py_abs="$PY"
+    case "$PY" in /*) ;; *) py_abs="$PWD/$PY" ;; esac
+    REACH_HOME="${REACH_HOME:-$PWD}" \
+    STT_PYTHON="${STT_PYTHON:-$py_abs}" \
+    STT_SERVER="${STT_SERVER:-$PWD/stt_server.py}" \
+    LLM_HOST=127.0.0.1 STT_HOST=127.0.0.1 LLM_PORT="$LLM_INNER_PORT" STT_PORT="$STT_INNER_PORT" \
+      "$LLAMACTL" reach-llm || { say_bad "LLM/STT 기동 실패"; llm_stt_log_hint "$LLM_INNER_PORT" "$STT_INNER_PORT"; return 1; }
+    wait_for "http://127.0.0.1:$LLM_INNER_PORT/health" "LLM(안쪽)" 120 || { llm_stt_log_hint "$LLM_INNER_PORT" "$STT_INNER_PORT"; return 1; }
+    wait_for "http://127.0.0.1:$STT_INNER_PORT/health" "STT(안쪽)" 180 || { llm_stt_log_hint "$LLM_INNER_PORT" "$STT_INNER_PORT"; return 1; }
+  fi
+
+  # ③ 게이트웨이
+  if [ "$n_gw" = "2" ]; then
+    already_up_binds_right "게이트웨이" 8080 8090 || return 1
+    echo "   ${c_dim}게이트웨이가 이미 떠 있다 — 건너뛴다${c_off}"
+    return 0
+  fi
+  if [ "$n_gw" != "0" ]; then
+    say_bad "게이트웨이가 한쪽 포트에만 떠 있다 — ./reachy.sh stop 후 다시"
+    return 1
+  fi
+  start_gateway
+}
+
+start_gateway() {
+  local glog="$LOG_DIR/openai-gateway.log"
+  echo "   게이트웨이 :8080·:8090 → 안쪽 :${LLM_INNER_PORT}·:$STT_INNER_PORT ${c_dim}(LLM $LLM_ENGINE · STT $STT_ENGINE · 로그 $glog)${c_off}"
+  nohup "$PY" -u openai_gateway.py --host "$BIND_HOST" \
+    --llm-port 8080 --llm-local "http://127.0.0.1:$LLM_INNER_PORT" --llm-engine "$LLM_ENGINE" \
+    --stt-port 8090 --stt-local "http://127.0.0.1:$STT_INNER_PORT" --stt-engine "$STT_ENGINE" \
+    > "$glog" 2>&1 &
+  echo $! > "$GATEWAY_PID_FILE"
+  if ! wait_for "http://localhost:8080/health" "게이트웨이(LLM)" 20 || ! wait_for "http://localhost:8090/health" "게이트웨이(STT)" 10; then
+    say_bad "게이트웨이가 뜨지 않았다 — tail -20 $glog"
+    kill_pidfile "$GATEWAY_PID_FILE" "OpenAI 게이트웨이"
+    return 1
+  fi
+  # 기동 줄(어디로 가는지·키 설정됨/없음)과 경고(키 없음 → 로컬로 돈다)를 이 화면에도 — 로그 파일에만 있으면 아무도 안 본다.
+  grep -E "OpenAI 게이트웨이|WARNING" "$glog" 2>/dev/null | sed 's/^[0-9-]* [0-9:,]* \(INFO \)\{0,1\}//; s/^/   /'
+  return 0   # 위는 보여 주기일 뿐이다 — pipefail 아래에서 grep 이 못 찾았다고 기동 실패가 되면 안 된다
 }
 
 start_tts() {
@@ -1550,9 +1674,15 @@ run_start() {
   # 한다. 실기 쪽은 `serve`·`robot up` 과 같이 REACHY_BIND_HOST 로 좁힐 수 있다.
   local bind
   if [ "$target" = "sim" ]; then bind=127.0.0.1; else bind="${REACHY_BIND_HOST:-0.0.0.0}"; fi
+  # 엔진 오타는 계획 단계에서 멈춘다 — dry-run 이 "된다" 고 찍으면 안 된다(위 같은 로봇 거절과 같은 이유).
+  llm_stt_engines_ok || exit 2
 
   if [ "$dry" = "1" ]; then
     echo "PLAN infer bind=$bind ports=8080,8090,$TTS_PORT"
+    # 게이트웨이는 스위치를 켰을 때만 — 꺼져 있으면 계획이 지금과 같은 4줄이다(tests/test_reachy_start.py 의 계약).
+    if gateway_on; then
+      echo "PLAN gateway llm=$LLM_ENGINE stt=$STT_ENGINE ports=8080,8090 inner=127.0.0.1:$LLM_INNER_PORT,$STT_INNER_PORT"
+    fi
     if [ "$target" = "sim" ]; then
       echo "PLAN robot role=mc target=sim port=$START_MC_PORT"
       echo "PLAN robot role=docent target=sim port=$START_DOCENT_PORT"

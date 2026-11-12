@@ -27,13 +27,17 @@ _PLAN_ENV = (
     "REACHY_DOCENT_HOST",
     "TTS_QWEN_PORT",
     "REACHY_PY",
+    # LLM·STT 게이트웨이 스위치(2026-11-12) — 셸에 export 돼 있으면 dry-run 에 `PLAN gateway …` 한 줄이 붙어
+    # 아래 정확 일치 테스트가 개발자 셸에 따라 깨진다.
+    "REACHY_LLM_ENGINE",
+    "REACHY_STT_ENGINE",
 )
 
 
 # 계획 값은 아니지만 **어느 명령이 불리는지**를 바꾸는 것들. 셸에 `TTS_QWEN_VOICE` 가 있으면
 # 화자 조회(파이썬)를 건너뛰고, `TTS_BACKEND=say` 면 `check` 가 Qwen 헬스체크 대신 `say` 로 간다 —
 # 아래 대조군(`test_가짜_명령은_불리면_기록된다`)이 "파이썬이 불렸다" 를 못 보고 깨진다(리뷰 M5).
-_RUN_ENV = (*_PLAN_ENV, "TTS_QWEN_VOICE", "TTS_BACKEND")
+_RUN_ENV = (*_PLAN_ENV, "TTS_QWEN_VOICE", "TTS_BACKEND", "TTS_ENGINE")   # TTS_ENGINE — 캐시 폴더·프록시 인자가 바뀐다
 
 
 def _run(*args, env_extra=None):

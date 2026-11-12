@@ -147,6 +147,24 @@ def _stripped_parts(raw: str, clean: str) -> str:
     return ", ".join(parts)
 
 
+# **전문가 수준 표지**(2026-11-12, 계획 `docs/superpowers/plans/2026-11-12-openai-gateway.md`). PC 의 OpenAI 게이트웨이
+# (`openai_gateway.EXPERT_MARK` — 같은 값이어야 한다, 테스트가 본다)가 요청의 `model` 이 이 값이면 상위 모델로 보낸다.
+# 감독만 수준을 안다 — 로봇 앱은 그대로 `"local"` 을 보내고, 표지는 `LLMClient` 에 이미 있는 `model` 인자로 싣는다.
+# **`REACHY_LLM_ENGINE=openai` 일 때만 싣는다** — 스위치가 꺼져 있으면 감독 요청이 지금과 바이트까지 같다(llama-server 는
+# `"local"` 만 받아 왔다; 게이트웨이도 로컬로 넘길 때는 `"local"` 로 되돌린다). 스위치 이름이 `reachy.sh` 와 같아서
+# `REACHY_LLM_ENGINE=openai ./reachy.sh start …` 한 번이면 게이트웨이와 감독이 같은 값을 물려받는다(`TTS_ENGINE` 과 같은 관례).
+EXPERT_MODEL_MARK = "reachy-expert"
+EXPERT_LEVEL_NAME = "전문가"
+
+
+def client_model_kw(level, env=None) -> dict:
+    """이 수준의 `LLMClient` 에 더 줄 인자. 비면 지금과 같은 클라이언트(`model="local"` 기본값)."""
+    env = os.environ if env is None else env
+    if level.name == EXPERT_LEVEL_NAME and (env.get("REACHY_LLM_ENGINE") or "").strip().lower() == "openai":
+        return {"model": EXPERT_MODEL_MARK}
+    return {}
+
+
 def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     """LLM 호출 하나. **직렬화한다.**
 
@@ -170,9 +188,10 @@ def build_generate(level, warn: Callable[[str], None] = print) -> "callable":
     """
     from stage.prompts import ROLES, build_system_prompt
 
+    model_kw = client_model_kw(level)   # 전문가 수준 + 게이트웨이 스위치일 때만 표지(위 EXPERT_MODEL_MARK)
     clients = {
         r: LLMClient(system_prompt=build_system_prompt(r, level),
-                     max_tokens=level.max_tokens)
+                     max_tokens=level.max_tokens, **model_kw)
         for r in ROLES
     }
     limits = {
