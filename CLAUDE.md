@@ -29,9 +29,16 @@ macOS 26.5.2 / Apple Silicon / Python 3.12.13(uv 관리) 기준으로 검증됐�
 ```bash
 ./reachy.sh start --sim          # 시연 전부(추론 3종·시뮬 2대·무대감독+대시보드)
 ./reachy.sh start --robot        # 시연 전부 — 실기 2대(REACHY_MC_HOST / REACHY_DOCENT_HOST, 기본 192.168.0.4 / .5)
+TTS_ENGINE=elevenlabs REACHY_LLM_ENGINE=openai REACHY_STT_ENGINE=openai ./reachy.sh start --robot
+                                 # 외부 API 로(TTS ElevenLabs·LLM/STT OpenAI, 키는 저장소 루트 .env — PC 만 읽는다). 기본은 전부 로컬
+                                 # 스위치는 명령 앞에 — 프록시·게이트웨이·감독이 같이 물려받는다(docs/real-robot-deployment.md §15.10~15.11)
 ./reachy.sh sim                  # 시뮬레이터 기동 (빈 씬, 미디어 비활성)
 ./reachy.sh sim --scene minimal  # 테이블 + 사과/크루아상/오리
 ./reachy.sh bake                 # 고정 대사를 TTS 캐시에 굽기(대본을 고친 뒤 — 바뀐 문장만). --check 는 현황만
+TTS_ENGINE=elevenlabs ./reachy.sh bake --retake-readings   # 발음 사전(data/tts_readings.yaml)을 고친 문장만 다시 굽기
+.venv/bin/python scripts/tts_review.py                     # 구운 대사 검수(로컬 STT 로 소리 기준 대조 → 검수 페이지)
+open http://127.0.0.1:8778/stage/paper                     # 교육자료 화면 — 공연 모드(로봇 2대가 말하고 화면은 따라간다, §15.12)
+                                 # /stage/webtoon(초등·중고등) · /stage/exploded(전문가). 로봇 없이: scripts/handout_live/fake_show.py
 .venv/bin/python your.py      # SDK 스크립트 실행 (데몬이 떠 있어야 함)
 curl -s localhost:8000/api/state/full   # 로봇 상태 확인
 open http://localhost:8000/docs         # REST API 문서 (OpenAPI)
@@ -99,7 +106,8 @@ open http://localhost:8000/docs         # REST API 문서 (OpenAPI)
   (`REACHY_AEC`/`REACHY_BARGE_IN`/임계값)가 함께 적힌다. `logs` 는 **마지막 세션만** 잘라 보여준다.
 - `.demo-logs/start-director.log`(무대감독, 세션 구분자로 누적)·`start-app-{mc,docent}.log` — `start` 로
   띄운 시연 한 벌. `logs` 가 이것도 보여 주고, 더 최근에 돈 쪽(demo 또는 start)을 실시간으로 따라간다.
-- `.demo-logs/tts.log`·`tts-proxy.log`·`sim.log` — 서버 쪽. `logs` 가 오류·경고 줄만 추려 준다.
+- `.demo-logs/tts.log`·`tts-proxy.log`·`openai-gateway.log`·`sim.log` — 서버 쪽. `logs` 가 오류·경고 줄만 추려 준다.
+  `openai-gateway.log` 의 폴백 경고는 OpenAI 가 실패해 로컬 LLM·STT 로 넘겼다는 뜻이다(§15.11).
   `tts-proxy.log` 의 "고정 대사인데 캐시 키가 다르다" 는 로봇 목소리 설정이 굽기와 달라졌다는 뜻이다.
 - "이상하다"는 보고를 받으면 순서는 하나다: **로그 확인 → 재현 → 원인 → 고침 → 테스트로 박제.**
   로그를 안 보고 추측으로 고치지 않는다. 이번 세션의 자기 목소리 루프도 로그의 한 줄
