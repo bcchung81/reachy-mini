@@ -23,3 +23,8 @@ __pycache__/
 .DS_Store
 스크린샷 *.png
 Screenshot *.png
+
+# 비밀 — API 키(ElevenLabs·Anthropic·OpenAI). 공개 저장소라 절대 올리지 않는다.
+# 읽는 쪽은 PC 게이트웨이(TTS 프록시)뿐 — 로봇에는 키를 올리지 않는다.
+.env
+.env.*

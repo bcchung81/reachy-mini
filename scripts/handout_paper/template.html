@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전파체험관 교육자료 — 종이 무대</title>
+<!--
+  종이 무대(스톱모션) 시안 — `python -m scripts.handout_paper.build` 가 만든 파일이다. 직접 고치지 않는다.
+  틀은 `scripts/handout_paper/template.html`(엔진)과 `scenes.js`(큐별 장면). 글은 handout-hud 의 검증된 데이터, 음성은 고정 대사 TTS 캐시를 이어 붙인 것.
+
+  표현 기법은 aimotion 24 「종이 인형 극장」(https://github.com/kstost/cokacmotion, MIT © 2026 kstost)에서 **기술만** 가져왔다:
+  가위 날 윤곽(cutOutline) · 잘린 단면의 흰 심(inset) · 종이결 타일 overlay · 높이에서 나오는 그림자 · 초당 12포즈 ·
+  (조각, 포즈) 시드 손 오차 · 교체 애니메이션 · 다면 무대 시차 · 포즈별 노출. 장면·소재·색·구도는 이 대본에서 새로 지었다.
+
+  외부 리소스를 부르지 않는다(전시장은 오프라인). 글자는 캔버스에 그리지 않고 DOM textContent 로만 넣는다.
+  그림은 포즈 번호 step = floor(t·12) 의 순수 함수다 — `?cue=02&t=40` 으로 한 순간을 멈춰 볼 수 있다.
+-->
+<style>
+:root{--ink:#16384d;--sig:#0B7FB5;--teal:#0A6F84;--amber:#B96F00;--cream:#f6eedc;--bar:#0E2433}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#191713;color:var(--ink);overflow:hidden;word-break:keep-all;
+  font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+.bar{height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--bar);color:#fff;font-size:14px}
+.bar b{font-weight:800;letter-spacing:.02em}
+.bar select{background:#1B3A4F;color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:999px;padding:5px 12px;min-height:32px;font:inherit;max-width:300px}
+.round{width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,.55);background:transparent;padding:0;font-size:17px;line-height:1}
+.seg{display:flex;border:1px solid rgba(255,255,255,.45);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:5px 14px;min-height:32px;white-space:nowrap}
+.seg button+button{border-left:1px solid rgba(255,255,255,.3)}
+.seg button[aria-pressed="true"]{background:#fff;color:var(--bar);font-weight:800}
+.pill{border:1px solid rgba(255,255,255,.55);background:transparent;border-radius:999px;padding:5px 14px;min-height:32px;white-space:nowrap}
+.pill.go{background:#fff;color:var(--bar);font-weight:800}
+#scrub{flex:1;min-width:80px;accent-color:#7FD3F5}
+#time{font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}
+.note{opacity:.7;white-space:nowrap}
+button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offset:2px}
+.fit{position:relative;height:calc(100vh - 48px);overflow:hidden}
+.stage{position:absolute;left:50%;top:50%;width:1600px;height:900px;transform-origin:0 0}
+.stage canvas{position:absolute;inset:0;width:1600px;height:900px;display:block}
+.labels{position:absolute;inset:0;pointer-events:none}
+.lab{position:absolute;left:0;top:0;will-change:transform}
+.lab>span{display:block;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;font-weight:800;line-height:1.25}
+.lab small{display:block;font-weight:600}
+.l-title>span{color:#fff;font-size:19px}
+.l-head>span{font-size:38px;letter-spacing:-.01em}
+.l-sign>span{font-size:25px}
+.l-big>span{font-size:46px;color:var(--ink)} .l-big small{font-size:18px;color:#4b5c66;margin-top:2px}
+.l-q>span{font-size:44px;color:#fff} .l-q2>span{font-size:78px;color:#fff}
+.l-tag>span{font-size:22px;color:#fff} .l-tagd>span{font-size:23px;color:var(--ink)}
+.l-kca>span{font-size:25px;color:var(--ink)}
+.l-word>span{font-size:34px;color:#5a6a72} .l-word2>span{font-size:42px;color:#fff}
+.l-role>span{font-size:29px}
+.l-km>span{font-size:36px;color:var(--ink)} .l-date>span{font-size:22px;color:var(--ink)}
+.l-sea>span{font-size:24px;color:#2f6f8f;letter-spacing:.5em;font-weight:700}
+.l-name>span{font-size:17px;color:#fff}
+.l-rem>span{font-size:23px;color:#fff} .l-rem i{font-style:normal;opacity:.8;margin-right:14px;font-weight:700}
+.l-fact>span{font-size:36px;color:var(--ink);white-space:normal} .l-fact small{font-size:17px;color:#4b5c66;margin-top:1px}
+.l-step>span{font-size:23px;color:var(--ink);white-space:normal} .l-step small{font-size:16px;color:#4b5c66;margin-top:2px}
+.l-cap>span{font-size:21px;color:var(--ink)} .l-tick>span{font-size:17px;color:#4b5c66} .l-fm>span{font-size:17px;color:var(--amber)}
+.l-read>span{font-size:27px;color:var(--ink);font-variant-numeric:tabular-nums} .l-form>span{font-size:21px;color:#fff}
+.l-iono>span{font-size:22px;color:#2f6f8f;letter-spacing:.4em;font-weight:700}
+.l-card>span{white-space:normal;text-align:left;font-weight:600;font-size:19px;line-height:1.42;color:#33454f}
+.l-card b{display:block;font-size:24px;font-weight:800;color:var(--ink);margin-bottom:6px}
+.l-card b i{font-style:normal;color:var(--amber);margin-right:10px}
+.bubble{position:absolute;width:212px;padding:12px 14px;border-radius:6px 16px 14px 18px;font-size:19px;line-height:1.42;font-weight:700;
+  box-shadow:3px 5px 0 rgba(40,30,15,.18);visibility:hidden;transform:rotate(-.6deg)}
+.bubble.on{visibility:visible}
+.bubble.fade{opacity:.35}
+.bubble .rest{opacity:.38}
+#b-mc{left:14px;top:436px;background:#e3f3f6;color:#0a5566;border:2px solid #fff}
+#b-docent{right:14px;top:436px;background:#fff1da;color:#7a4700;border:2px solid #fff;transform:rotate(.6deg)}
+.start{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(20,16,10,.55);z-index:5}
+.start button{font-size:30px;font-weight:800;padding:22px 44px;border:3px solid #fff;border-radius:10px 22px 14px 20px;background:var(--cream);color:var(--ink);
+  box-shadow:6px 9px 0 rgba(0,0,0,.35);transform:rotate(-1deg)}
+.start small{display:block;font-size:16px;font-weight:600;margin-top:6px;color:#55656e}
+.start[hidden]{display:none}
+</style>
+</head>
+<body>
+<header class="bar">
+  <b>종이 무대 시안</b>
+  <button type="button" class="round" id="prev" aria-label="이전 장">‹</button>
+  <select id="cues" aria-label="장 고르기"></select>
+  <button type="button" class="round" id="nextc" aria-label="다음 장">›</button>
+  <button type="button" class="pill go" id="play">▶ 재생</button>
+  <input type="range" id="scrub" min="0" max="1" step="0.01" value="0" aria-label="재생 위치">
+  <span id="time">0:00 / 0:00</span>
+  <span class="note" id="note"></span>
+</header>
+<div class="fit" id="fit">
+  <div class="stage" id="stage">
+    <canvas id="cv" width="1600" height="900"></canvas>
+    <div class="labels" id="labels"></div>
+    <div class="bubble" id="b-mc"><span class="done"></span><span class="rest"></span></div>
+    <div class="bubble" id="b-docent"><span class="done"></span><span class="rest"></span></div>
+  </div>
+  <div class="start" id="start"><button type="button" id="startbtn">▶ 공연 시작<small>로봇 목소리가 나와요 · 01부터 19까지 이어서</small></button></div>
+</div>
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(async function () {
+  'use strict';
+  var DATA = JSON.parse(document.getElementById('data').textContent), CUES = DATA.cues;
+  var W = 1600, H = 900, STEP = 12, TAU = Math.PI * 2, DEG = Math.PI / 180;
+  var LIGHT = [-0.88, -0.48], SHX = 0.5, SHY = 0.28, CORE = '#fbf8f0';
+  var COL = { ink: '#16384d', sig: '#1d86b8', teal: '#0f7187', amber: '#cf8a1c', cream: '#f4ead4', mist: '#c6dde8', sea: '#8fc0d6',
+    land: '#a9bd94', red: '#c4573a', sun: '#f0c44e', board: '#d8ccb4', mcbg: '#dbeff3', docbg: '#fde9c8' };
+  var $ = function (s) { return document.querySelector(s); };
+  var cv = $('#cv'), ctx = cv.getContext('2d'), K = 1, TEX = null, seedN = 1;
+
+  // ───────────────────────────────────────────── 작은 도구
+  function rand(seed) { var a = seed >>> 0; return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function clamp(v, a, b) { a = a == null ? 0 : a; b = b == null ? 1 : b; return v < a ? a : v > b ? b : v; }
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function smooth(v) { v = clamp(v); return v * v * (3 - 2 * v); }
+  function mk(w, h) { var c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return c; }
+  function area(P) { var a = 0; for (var i = 0, n = P.length; i < n; i++) { var p = P[i], q = P[(i + 1) % n]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; }
+  function path(c, P) { c.beginPath(); c.moveTo(P[0][0], P[0][1]); for (var i = 1; i < P.length; i++) c.lineTo(P[i][0], P[i][1]); c.closePath(); }
+  function edgeN(a, b, sgn) { var dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1; return [sgn * dy / l, -sgn * dx / l]; }
+  function loopNoise(rnd, n) { var k = []; for (var i = 0; i < n; i++) k.push(rnd() * 2 - 1); return function (u) { u = (u % 1 + 1) % 1 * n; var i = Math.floor(u), f = u - i, s = f * f * (3 - 2 * f); return k[i % n] + (k[(i + 1) % n] - k[i % n]) * s; }; }
+  /** 꼭짓점(모서리) 사이를 step px 로 잘게 나눈다 — 원래 꼭짓점은 모서리 표시(1)를 단다 */
+  function densify(V, step) { step = step || 2; var out = []; for (var i = 0, n = V.length; i < n; i++) { var a = V[i], b = V[(i + 1) % n], k = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step)); for (var j = 0; j < k; j++) out.push([a[0] + (b[0] - a[0]) * j / k, a[1] + (b[1] - a[1]) * j / k, j === 0 ? 1 : 0]); } return out; }
+  /** 닫힌 Catmull–Rom. [x,y,1] 은 뾰족한 모서리 */
+  function spline(ctrl, step) { step = step || 2; var n = ctrl.length, out = []; for (var i = 0; i < n; i++) { var p0 = ctrl[(i - 1 + n) % n], p1 = ctrl[i], p2 = ctrl[(i + 1) % n], p3 = ctrl[(i + 2) % n]; var m1 = p1[2] ? [0, 0] : [(p2[0] - p0[0]) * .5, (p2[1] - p0[1]) * .5], m2 = p2[2] ? [0, 0] : [(p3[0] - p1[0]) * .5, (p3[1] - p1[1]) * .5]; var k = Math.max(2, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / step)); for (var j = 0; j < k; j++) { var u = j / k, u2 = u * u, u3 = u2 * u, a = 2 * u3 - 3 * u2 + 1, b = u3 - 2 * u2 + u, c = -2 * u3 + 3 * u2, d = u3 - u2; out.push([a * p1[0] + b * m1[0] + c * p2[0] + d * m2[0], a * p1[1] + b * m1[1] + c * p2[1] + d * m2[1], j === 0 && p1[2] ? 1 : 0]); } } return out; }
+  // 모양(원점 중심)
+  var S = {
+    rect: function (w, h) { return densify([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]); },
+    poly: function (V) { return densify(V); },
+    circle: function (r) { var n = Math.ceil(TAU * r / 2), o = []; for (var i = 0; i < n; i++) o.push([r * Math.cos(TAU * i / n), r * Math.sin(TAU * i / n), 0]); return o; },
+    tag: function (w, h) { var k = h * .34; return densify([[-w / 2 + k, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2 + k, h / 2], [-w / 2, 0]]); },
+    arc: function (r, th, a0, a1) { var o = [], n = Math.max(6, Math.ceil(Math.abs(a1 - a0) * r / 2)), i, a; for (i = 0; i <= n; i++) { a = lerp(a0, a1, i / n); o.push([(r + th / 2) * Math.cos(a), (r + th / 2) * Math.sin(a), i === 0 || i === n ? 1 : 0]); } for (i = n; i >= 0; i--) { a = lerp(a0, a1, i / n); o.push([(r - th / 2) * Math.cos(a), (r - th / 2) * Math.sin(a), i === 0 || i === n ? 1 : 0]); } return o; },
+    wave: function (w, amp, th, ph, cyc) { cyc = cyc || 2.5; var o = [], n = Math.ceil(w / Math.max(.6, Math.min(2, w / cyc / 14))), i, x; for (i = 0; i <= n; i++) { x = -w / 2 + w * i / n; o.push([x, amp * Math.sin(x / w * TAU * cyc + ph) - th / 2, i === 0 || i === n ? 1 : 0]); } for (i = n; i >= 0; i--) { x = -w / 2 + w * i / n; o.push([x, amp * Math.sin(x / w * TAU * cyc + ph) + th / 2, i === 0 || i === n ? 1 : 0]); } return o; }
+  };
+
+  // ───────────────────────────────────────────── 종이
+  /** 이어 붙여도 티가 안 나는 종이 타일: 값 잡음 옥타브 + 휘어진 섬유, 회색 128 중심(overlay 로 얹으면 결만 더해진다) */
+  function paperTile(seed, SZ, octs, fibres) {
+    var r = rand(seed), c0 = mk(SZ, SZ), c = c0.getContext('2d'), acc = new Float32Array(SZ * SZ);
+    octs.forEach(function (o) { var n = o[0], amp = o[1], g = new Float32Array(n * n), i, x, y; for (i = 0; i < n * n; i++) g[i] = r() - .5; var k = n / SZ;
+      for (y = 0; y < SZ; y++) { var fy = y * k, iy = fy | 0, ty = fy - iy, sy = ty * ty * (3 - 2 * ty), y0 = (iy % n) * n, y1 = ((iy + 1) % n) * n;
+        for (x = 0; x < SZ; x++) { var fx = x * k, ix = fx | 0, tx = fx - ix, sx = tx * tx * (3 - 2 * tx), x0 = ix % n, x1 = (ix + 1) % n; var a = g[y0 + x0] + (g[y0 + x1] - g[y0 + x0]) * sx, b = g[y1 + x0] + (g[y1 + x1] - g[y1 + x0]) * sx; acc[y * SZ + x] += amp * (a + (b - a) * sy); } } });
+    var img = c.createImageData(SZ, SZ), d = img.data;
+    for (var i = 0; i < SZ * SZ; i++) { var v = clamp(128 + (acc[i] + .05 * (r() - .5)) * 255, 0, 255); d[4 * i] = d[4 * i + 1] = d[4 * i + 2] = v; d[4 * i + 3] = 255; }
+    c.putImageData(img, 0, 0);
+    for (i = 0; i < fibres; i++) { var x = r() * SZ, y = r() * SZ, an = r() * TAU, len = 5 + r() * r() * 46, bend = (r() - .5) * .9, light = r() < .62;
+      c.strokeStyle = light ? 'rgba(255,255,255,' + (.08 + .14 * r()).toFixed(3) + ')' : 'rgba(0,0,0,' + (.05 + .08 * r()).toFixed(3) + ')'; c.lineWidth = .35 + r() * .9;
+      var ex = Math.cos(an) * len, ey = Math.sin(an) * len, mx = ex / 2 - ey * bend * .5, my = ey / 2 + ex * bend * .5;
+      [-SZ, 0, SZ].forEach(function (ox) { [-SZ, 0, SZ].forEach(function (oy) { if (x + ox > SZ + 50 || x + ox < -50 - len || y + oy > SZ + 50 || y + oy < -50 - len) return; c.beginPath(); c.moveTo(x + ox, y + oy); c.quadraticCurveTo(x + ox + mx, y + oy + my, x + ox + ex, y + oy + ey); c.stroke(); }); }); }
+    return c0;
+  }
+  /** 가위: 윤곽을 따라가며 몇 px 마다 점 하나만 남겨 짧은 직선 날을 만든다. 남긴 점은 손이 선에서 벗어난 만큼 법선으로 밀린다 */
+  function cutOutline(pts, rnd, o) {
+    var facet = o.facet || [6, 14], jag = o.jag == null ? .6 : o.jag, wander = o.wander == null ? 1.3 : o.wander, torn = o.torn || 0;
+    var n = pts.length, L = new Float64Array(n + 1), i;
+    for (i = 1; i <= n; i++) { var a0 = pts[i - 1], b0 = pts[i % n]; L[i] = L[i - 1] + Math.hypot(b0[0] - a0[0], b0[1] - a0[1]); }
+    var total = L[n], sgn = area(pts) > 0 ? 1 : -1;
+    var w1 = loopNoise(rnd, Math.max(3, Math.round(total / 110))), w2 = loopNoise(rnd, Math.max(5, Math.round(total / 16))), w3 = loopNoise(rnd, Math.max(7, Math.round(total / 5)));
+    var out = [], next = 0;
+    for (i = 0; i < n; i++) { var s = L[i], corner = pts[i][2];
+      if (!corner && s < next) continue;
+      if (!corner && total - s < facet[0] * .6) continue;
+      var a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n], tx = b[0] - a[0], ty = b[1] - a[1], tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      var u = s / total, d = wander * w1(u) + (corner ? .25 : 1) * jag * (rnd() - .5) * 2;
+      if (torn) d += torn * (.9 * w2(u) + .55 * w3(u) + .35 * (rnd() - .5));
+      out.push([pts[i][0] + sgn * ty * d, pts[i][1] - sgn * tx * d, corner ? 1 : 0]);
+      next = s + lerp(facet[0], facet[1], rnd()); }
+    return out;
+  }
+  /** 보이는 흰 심의 안쪽 가장자리: 꼭짓점마다 들쭉날쭉한 폭만큼 안으로 */
+  function inset(P, rnd, wr, sgn) {
+    var n = P.length, wn = loopNoise(rnd, Math.max(4, (n / 5) | 0)), out = [];
+    for (var i = 0; i < n; i++) { var a = P[(i - 1 + n) % n], b = P[i], c = P[(i + 1) % n], n1 = edgeN(a, b, sgn), n2 = edgeN(b, c, sgn);
+      var mx = n1[0] + n2[0], my = n1[1] + n2[1], ml = Math.hypot(mx, my) || 1; mx /= ml; my /= ml;
+      var miter = Math.max(.55, mx * n1[0] + my * n1[1]), w = lerp(wr[0], wr[1], .5 + .5 * wn(i / n)) / miter;
+      out.push([b[0] - mx * w, b[1] - my * w]); }
+    return out;
+  }
+  /** 종이 조각 하나를 오리고·물들이고·결을 얹어 굽는다. 그림자(실루엣을 높이만큼 흐린 것)도 같이 굽는다 */
+  function makePiece(pts, color, o) {
+    o = o || {};
+    var rnd = rand(o.seed || (seedN += 7919)), x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, i;
+    for (i = 0; i < pts.length; i++) { x0 = Math.min(x0, pts[i][0]); y0 = Math.min(y0, pts[i][1]); x1 = Math.max(x1, pts[i][0]); y1 = Math.max(y1, pts[i][1]); }
+    var small = Math.min(x1 - x0, y1 - y0) < 22, h = o.h == null ? 10 : o.h;
+    var cut = cutOutline(pts, rnd, { facet: o.facet || (small ? [3, 7] : o.torn ? [2, 3.4] : [6, 14]), jag: small ? .3 : .6, wander: small ? .35 : (o.wander == null ? 1.3 : o.wander), torn: o.torn });
+    var sgn = area(cut) > 0 ? 1 : -1, inner = inset(cut, rnd, o.rim || (o.torn ? [2.2, 5.2] : small ? [.5, 1] : [.9, 2.4]), sgn);
+    x0 = y0 = 1e9; x1 = y1 = -1e9;
+    for (i = 0; i < cut.length; i++) { x0 = Math.min(x0, cut[i][0]); y0 = Math.min(y0, cut[i][1]); x1 = Math.max(x1, cut[i][0]); y1 = Math.max(y1, cut[i][1]); }
+    var pad = o.torn ? 9 : 4, ox = Math.floor(x0 - pad), oy = Math.floor(y0 - pad), cw = Math.ceil(x1 - ox + pad), ch = Math.ceil(y1 - oy + pad);
+    var c0 = mk(cw * K, ch * K), c = c0.getContext('2d'); c.scale(K, K); c.translate(-ox, -oy);
+    path(c, cut); c.fillStyle = o.core || CORE; c.fill();
+    var rimK = o.torn ? .3 : 1;
+    for (i = 0; i < cut.length; i++) { var j = (i + 1) % cut.length, e = edgeN(cut[i], cut[j], sgn), lit = e[0] * LIGHT[0] + e[1] * LIGHT[1];
+      c.beginPath(); c.moveTo(cut[i][0], cut[i][1]); c.lineTo(cut[j][0], cut[j][1]); c.lineTo(inner[j][0], inner[j][1]); c.lineTo(inner[i][0], inner[i][1]);
+      c.fillStyle = lit > 0 ? 'rgba(255,253,246,' + (.5 * lit * rimK).toFixed(3) + ')' : 'rgba(60,54,48,' + (-.48 * lit * rimK).toFixed(3) + ')'; c.fill(); }
+    path(c, inner); c.fillStyle = color; c.fill();
+    c.save(); path(c, cut); c.clip();
+    var g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, 'rgba(255,246,226,0.12)'); g.addColorStop(.5, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(20,10,0,0.13)');
+    c.fillStyle = g; c.fillRect(ox, oy, cw, ch);
+    if (o.decorate) { c.save(); o.decorate(c, rnd); c.restore(); }
+    var pat = c.createPattern(TEX, 'repeat'); pat.setTransform(new DOMMatrix().translate(rnd() * 512, rnd() * 512).rotate(rnd() * 360));
+    c.globalCompositeOperation = 'overlay'; c.globalAlpha = o.tex == null ? .8 : o.tex; c.fillStyle = pat; c.fillRect(ox, oy, cw, ch);
+    c.restore();
+    if (o.torn) { c.lineCap = 'round';
+      for (i = 0; i < cut.length; i++) { if (rnd() > .5) continue; var a = cut[(i - 1 + cut.length) % cut.length], b = cut[(i + 1) % cut.length], p = cut[i];
+        var nx = sgn * (b[1] - a[1]), ny = -sgn * (b[0] - a[0]), l = Math.hypot(nx, ny) || 1; nx /= l; ny /= l; var len = 1 + rnd() * rnd() * 5, sk = (rnd() - .5) * 1.2;
+        c.strokeStyle = 'rgba(250,247,238,' + (.35 + .4 * rnd()).toFixed(2) + ')'; c.lineWidth = .5 + rnd() * .6;
+        c.beginPath(); c.moveTo(p[0] - nx * 1.5, p[1] - ny * 1.5); c.lineTo(p[0] + (nx - ny * sk) * len, p[1] + (ny + nx * sk) * len); c.stroke(); } }
+    var blur = 1 + .3 * h, sp = Math.ceil(blur * 2.4) + 2, sw = x1 - x0 + 2 * sp, sh = y1 - y0 + 2 * sp, k2 = K / 2;
+    var s1 = mk(sw * k2, sh * k2), a1 = s1.getContext('2d'); a1.scale(k2, k2); a1.translate(-(x0 - sp), -(y0 - sp)); path(a1, cut); a1.fillStyle = '#2b2114'; a1.fill();
+    var s2 = mk(sw * k2, sh * k2), a2 = s2.getContext('2d'); a2.filter = 'blur(' + (blur * k2).toFixed(2) + 'px)'; a2.drawImage(s1, 0, 0);
+    return { img: c0, ox: ox, oy: oy, cw: cw, ch: ch, sh: s2, sox: x0 - sp, soy: y0 - sp, sw: sw, shh: sh };
+  }
+  function drawP(c, P, shadow) { if (shadow) c.drawImage(P.sh, P.sox, P.soy, P.sw, P.shh); else c.drawImage(P.img, P.ox, P.oy, P.cw, P.ch); }
+  function P_(shape, color, o) { return makePiece(shape, color, o); }
+
+  // ───────────────────────────────────────────── 무대(배우 = 조각 묶음 + 놓이는 시각 + 글자)
+  var labelsEl = $('#labels');
+  function Scene(cue) {
+    var sc = { cue: cue, actors: [], cam: function () { return 0; }, TR: 0 };
+    sc.U = function (turn) { return cue.utt.filter(function (u) { return u.turn === turn; })[0]; };
+    /** 말에 맞춘 시각: turn 의 si 번째 문장에서 kw 가 나오는 때(글자 위치 비례 — 캐시 음성에는 낱말 시각이 없다) */
+    sc.at = function (turn, si, kw, lead) { var s = sc.U(turn).s[si || 0]; if (!kw) return s.t0; var i = s.x.indexOf(kw); if (i < 0) { console.warn('대사에 없는 낱말:', kw, s.x); return s.t0; } return Math.max(0, s.t0 + (s.t1 - s.t0) * i / s.x.length - (lead == null ? .12 : lead)); };
+    /** 큐 전체 대사에서 kw 가 from 이후 처음 나오는 때. 없으면 경고하고 from 을 돌려준다 */
+    sc.w = function (kw, from) { from = from || 0; for (var i = 0; i < cue.utt.length; i++) { var ss = cue.utt[i].s; for (var j = 0; j < ss.length; j++) { var s = ss[j], k = s.x.indexOf(kw); if (k < 0) continue; var t = s.t0 + (s.t1 - s.t0) * k / s.x.length - .12; if (t >= from - .01) return Math.max(0, t); } } console.warn('[' + cue.id + '] 대사에 없는 낱말:', kw); return from; };
+    sc.add = function (a) {
+      a.id = sc.actors.length + 1; a.parts = a.parts || []; a.h = a.h == null ? 10 : a.h; a.rot = a.rot || 0; a.at = a.at || 0; a.phase = a.phase || 0;
+      if (a.label) { var d = document.createElement('div'); d.className = 'lab ' + (a.label.c || ''); var sp = document.createElement('span');
+        if (a.label.w) sp.style.width = a.label.w + 'px';
+        (a.label.pre ? [['i', a.label.pre]] : []).concat(a.label.head ? [['b', a.label.head]] : []).forEach(function (x) { var e = document.createElement(x[0]); e.textContent = x[1]; sp.appendChild(e); });
+        if (a.label.num) { var b = document.createElement('b'), n = document.createElement('i'); n.textContent = a.label.num; b.appendChild(n); b.appendChild(document.createTextNode(a.label.title)); sp.appendChild(b); }
+        a.tn = document.createTextNode(a.label.t || ''); sp.appendChild(a.tn);
+        if (a.label.sub) { var sm = document.createElement('small'); sm.textContent = a.label.sub; sp.appendChild(sm); }
+        d.appendChild(sp); d.style.display = 'none'; a.el = d; }
+      sc.actors.push(a); return a; };
+    return sc;
+  }
+  function common(sc, iconMc, iconDoc) {
+    var cue = sc.cue, n = cue.items.length;
+    // 제목 꼬리표 · 큰 제목 띠
+    // 긴 제목은 ' — ' 앞까지만 쓰고, 그래도 길면 글자를 줄여 꼬리표 안에 넣는다
+    var ttl = cue.no + ' · ' + cue.title.split(' — ')[0];
+    sc.add({ parts: [[P_(S.tag(236, 46), COL.ink, { h: 6 })]], x: 122, y: 150, rot: -2 * DEG, h: 6, at: .35, fixed: 1, label: { c: 'l-title', t: ttl } }).el.firstChild.style.fontSize = clamp(Math.floor(196 / (ttl.length * .93)), 11, 19) + 'px';
+    sc.add({ parts: [[P_(S.rect(1090, 78), COL.cream, { torn: 1.6, h: 9 })]], x: 800, y: 98, rot: -.4 * DEG, h: 9, at: sc.at('docent0'), fixed: 1, label: { c: 'l-head', t: cue.headline } });
+    // 로봇 둘(말할 때 6포즈 주기로 까딱인다)
+    [['mc', 122, iconMc, COL.mcbg, '사회자', COL.teal], ['docent', 1478, iconDoc, COL.docbg, '도슨트', COL.amber]].forEach(function (r, i) {
+      var BOB = [0, -4, -7, -3, 0, 2], TILT = [0, 1.6, .4, -1.6, -.4, 0];
+      sc.add({ parts: [[P_(S.circle(84), r[3], { h: 14, decorate: function (c) { c.drawImage(r[2], -70, -70, 140, 140); } })]], x: r[1], y: 290, h: 14, at: .15 + i * .17, fixed: 1,
+        pose: function (tq, step, st) { var on = st.role === r[0]; return on ? { dy: BOB[step % 6], rot: TILT[step % 6] * DEG, jit: 0 } : null; } });
+      sc.add({ parts: [[P_(S.rect(96, 34), r[5], { h: 16 })]], x: r[1], y: 388, rot: (i ? 2 : -2) * DEG, h: 16, at: .4 + i * .17, fixed: 1, label: { c: 'l-name', t: r[4] } });
+    });
+    // 아래 카드(포인트마다 한 장 — 도슨트가 그 포인트를 말하기 시작할 때 놓인다) · 기억해 두기
+    var gap = 26, cw = (1480 - gap * (n - 1)) / n;
+    cue.items.forEach(function (it, i) {
+      sc.add({ parts: [[P_(S.rect(cw, 186), COL.cream, { h: 7 })]], x: 60 + cw / 2 + i * (cw + gap), y: 772, rot: [-.5, .4, -.3][i % 3] * DEG, h: 7, at: sc.at('docent' + i), fixed: 1,
+        label: { c: 'l-card', w: cw - 48, num: String(i + 1), title: it.t, t: it.b } });
+    });
+    sc.add({ parts: [[P_(S.tag(1010, 58), COL.amber, { h: 18 })]], x: 800, y: 636, rot: -.5 * DEG, h: 18, at: sc.at('after'), fixed: 1, label: { c: 'l-rem', pre: '기억해 두기', t: cue.remember } });
+    sc.lampAt = sc.at('after');
+  }
+
+/*__SCENES__*/
+
+  // ───────────────────────────────────────────── 굽기
+  var iconImg = new Image(); iconImg.src = '__ICON__'; await iconImg.decode();
+  var iconFlip = mk(160, 160); (function () { var c = iconFlip.getContext('2d'); c.translate(160, 0); c.scale(-1, 1); c.drawImage(iconImg, 0, 0); })();
+  var scenes = [], backdrop, lightMap;
+  function bakeAll() {
+    var fit = $('#fit'), sc = Math.min(fit.clientWidth / W, fit.clientHeight / H), st = $('#stage');
+    st.style.transform = 'translate(' + (-W * sc / 2) + 'px,' + (-H * sc / 2) + 'px) scale(' + sc + ')';
+    K = clamp(sc * (window.devicePixelRatio || 1), 1, 2); cv.width = W * K; cv.height = H * K; seedN = 1;
+    TEX = paperTile(11, 512, [[4, .05], [9, .045], [28, .035], [96, .03]], 1500);
+    backdrop = mk(W * K, H * K); (function () { var c = backdrop.getContext('2d'); c.scale(K, K); c.fillStyle = COL.board; c.fillRect(0, 0, W, H);
+      var p = c.createPattern(paperTile(23, 512, [[3, .09], [7, .06], [20, .04], [64, .03]], 2200), 'repeat'); c.globalCompositeOperation = 'overlay'; c.fillStyle = p; c.fillRect(0, 0, W, H);
+      c.globalCompositeOperation = 'source-over'; c.strokeStyle = 'rgba(90,70,40,.22)'; c.lineWidth = 2; c.setLineDash([9, 9]); c.strokeRect(254, 146, 1092, 462); })();
+    lightMap = mk(W / 4, H / 4); (function () { var c = lightMap.getContext('2d'); c.scale(.25, .25); var g = c.createRadialGradient(520, 300, 100, 760, 430, 1150);
+      g.addColorStop(0, 'rgb(255,252,244)'); g.addColorStop(.5, 'rgb(240,234,226)'); g.addColorStop(.82, 'rgb(196,186,180)'); g.addColorStop(1, 'rgb(150,140,140)'); c.fillStyle = g; c.fillRect(0, 0, W, H); })();
+    labelsEl.textContent = ''; scenes = [];
+  }
+  /** 장면은 그 장에 들어갈 때 굽는다(19장을 한꺼번에 구우면 첫 화면이 늦다). 조각 시드는 장마다 고정이라 언제 구워도 같은 모양이다 */
+  function getScene(i) { if (!scenes[i]) { seedN = 1000 + i * 100003; var sc = Scene(CUES[i]); (SC[CUES[i].id] || function () {})(sc); common(sc, iconImg, iconFlip); scenes[i] = sc; } return scenes[i]; }
+
+  // ───────────────────────────────────────────── 한 포즈 그리기 (step 의 순수 함수)
+  var SETTLE = [[-10, -15, .055, 18], [-3, -5, .016, 6], [0, 0, 0, 0]], LAMPSEQ = [.35, .1, .6, .45, .85, .75, 1];
+  var cur = 0, shownScene = -1;
+  function speaking(cue, t) { for (var i = 0; i < cue.utt.length; i++) { var u = cue.utt[i]; if (t >= u.t0 - .05 && t <= u.t1 + .1) return u; } return null; }
+  function draw(ci, t) {
+    var sc = getScene(ci), cue = sc.cue, c = ctx;
+    if (shownScene !== ci) { if (ci + 1 < CUES.length) setTimeout(function () { getScene(ci + 1); }, 400); labelsEl.textContent = ''; sc.actors.forEach(function (a) { if (a.el) { a.el.style.display = 'none'; labelsEl.appendChild(a.el); } }); shownScene = ci; }
+    var step = Math.max(0, Math.floor(t * STEP + 1e-6)), tq = step / STEP, u = speaking(cue, tq), st = { role: u ? u.role : null };
+    var R = function (id, s) { return rand((Math.imul(id + 1, 0x9e3779b1) ^ Math.imul((s == null ? step : s) + 7, 0x85ebca6b)) >>> 0); };
+    var hand = function (id, amt) { var r = R(id), g = function () { return (r() + r() + r() - 1.5) * .95; }; return [g() * 1.25 * amt, g() * 1.25 * amt, g() * .0065 * amt]; };
+    var camX = sc.cam(tq), cj = hand(999, .3), shA = function (h) { return .5 - .003 * h; };
+    c.setTransform(K, 0, 0, K, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
+    c.drawImage(backdrop, 0, 0, W, H);
+    sc.actors.forEach(function (a) {
+      var vis = tq >= a.at && !(a.out != null && tq >= a.out) && (!a.vis || a.vis(tq, step));
+      var off = a.fixed ? 0 : (a.phase * sc.TR - camX) * (1 + (a.h - 9) / 110);
+      if (vis && Math.abs(off) > 1150) vis = false;
+      if (!vis) { if (a.el && a.shown) { a.el.style.display = 'none'; a.shown = 0; } return; }
+      var k = step - Math.round(a.at * STEP), s = a.noSettle || a.at <= 0 ? SETTLE[2] : SETTLE[Math.min(k, 2)];
+      var ps = a.pose ? a.pose(tq, step, st) : null, jit = ps && ps.jit != null ? ps.jit : (k < 2 && !a.noSettle ? 1 : (a.jit || 0)), j = jit ? hand(a.id, jit) : [0, 0, 0];
+      var x = a.x + off + s[0] + j[0] + (ps ? ps.dx || 0 : 0), y = a.y + s[1] + j[1] + (ps ? ps.dy || 0 : 0), rot = a.rot + s[2] + j[2] + (ps ? ps.rot || 0 : 0), h = a.h + s[3];
+      for (var pass = 1; pass >= 0; pass--) {
+        c.save(); c.translate(cj[0], cj[1]);
+        if (pass) { c.globalAlpha = shA(h); c.translate(SHX * h, SHY * h); }
+        c.translate(x, y); c.rotate(rot);
+        a.parts.forEach(function (p) { c.save(); c.translate(p[1] || 0, p[2] || 0); if (p[3]) c.rotate(p[3]); drawP(c, p[0], pass); c.restore(); });
+        c.restore();
+      }
+      if (a.el) { if (a.label.dyn) { var tx = a.label.dyn(tq, step); if (tx !== a.txt) { a.tn.nodeValue = tx; a.txt = tx; } } a.el.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) rotate(' + rot.toFixed(4) + 'rad)'; if (!a.shown) { a.el.style.display = ''; a.shown = 1; } }
+    });
+    // 노출: 조명 웅덩이 · 포즈마다 조금씩 다른 밝기 · 켜고 끄기 · "기억해 두기" 에서 조명이 그쪽으로 모인다
+    c.setTransform(K, 0, 0, K, 0, 0); c.globalCompositeOperation = 'multiply'; c.drawImage(lightMap, 0, 0, W, H);
+    var er = R(4242), front = Math.min(smooth(tq / .7), smooth((cue.dur - tq) / .7));
+    var lk = step - Math.round(sc.lampAt * STEP), lamp = lk < 0 ? 0 : LAMPSEQ[Math.min(lk, LAMPSEQ.length - 1)];
+    var lvl = lerp(.12, 1, front) * (.98 + .04 * (er() - .5)), w = .016 * (er() - .5);
+    c.fillStyle = 'rgb(' + (Math.min(255, 255 * lvl * (1 + w)) | 0) + ',' + (Math.min(255, 255 * lvl) | 0) + ',' + (Math.min(255, 255 * lvl * (1 - 1.4 * w)) | 0) + ')'; c.fillRect(0, 0, W, H);
+    if (lamp > 0) { var g = c.createRadialGradient(800, 640, 260, 800, 640, 1000), d = Math.round(255 - 62 * lamp); g.addColorStop(0, 'rgb(255,255,255)'); g.addColorStop(1, 'rgb(' + d + ',' + d + ',' + (d + 8) + ')'); c.fillStyle = g; c.fillRect(0, 0, W, H);
+      c.globalCompositeOperation = 'screen'; g = c.createRadialGradient(800, 636, 40, 800, 636, 560); g.addColorStop(0, 'rgba(255,214,150,' + (.16 * lamp).toFixed(3) + ')'); g.addColorStop(1, 'rgba(255,200,130,0)'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
+    c.globalCompositeOperation = 'source-over';
+    labelsEl.style.opacity = lerp(.15, 1, front).toFixed(2);
+  }
+  // 말풍선은 포즈가 아니라 실제 시각으로(글자는 매끄럽게 읽혀야 한다)
+  function bubbles(cue, t) {
+    ['mc', 'docent'].forEach(function (role) {
+      var el = $('#b-' + role), last = null, now = null;
+      cue.utt.forEach(function (u) { if (u.role !== role) return; u.s.forEach(function (s) { if (t >= s.t0 - .1) { last = s; now = t <= u.t1 + .15 ? u : null; } }); });
+      if (!last) { el.className = 'bubble'; return; }
+      var p = clamp((t - last.t0) / (last.t1 - last.t0)), n = Math.round(last.x.length * p);
+      el.querySelector('.done').textContent = last.x.slice(0, n); el.querySelector('.rest').textContent = last.x.slice(n);
+      el.className = 'bubble on' + (now ? '' : ' fade');
+    });
+  }
+
+  // ───────────────────────────────────────────── 재생
+  var audios = CUES.map(function (c) { var a = new Audio(c.audio); a.preload = 'auto'; return a; });
+  var WARN = [], cw = console.warn; console.warn = function () { WARN.push(Array.prototype.join.call(arguments, ' ')); cw.apply(console, arguments); };
+  var q = new URLSearchParams(location.search), frozen = q.get('t') != null ? parseFloat(q.get('t')) : null, lastKey = '';
+  var fmt = function (s) { s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + Math.floor(s % 60)).slice(-2); };
+  function setCue(i, play) { audios.forEach(function (a) { a.pause(); }); cur = i; audios[i].currentTime = 0; lastKey = ''; paint(); if (play) audios[i].play(); }
+  function paint() { $('#cues').value = String(cur); $('#scrub').max = CUES[cur].dur; $('#prev').disabled = cur === 0; $('#nextc').disabled = cur === CUES.length - 1; }
+  CUES.forEach(function (c, i) { var b = document.createElement('option'); b.value = String(i); b.textContent = c.no + ' ' + c.title; $('#cues').appendChild(b);
+    audios[i].addEventListener('ended', function () { if (i + 1 < CUES.length) setCue(i + 1, true); }); });
+  $('#cues').addEventListener('change', function () { $('#start').hidden = true; setCue(+this.value, true); this.blur(); });
+  $('#prev').addEventListener('click', function () { if (cur > 0) { $('#start').hidden = true; setCue(cur - 1, true); } });
+  $('#nextc').addEventListener('click', function () { if (cur + 1 < CUES.length) { $('#start').hidden = true; setCue(cur + 1, true); } });
+  function toggle() { $('#start').hidden = true; var a = audios[cur]; if (a.paused) { if (a.ended || a.currentTime >= CUES[cur].dur - .05) a.currentTime = 0; a.play(); } else a.pause(); }
+  $('#play').addEventListener('click', toggle);
+  $('#startbtn').addEventListener('click', function () { $('#start').hidden = true; setCue(0, true); });
+  $('#scrub').addEventListener('input', function () { audios[cur].currentTime = parseFloat(this.value); });
+  document.addEventListener('keydown', function (ev) { if (/^(SELECT|INPUT)$/.test((ev.target || {}).tagName || '')) return; if (ev.key === ' ') { ev.preventDefault(); toggle(); } else if (ev.key === 'ArrowRight' && cur + 1 < CUES.length) setCue(cur + 1, !audios[cur].paused); else if (ev.key === 'ArrowLeft' && cur > 0) setCue(cur - 1, !audios[cur].paused); });
+  $('#note').textContent = DATA.level + ' 수준 · 캐시 음성 재활용';
+
+  bakeAll();
+  // `?check=1` — 19장을 모두 지어 보고 '대사에 없는 낱말' 경고를 body[data-warn] 에 적는다(헤드리스 점검용)
+  if (q.get('check')) { CUES.forEach(function (c, i) { getScene(i); }); document.body.setAttribute('data-warn', JSON.stringify(WARN)); }
+  if (frozen != null) { cur = Math.max(0, CUES.map(function (c) { return c.id.slice(0, 2); }).indexOf(q.get('cue') || '01')); $('#start').hidden = true; }
+  paint();
+  var rz = null; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { shownScene = -1; bakeAll(); lastKey = ''; }, 250); });
+  (function loop() {
+    var t = frozen != null ? frozen : audios[cur].currentTime, key = cur + ':' + Math.floor(t * STEP + 1e-6);
+    if (key !== lastKey) { draw(cur, t); lastKey = key; }
+    bubbles(CUES[cur], t);
+    if (frozen == null) { $('#scrub').value = t; $('#time').textContent = fmt(t) + ' / ' + fmt(CUES[cur].dur); $('#play').textContent = audios[cur].paused ? '▶ 재생' : '❚❚ 멈춤'; }
+    requestAnimationFrame(loop);
+  })();
+  window.paperStage = { draw: draw, getScene: getScene, setCue: setCue };
+  document.documentElement.setAttribute('data-ready', '1');
+})();
+</script>
+</body>
+</html>
