@@ -122,3 +122,66 @@ def test_굽기는_빠진_것만_합성하고_원자적으로_쓴다(tmp_path, m
     calls.clear()
     assert bake.main() == 0
     assert calls == [], "있는 것을 다시 구웠다 — 바뀐 문장만 굽는다"
+
+
+# ── ElevenLabs 엔진(2026-11-12) ────────────────────────────────────
+import tts_elevenlabs as el  # noqa: E402
+
+
+@pytest.fixture
+def el_bake(monkeypatch):
+    """외부 호출 없이 ElevenLabs 굽기 — 키·크레딧·합성을 바꿔 끼운다."""
+    calls = []
+    monkeypatch.delenv("TTS_ENGINE", raising=False)
+    monkeypatch.delenv("TTS_EL_VOICES", raising=False)
+    monkeypatch.setattr(bake, "fixed_lines", lambda cues=None: [bake.Line("mc", "안녕하세요.", "a", None, "설명")])
+    monkeypatch.setattr(el, "load_api_key", lambda *a, **k: "sk_test")
+    monkeypatch.setattr(el, "credits_left", lambda *a, **k: (0, 131000))
+    monkeypatch.setattr(bake, "synth_el", lambda body, key, **kw: calls.append((body["input"], body["voice"], kw["model"])) or b"\x00\x01" * 50)
+    monkeypatch.setattr(bake, "synth", lambda *a: (_ for _ in ()).throw(AssertionError("CrispASR 를 불렀다")))
+    return calls
+
+
+def test_EL_굽기는_안내를_역할마다_굽고_엔진_표지를_남긴다(tmp_path, monkeypatch, el_bake):
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--cache-dir", str(tmp_path)])
+    assert bake.main() == 0
+    assert ("안녕하세요.", "serena", "eleven_v4_turbo") in el_bake
+    assert (el.NOTICE_TEXT, "serena", "eleven_v4_turbo") in el_bake and (el.NOTICE_TEXT, "sohee", "eleven_v4_turbo") in el_bake
+    data = json.loads((tmp_path / INDEX_NAME).read_text())
+    assert data["engine"] == "elevenlabs"
+    assert {e["voice"] for e in Cache(tmp_path).baked_for(el.NOTICE_TEXT)} == {"serena", "sohee"}
+
+
+def test_다른_엔진으로_구운_폴더에는_굽지_않는다(tmp_path, monkeypatch, el_bake):
+    (tmp_path / INDEX_NAME).write_text('{"entries": []}', encoding="utf-8")   # 표지 없음 = 옛 Qwen 폴더
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--cache-dir", str(tmp_path)])
+    assert bake.main() == 2 and el_bake == []
+
+
+def test_EL_force_는_확인_없이는_검수한_테이크를_덮지_않는다(tmp_path, monkeypatch, el_bake):
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--force", "--cache-dir", str(tmp_path)])
+    assert bake.main() == 2 and el_bake == []
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--force", "--confirm-retake",
+                                      "--cache-dir", str(tmp_path)])
+    assert bake.main() == 0 and el_bake
+
+
+def test_EL_굽기는_크레딧이_모자라면_멈춘다(tmp_path, monkeypatch, el_bake):
+    monkeypatch.setattr(el, "credits_left", lambda *a, **k: (130990, 131000))
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--cache-dir", str(tmp_path)])
+    assert bake.main() == 2 and el_bake == []
+
+
+def test_EL_굽기는_키_없으면_멈춘다(tmp_path, monkeypatch, el_bake):
+    monkeypatch.setattr(el, "load_api_key", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--cache-dir", str(tmp_path)])
+    assert bake.main() == 2 and el_bake == []
+
+
+def test_EL_시드는_캐시_키에서_나오고_번역에_실린다(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(el, "synth", lambda vid, payload, key, base=None: seen.update(vid=vid, **payload) or b"\x00\x00")
+    body = {"input": "안녕하세요.", "voice": "sohee", "speed": 1.13, "stream": True, "response_format": "pcm"}
+    bake.synth_el(body, "sk_test", voices=el.DEFAULT_VOICES, model="eleven_v4_turbo", readings=[])
+    assert seen["vid"] == el.DEFAULT_VOICES["sohee"] and seen["seed"] == el.seed_for(cache_key(body))
+    assert seen["language_code"] == "ko"

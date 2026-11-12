@@ -47,7 +47,7 @@ scripts/el_audition.py ─ 후보 × 대본 문장 × 모델 ─▶ 저장소 �
 | 굽기 | 한 번에 1건(동시성 5개 중 실시간 몫을 남긴다), 429·5xx는 지수 대기 3회, 지원되면 `seed` 고정. 진행 줄에 크레딧 누계. `--check`·`--limit`·`--level` 그대로. **`--force`는 엔진이 elevenlabs면 확인 문구 없이는 거부**(검수 끝난 테이크가 날아간다) |
 | `reachy.sh` | `TTS_ENGINE`를 프록시·`bake`에 넘긴다. elevenlabs면 `bake`가 CrispASR를 띄우지 않는다. 기동 화면에 "TTS 엔진 elevenlabs · 키 설정됨 · 캐시 …(n/528)" 한 줄 |
 | 헬스 | elevenlabs 모드의 `/health`는 키가 있고 캐시 폴더가 열리면 200. 요청마다 외부를 부르지 않는다. `engine` 필드를 싣는다 |
-| 실시간 실패 | **[결정 2026-11-12] 기본 = ① `notice`** — 미리 구운 같은 목소리 안내 한 번("잠시 연결이 고르지 않네요. 다시 이어 갈게요." — 문구 확인 필요) 뒤, 15초 안의 나머지 문장은 빈 소리로 넘긴다. ② `local`(CrispASR·Qwen으로 계속, 목소리가 바뀜)은 `TTS_EL_ON_FAIL=local`로만 켠다. 어느 쪽이든 경고 한 줄 |
+| 실시간 실패 | **[결정 2026-11-12] 기본 = ① `notice`** — 미리 구운 같은 목소리 안내 한 번("잠시 연결이 고르지 않네요. 다시 이어 갈게요." — 문구 확인 필요) 뒤, 15초 안의 나머지 문장은 ~~빈 소리로~~ **0.15초 무음으로** 넘긴다(빈 응답이면 로봇이 로컬 기계음으로 폴백한다 — 구현 중 코드 읽기로 잡음, `docs/lessons.md`). ② `local`(CrispASR·Qwen으로 계속, 목소리가 바뀜)은 `TTS_EL_ON_FAIL=local`로만 켠다. 어느 쪽이든 경고 한 줄 |
 | 오디션 | `scripts/el_audition.py` — 후보 × **실제 대본 문장**(고정 대사에서 "1901"·"VLF"·"GMDSS"·"메가헤르츠"가 든 문장, 초등 1문장, 사회자 오프닝 1문장) × `eleven_v4`·`eleven_v4_turbo` → WAV, 나란히 듣는 HTML 한 장. 출력은 `~/.local/share/reachy-mini-tts/audition/2026-11-12/`(저장소 밖). 라이브러리 목소리를 API에서 바로 못 쓰면 "내 목소리"에 추가한다(30슬롯 중 10개 이하, 확정 뒤 안 쓰는 것은 지운다). `speed`·`language_code`를 v4가 받는지도 여기서 한 번 잰다 |
 
 ## 오디션 후보 — 예고 730일, 별도 요율 없음
@@ -79,6 +79,14 @@ scripts/el_audition.py ─ 후보 × 대본 문장 × 모델 ─▶ 저장소 �
 - 신규: `tts_elevenlabs.py` · `scripts/el_audition.py` · `data/tts_readings.yaml` · `tests/test_tts_elevenlabs.py`
 - 수정: `tts_cache_proxy.py` · `scripts/bake_tts.py` · `reachy.sh` · `docs/real-robot-deployment.md`(§15.9 다음 새 절) · 핸드오프 문서 2개(요금 환산 정정)
 - **안 바꾼다**: `apps/`(로봇 앱) · `data/cues.yaml`(대본) · 옛 캐시 `cache/`
+
+## 진행 기록
+
+| 날짜 | 한 것 |
+|---|---|
+| 2026-11-12 | 승인(실패 정책 ① notice). 1단계: 어댑터·오디션 140개(약 2천 크레딧). **오디션 결정: 사회자 Juan `hjCvGtSCRPyjYwe2lDf1`, 도슨트 Yooni `n2fbxG88jqAoaVPUy3IG`, 고정 대사 모델 `eleven_v4_turbo`**(실시간 답과 같은 모델 — 소리가 이어지고 굽기 크레딧이 절반). 말 속도 초당 6.3~6.8자 → **속도는 자연 속도**(D3, 굽기 때 늘이지 않는다) |
+| 2026-11-12 | 2단계: 프록시 ElevenLabs 엔진(`--engine`/`TTS_ENGINE`)·굽기 엔진·엔진 표지·`reachy.sh` 연결·`data/tts_readings.yaml`(비어 있음). 로봇 경로 실측 첫 소리 276~316ms. 고정 대사 530문장(안내 2문장 포함) 굽기 — **실패 0, 소리 48.1분, 7.1분 소요(RTF 0.15)**, 이상치(말 속도·무음·음량) 0. 종이 무대 재빌드(`?check=1` 경고 0, 8.4 MB). `scripts/tts_review.py`: 로컬 STT 대조 — 95% 이상 471 · 90% 미만 24(대부분 MHz·kHz 같은 STT 표기, "초장파→초장판"·"조종면→조종료"·"김학우→김화부" 등은 귀로 확인 필요). 전체 테스트 1,372 통과 |
+| 다음 | [사용자] 검수 페이지로 재청취 → 발음 문제 목록 → `data/tts_readings.yaml` → 그 문장만 다시 굽기 → 검수 끝난 폴더 백업 → A6 실기 리허설 |
 
 ## 실기에 올리면 무엇이 깨지나
 

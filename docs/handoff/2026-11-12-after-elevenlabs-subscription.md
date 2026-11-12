@@ -18,6 +18,7 @@
 | 코드 | 바뀐 것 없음. `scripts/bake_tts.py`·`tts_cache_proxy.py`는 Qwen(CrispASR) 전용 |
 | 캐시 | `~/.local/share/reachy-mini-tts/cache` = Qwen 음성 — **건드리지 않는다**(되돌릴 자리) |
 | 교육자료 | 일반 = 종이 무대 완성(`docs/design/paper-stage.html`, Qwen 음성) · 초중등 웹툰·전문가 분해도 = 미착수 |
+| **진행(2026-11-12 오후)** | 키 설정·인증 확인 → 계획 승인(실패 정책 = 같은 목소리 안내) → 커밋 `2181b14` → **1단계 완료**: `tts_elevenlabs.py`(어댑터) · `scripts/el_audition.py`(+`el_audition.html`) · `tests/test_tts_elevenlabs.py`(16개 통과). 오디션 140개를 `~/.local/share/reachy-mini-tts/audition/2026-11-12/index.html`에 생성, 약 2천 크레딧. ~~사용자 청취 대기~~ → **결정: 사회자 Juan · 도슨트 Yooni · 고정 대사도 `eleven_v4_turbo` · 속도는 자연 속도**. 2단계 **완료**: 프록시·굽기 ElevenLabs 엔진(`TTS_ENGINE=elevenlabs`), 530문장 굽기(실패 0), 종이 무대 재빌드, 검수 페이지(`~/.local/share/reachy-mini-tts/review/cache-elevenlabs/index.html`). **다음: 사용자 재청취 → 발음 사전 → 부분 재굽기 → 백업 → A6 실기 리허설** — 계획서 「진행 기록」. 라이브러리 목소리는 "내 목소리"에 추가하지 않아도 API로 바로 쓸 수 있다(U2 불필요, 슬롯 0/30). 후보 말 속도는 초당 6.3~6.8자(감독 환산 4.0자보다 빠르다) |
 | 커밋 | 안 함 — `scripts/handout_paper/` · `docs/design/paper-stage.html` · `tests/test_handout_paper.py` · `docs/lessons.md` · 핸드오프 문서 2개 |
 
 ---
@@ -69,8 +70,8 @@ A8 초중등 웹툰 · A9 전문가 분해도 — A0 승인 뒤 언제든(빌더
 
 | 확인할 것 | 왜 |
 |---|---|
-| 요금제 이름·갱신일 | 이 문서의 수치(Creator: 월 v4 Turbo 55만 자, 동시 요청 5)가 맞는지 |
-| 초과 사용 과금(usage-based billing) 켜짐/꺼짐 | 꺼져 있으면 한도에 닿는 순간 실시간 답이 끊긴다. 켜면 비용 상한을 따로 정해야 한다 → [결정] D7 |
+| 요금제 이름·갱신일 | ~~이 문서의 수치(Creator: 월 v4 Turbo 55만 자, 동시 요청 5)가 맞는지~~ → **API로 확인함**(2026-11-12): creator · 월 131,000 크레딧(Turbo 26.2만 자 · v4 13.1만 자) · 갱신 12-12 · $22 |
+| 초과 사용 과금(usage-based billing) 켜짐/꺼짐 | **API로는 꺼짐**(`can_extend_character_limit: False`). 한도에 닿는 순간 실시간 답이 끊긴다. 켤 수 있는지는 구독 화면에서 확인 → [결정] D7 |
 | 첫 달 할인가 | 둘째 달부터 정가(Creator $22)로 오른다 |
 
 ### U4. (선택) LLM·STT 실측용 키 — A7을 할 때만

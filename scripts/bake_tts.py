@@ -15,9 +15,14 @@
 도구는 앱이 실제로 쓰는 경로를 태운다」). 그래도 로봇 쪽 설정이 굽기와 달라지면 프록시가
 "고정 대사인데 캐시 키가 다르다" 로 경고한다.
 
+**ElevenLabs 엔진**(2026-11-12, `--engine elevenlabs` 또는 `TTS_ENGINE`): 같은 로봇 본문을 만들어 키는 그대로
+계산하고, 합성만 `tts_elevenlabs` 로 한다. 폴더는 엔진마다 따로(`cache-elevenlabs`) — 색인에 엔진 표지를 남기고,
+다른 엔진 표지가 있는 폴더에는 굽지 않는다. ElevenLabs 는 다시 구울 때마다 다른 테이크가 나오므로 검수가
+끝난 소리를 덮는 `--force` 는 `--confirm-retake` 와 함께일 때만 한다.
+
 사용:
     .venv/bin/python scripts/bake_tts.py [--upstream http://127.0.0.1:8098] [--cache-dir …]
-        [--check] [--level 일반] [--limit N] [--force] [--prune]
+        [--check] [--level 일반] [--limit N] [--force] [--prune] [--engine crispasr|elevenlabs]
 """
 
 from __future__ import annotations
@@ -49,6 +54,7 @@ from stage.cues import (  # noqa: E402
     SOLO_ACK_LINES,
     load_cues,
 )
+import tts_elevenlabs as el  # noqa: E402
 from tts_cache_proxy import INDEX_NAME, cache_key, default_cache_dir, is_cacheable  # noqa: E402
 
 # `main.apply_role_voice` 가 넣는 환경변수. **역할을 바꿀 때마다 먼저 지운다** — 그 함수는
@@ -93,6 +99,30 @@ def fixed_lines(cues=None) -> list[Line]:
     for text, emo in zip(SOLO_ACK_LINES, SOLO_ACK_EMOTIONS):
         out.append(Line("mc", text, "단독 확인 멘트", None, emo))
     return out
+
+
+def notice_lines() -> list[Line]:
+    """ElevenLabs 엔진에서만 굽는 "연결 불안정" 안내 — 역할마다(프록시가 실패한 요청과 같은 목소리로 꺼낸다)."""
+    return [Line(role, el.NOTICE_TEXT, "연결 불안정 안내", None, "") for role in ("mc", "docent")]
+
+
+def index_engine(cache_dir: pathlib.Path) -> str | None:
+    """폴더의 색인이 말하는 엔진. 표지가 없는 옛 색인은 crispasr, 색인이 없으면 None."""
+    p = cache_dir / INDEX_NAME
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return "알 수 없음"
+    return data.get("engine") or "crispasr"
+
+
+def synth_el(body: dict, key: str, *, voices: dict, model: str, readings: list, base: str | None = None) -> bytes:
+    """ElevenLabs 로 한 문장을 끝까지 받는다. 시드는 캐시 키에서 — 다시 구워도 가능한 한 같은 테이크."""
+    vid, payload = el.el_request(body, voices=voices, model=model, readings=readings,
+                                 language_code=el.LANGUAGE, seed=el.seed_for(cache_key(body)))
+    return el.synth(vid, payload, key, base=base)
 
 
 def use_role(role: str) -> None:
@@ -146,13 +176,14 @@ def plan(lines: list[Line], level: str | None = None) -> list[dict]:
     return list(by_key.values())
 
 
-def write_index(cache_dir: pathlib.Path, entries: list[dict]) -> None:
+def write_index(cache_dir: pathlib.Path, entries: list[dict], engine: str = "crispasr") -> None:
     """프록시가 드리프트를 잡는 색인 — **지금 대본의 고정 대사 전부**(구웠든 안 구웠든).
 
-    원자적으로 바꾼다 — 프록시가 반쯤 쓴 색인을 읽으면 드리프트 경고가 틀린다.
+    원자적으로 바꾼다 — 프록시가 반쯤 쓴 색인을 읽으면 드리프트 경고가 틀린다. `engine` 표지는 다른 엔진
+    소리와 섞이는 것을 굽기·프록시가 알아채는 근거다.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
-    data = {"entries": [{k: v for k, v in e.items() if k != "body"} for e in entries]}
+    data = {"engine": engine, "entries": [{k: v for k, v in e.items() if k != "body"} for e in entries]}
     tmp = cache_dir / (INDEX_NAME + ".part")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, cache_dir / INDEX_NAME)
@@ -185,12 +216,23 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="이번에 최대 N개만 굽는다(시험용)")
     ap.add_argument("--force", action="store_true", help="있는 것도 다시 굽는다")
     ap.add_argument("--prune", action="store_true", help="지금 대본에 없는 캐시 파일을 지운다")
+    ap.add_argument("--engine", default=None, choices=el.ENGINES, help="기본 TTS_ENGINE, 없으면 crispasr")
+    ap.add_argument("--confirm-retake", action="store_true",
+                    help="elevenlabs 에서 --force 로 검수 끝난 소리를 새 테이크로 덮는 것을 확인한다")
     args = ap.parse_args()
 
-    cache_dir = pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir()
+    engine = args.engine or el.engine_from_env()
+    cache_dir = pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir(engine)
     if not robot_tts.QWEN_STREAM:
         print("⚠ TTS_QWEN_STREAM 이 꺼져 있다 — 로봇이 wav 로 요청하므로 캐시가 쓰이지 않는다(스트리밍 PCM 만 캐시)")
-    entries = plan(fixed_lines(), args.level)
+    baked_by = index_engine(cache_dir)
+    if baked_by and baked_by != engine:
+        print(f"{'⚠' if args.check else '✗'} {cache_dir} 는 {baked_by} 로 구운 폴더다 — {engine} 소리를 섞지 않는다. "
+              f"엔진마다 폴더를 나눈다(기본 {default_cache_dir(engine)})")
+        if not args.check:
+            return 2
+    lines = fixed_lines() + (notice_lines() if engine == "elevenlabs" else [])
+    entries = plan(lines, args.level)
     skipped = [e for e in entries if not is_cacheable(e["body"])]
     entries = [e for e in entries if is_cacheable(e["body"])]
     present = [e for e in entries if (cache_dir / f"{e['key']}.pcm").is_file()]
@@ -205,7 +247,7 @@ def main() -> int:
             t[0] += hit
             t[1] += 1
     summary = " · ".join(f"{g} {h}/{n}" for g, (h, n) in by_group.items())
-    print(f"TTS 캐시 {cache_dir}: 고정 대사 {len(entries)}문장 중 {len(present)}개 구움 ({summary})")
+    print(f"TTS 캐시 {cache_dir}({engine}): 고정 대사 {len(entries)}문장 중 {len(present)}개 구움 ({summary})")
     if skipped:
         print(f"   ⚠ 스트리밍 PCM 이 아닌 요청 {len(skipped)}개는 캐시 대상이 아니다")
 
@@ -215,10 +257,38 @@ def main() -> int:
                   " ./reachy.sh bake 로 굽는다")
         return 0
 
-    write_index(cache_dir, entries)
+    key = None
+    el_cfg: dict = {}
+    if engine == "elevenlabs":
+        if args.force and not args.confirm_retake:
+            print("✗ ElevenLabs 는 다시 구우면 테이크가 바뀐다 — 검수 끝난 소리를 덮으려면 --confirm-retake 를 같이 준다")
+            return 2
+        key = el.load_api_key()
+        if not key:
+            print("✗ ElevenLabs 키가 없다(ELEVENLABS_API_KEY 또는 저장소 루트 .env)")
+            return 2
+        model = os.environ.get("TTS_EL_MODEL_BAKE") or el.MODEL_BAKE
+        el_cfg = {"voices": el.voice_map(), "model": model, "readings": el.load_readings()}
+        unmapped = sorted({str(e["voice"]) for e in entries} - set(el_cfg["voices"]))
+        if unmapped:
+            print(f"✗ ElevenLabs 목소리가 정해지지 않은 로봇 목소리: {unmapped} — TTS_EL_VOICES 에 넣는다")
+            return 2
+        todo_cost = sum(el.credits_for(e["body"].get("input", ""), model) for e in missing[: args.limit or None])
+        try:
+            used, limit = el.credits_left(key)
+        except el.ElevenLabsError as exc:
+            print(f"✗ 남은 크레딧을 못 읽었다 — {exc}")
+            return 2
+        print(f"   ElevenLabs 키 {el.key_status(key)} · 모델 {model} · 목소리 {el_cfg['voices']} · "
+              f"읽기 표기 {len(el_cfg['readings'])}개 · 크레딧 {used:,}/{limit:,} 사용 중, 이번 약 {todo_cost:,.0f}")
+        if limit and used + todo_cost > limit * 0.9:
+            print("✗ 이번 굽기가 월 한도의 90%를 넘긴다 — --level·--limit 으로 나눠 굽는다")
+            return 2
+
+    write_index(cache_dir, entries, engine)
 
     if args.prune:
-        keep = {f"{e['key']}.pcm" for e in plan(fixed_lines())}
+        keep = {f"{e['key']}.pcm" for e in plan(lines)}
         orphans = [p for p in cache_dir.glob("*.pcm") if p.name not in keep]
         for p in orphans:
             p.unlink()
@@ -228,15 +298,18 @@ def main() -> int:
     if not todo:
         print("   구울 것이 없다")
         return 0
-    print(f"   {len(todo)}문장을 굽는다(업스트림 {args.upstream})")
+    print(f"   {len(todo)}문장을 굽는다({'ElevenLabs' if key else f'업스트림 {args.upstream}'})")
     t0 = time.time()
     audio_s = 0.0
     failed = 0
     for i, e in enumerate(todo, 1):
         t1 = time.time()
         try:
-            data = synth(args.upstream, e["body"])
-        except (urllib.error.URLError, OSError, TimeoutError, RuntimeError) as exc:
+            if key:
+                data = synth_el(e["body"], key, **el_cfg)
+            else:
+                data = synth(args.upstream, e["body"])
+        except (urllib.error.URLError, OSError, TimeoutError, RuntimeError, el.VoiceNotMapped) as exc:
             failed += 1
             print(f"   ✗ [{i}/{len(todo)}] {e['where'][0]} — {type(exc).__name__}: {exc}")
             continue

@@ -2173,3 +2173,40 @@
 - **원인**: "궁금한 점 있으실까요?" 같은 문장은 19큐가 공유해 색인에 **한 번**(01 자리)만 적히고 `where` 에 큐가 나열된다.
 - **규칙**: 캐시에서 한 발화의 문장을 모을 때는 큐시트 글 안의 위치로 줄 세우고, 이어 붙인 글이 큐시트와 같은지 대조해
   다르면 멈춘다(빌더가 그렇게 한다 — 이 대조가 없었으면 뒤집힌 채 만들어졌다).
+
+### ElevenLabs 라이브러리 목소리는 처음 쓸 때 자동으로 추가된다 — 같은 목소리로 첫 요청이 겹치면 409
+- **증상**: 목소리 오디션(`scripts/el_audition.py`, 동시 3건)에서 140건 중 21건이 `409 already_running — Multiple voice
+  additions/deletions for the same voice were called at the same time` 으로 실패했다. 실패는 후보마다 맨 앞 몇 건에 몰렸다.
+- **원인**: 라이브러리 목소리는 "내 목소리"에 넣지 않아도 API 로 바로 합성되는데, 첫 사용 때 계정 쪽 추가 작업이 따로
+  돈다. 같은 목소리의 첫 요청 여러 개가 동시에 들어가 그 작업끼리 부딪혔다(목소리 슬롯은 0/30 그대로였다).
+- **규칙**: 409 도 429·5xx 처럼 잠깐 쉬었다 다시 한다(`tts_elevenlabs._RETRY_STATUS`). 공연 전에 쓸 목소리를 한 번씩
+  미리 불러 두면 첫 관람객 답에서 이 충돌을 만나지 않는다.
+  테스트: `tests/test_tts_elevenlabs.py::test_라이브러리_목소리_첫_사용이_겹친_409는_다시_한다`
+
+### 외부 요금표의 "글자 수"를 그대로 옮기지 않는다 — 가입 뒤 API 로 크레딧과 모델 배수를 잰다
+- **증상**: 조사 문서(11-10 핸드오프 §5)에 ElevenLabs Creator 를 "v4 Turbo 월 55만 자"로 적고, 그 숫자로 월 사용량(33만 자)을
+  "충당"한다고 판단했다.
+- **원인**: 실제 계정은 월 **131,000 크레딧**이고 모델마다 글자당 배수가 다르다(`eleven_v4` 1.0, `eleven_v4_turbo` 0.5 —
+  `GET /v1/models` 의 `character_cost_multiplier`). Turbo 로 26.2만 자다. 같은 가정이면 한도를 넘는다. 초과 사용도 꺼져 있었다.
+- **규칙**: 요금·한도는 가입 직후 `GET /v1/user/subscription`·`GET /v1/models` 로 다시 읽어 계획에 적는다. 굽기·오디션
+  스크립트는 시작 전에 남은 크레딧을 읽고 모자라면 멈춘다(`el_audition.py` 가 그렇게 한다).
+
+### TTS 프록시가 "아무 소리도 안 보낸다"는 선택지가 없다 — 빈 응답이면 로봇이 로컬 기계음으로 대신 말한다
+- **증상(밟기 직전)**: ElevenLabs 실패 정책을 "안내를 한 번 내고 그 답의 나머지 문장은 **빈 소리**로 넘긴다"로 계획했다
+  (`docs/superpowers/plans/2026-11-12-elevenlabs-tts.md` 초안). 그대로 짰으면 끊김마다 로봇이 say/espeak(다른 목소리,
+  예전 "남자 기계음 결함")로 답을 읽었을 것이다 — 결정한 정책(같은 목소리 유지)과 정반대다.
+- **원인**: 로봇 `tts.Speaker._open_qwen` 은 첫 청크가 비면 `"첫 청크가 비었다"` 로 None 을 돌려주고, `_worker` 는 None 을
+  "서버가 죽었다" 로 보고 로컬 합성기로 폴백한다. 5xx·연결 실패도 같은 길이다. 즉 **프록시가 그 문장을 건너뛰게 할 방법은
+  200 + 소리뿐**이다.
+- **규칙**: 프록시가 문장을 건너뛸 때는 짧은 무음(0.15초, `tts_cache_proxy.SILENCE_S`)을 200 으로 보낸다. 로봇 쪽 계약을
+  바꾸는 정책을 짤 때는 계획서보다 먼저 로봇이 그 응답을 어떻게 읽는지(`_open_qwen`·`_play_qwen`)를 읽는다.
+  테스트: `tests/test_tts_elevenlabs.py::test_EL_실패하면_같은_목소리_안내를_한_번만_내고_나머지는_무음`(첫 청크가 비지 않음을 로봇 경로로 확인)
+
+### 굽기 목록을 만드는 테스트는 역할 목소리 환경변수를 되돌려야 한다 — 같은 지뢰를 두 번 밟았다
+- **증상**: `tests/test_tts_elevenlabs.py` 를 추가한 뒤 그 뒤에 도는 `test_tts_backend.py::test_qwen_백엔드는_지시문과_배속을_실어_보낸다`
+  가 깨졌다(단독으로는 통과).
+- **원인**: 오디션 문장 테스트가 `bake_tts.plan` 을 불렀고, 그 안의 `use_role` → `main.apply_role_voice` 가 `TTS_QWEN_VOICE/SPEED/INSTRUCT`
+  를 `os.environ` 에 **직접** 넣었다. `tests/test_bake_tts.py` 는 이미 autouse 픽스처로 막고 있었는데, 새 파일에는 없었다.
+- **규칙**: `bake_tts.plan`·`bodies_for`·`fixed_lines` 를 거치는 테스트는 어느 파일이든 `_ROLE_ENV` 를 monkeypatch 로 기억시키고
+  감정을 `set_emotion("")` 으로 되돌린다. 새 테스트 파일을 만들면 전체 스위트(`pytest tests/`)로 순서 의존을 확인한다.
+  테스트: `tests/test_tts_elevenlabs.py::test_오디션_문장은_지금_대본에_모두_있다`

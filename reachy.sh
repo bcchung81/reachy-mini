@@ -137,7 +137,16 @@ TTS_ASSETS="${TTS_ASSETS:-$HOME/.local/share/reachy-mini-tts}"
 # 뜬다 — 프록시 말고는 부를 일이 없다. 로봇 설정·앱은 그대로다(주소가 안 바뀐다).
 # 캐시는 TTS 자산 옆(저장소 밖) — `./reachy.sh bake` 가 고정 대사를 여기에 굽는다.
 TTS_UPSTREAM_PORT="${TTS_QWEN_UPSTREAM_PORT:-8098}"
-TTS_CACHE_DIR="${TTS_CACHE_DIR:-$TTS_ASSETS/cache}"
+# **TTS 엔진**(2026-11-12, 계획 docs/superpowers/plans/2026-11-12-elevenlabs-tts.md). 캐시에 없는 문장(관람객 답)을
+# 누가 합성하나 — crispasr(기본, 지금 구성) | elevenlabs(사회자 Juan·도슨트 Yooni). 로봇 쪽은 아무것도 안 바뀐다.
+# elevenlabs 키는 저장소 루트 .env 에서 **프록시·굽기 프로세스만** 읽는다 — 이 셸에 export 하지 않는다.
+# 캐시 폴더는 엔진마다 따로다(키에 엔진이 안 들어가 같은 폴더면 옛 목소리가 나간다).
+TTS_ENGINE="${TTS_ENGINE:-crispasr}"
+if [ "$TTS_ENGINE" = "elevenlabs" ]; then
+  TTS_CACHE_DIR="${TTS_CACHE_DIR:-$TTS_ASSETS/cache-elevenlabs}"
+else
+  TTS_CACHE_DIR="${TTS_CACHE_DIR:-$TTS_ASSETS/cache}"
+fi
 CRISPASR="${CRISPASR_BIN:-$TTS_ASSETS/crispasr-bin/crispasr}"
 # CustomVoice 를 쓴다 — 화자 이름으로 음색이 고정된다(VoiceDesign 은 매 요청 달라짐).
 #
@@ -508,9 +517,9 @@ start_crispasr() {
 # 캐시 프록시를 로봇이 부르는 주소에 띄운다. /health 는 안쪽이 살아 있을 때만 200 이라
 # 기다림이 곧 "프록시 + CrispASR 둘 다 선다" 의 확인이다.
 start_tts_proxy() {
-  echo "   캐시 프록시 :$TTS_PORT → 안쪽 :$TTS_UPSTREAM_PORT ${c_dim}(캐시 $TTS_CACHE_DIR · 로그 $LOG_DIR/tts-proxy.log)${c_off}"
+  echo "   캐시 프록시 :$TTS_PORT → 안쪽 :$TTS_UPSTREAM_PORT ${c_dim}(엔진 $TTS_ENGINE · 캐시 $TTS_CACHE_DIR · 로그 $LOG_DIR/tts-proxy.log)${c_off}"
   nohup "$PY" -u tts_cache_proxy.py --host "$BIND_HOST" --port "$TTS_PORT" \
-    --upstream "http://127.0.0.1:$TTS_UPSTREAM_PORT" --cache-dir "$TTS_CACHE_DIR" \
+    --upstream "http://127.0.0.1:$TTS_UPSTREAM_PORT" --cache-dir "$TTS_CACHE_DIR" --engine "$TTS_ENGINE" \
     > "$LOG_DIR/tts-proxy.log" 2>&1 &
   echo $! > "$TTS_PROXY_PID_FILE"
   wait_for "http://localhost:$TTS_PORT/health" "TTS 캐시 프록시" 20
@@ -528,7 +537,7 @@ tts_proxy_marker_check() {
 
 # 캐시 적중 현황 한 줄 — 합성 없이 센다. 비었으면 bake 를 권한다(`scripts/bake_tts.py --check`).
 tts_cache_status() {
-  "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR" 2>&1 | sed 's/^/   /'
+  "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR" --engine "$TTS_ENGINE" 2>&1 | sed 's/^/   /'
 }
 
 # ── serve — 실기(Wireless) 구성 ─────────────────────────────────
@@ -1023,9 +1032,14 @@ run_bake() {
   local a
   for a in "$@"; do
     if [ "$a" = "--check" ]; then
-      exec "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR"
+      exec "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_CACHE_DIR" --engine "$TTS_ENGINE"
     fi
   done
+  if [ "$TTS_ENGINE" = "elevenlabs" ]; then
+    # ElevenLabs 로 굽는다 — 로컬 CrispASR 를 띄울 필요가 없다. 키·크레딧·목소리 확인은 굽기가 한다.
+    say_step "굽기(ElevenLabs) — 고정 대사 → $TTS_CACHE_DIR"
+    exec "$PY" scripts/bake_tts.py --engine elevenlabs --cache-dir "$TTS_CACHE_DIR" "$@"
+  fi
   trap 'cleanup_partial; exit 130' INT TERM
   start_tts || exit 1
   STARTED_TTS=0

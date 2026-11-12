@@ -616,6 +616,30 @@ XVF3800 의 AEC 는 **스피커 반향**을 지우지 별개인 **모터 소음*
   실시간 합성과 **바이트 동일**(같은 요청의 PCM SHA 가 같다 — 합성이 결정적).
 - 프록시가 못 뜨면 `reachy.sh` 가 경고하고 CrispASR 를 예전처럼 `:8099` 에 직접 띄운다(캐시만 꺼진 원래 구성).
 
+### 15.10 TTS 엔진 ElevenLabs — 로봇 재배포 없음, 키는 PC 에만(2026-11-12)
+
+계획 `docs/superpowers/plans/2026-11-12-elevenlabs-tts.md`. **`TTS_ENGINE=elevenlabs ./reachy.sh start --robot`** 이면 PC 의 캐시
+프록시가 캐시에 없는 문장(관람객 답)을 CrispASR 대신 ElevenLabs(`eleven_v4_turbo`, `pcm_24000`)로 합성한다. 로봇은 주소
+(`TTS_QWEN_URL`)·요청 본문(`voice: serena/sohee`)·응답 형식이 그대로라 **재배포가 필요 없다.** 기본은 `crispasr`(지금 구성).
+
+- **목소리**: 로봇이 보내는 이름을 PC 가 바꾼다 — serena → Juan(사회자), sohee → Yooni(도슨트)
+  (`tts_elevenlabs.DEFAULT_VOICES`, 바꿀 때는 `TTS_EL_VOICES` + 다시 굽기). 로봇의 `TTS_QWEN_VOICE/SPEED/INSTRUCT` 를
+  바꾸면 15.9 처럼 캐시 키가 빗나간다 — 그대로 둔다(`speed` 는 ElevenLabs 로 가지 않는다).
+- **고정 대사**: `TTS_ENGINE=elevenlabs ./reachy.sh bake` → `$TTS_ASSETS/cache-elevenlabs`(엔진마다 폴더가 따로다 — 색인에
+  엔진 표지, 다른 엔진 폴더에는 굽기가 거부한다). 고정 대사는 캐시에서 나가므로 **PC 인터넷이 끊겨도 대본 공연은 계속된다.**
+- **키**: 저장소 루트 `.env` 의 `ELEVENLABS_API_KEY` 를 프록시·굽기 프로세스만 읽는다(`.gitignore`). 로봇에는 올리지 않는다.
+  키가 없으면 경고 한 줄 + CrispASR 로 돈다.
+- **실패 정책**(결정 2026-11-12): 관람객 답 합성이 실패하면 같은 목소리로 미리 구운 "잠시 연결이 불안정해서 다음으로
+  넘어갈게요." 를 끊김 한 번에 한 번 내고, 그 답의 나머지 문장은 **0.15초 무음**으로 넘긴다. 빈 응답·5xx 를 주면 로봇이
+  로컬 기계음으로 대신 말하기 때문이다(`docs/lessons.md`). `TTS_EL_ON_FAIL=local` 이면 CrispASR(Qwen 목소리)로 계속한다.
+- **크레딧**: Creator 월 131,000 크레딧, 초과 사용 불가. Turbo 는 글자당 0.5 → 월 26.2만 자. 한도가 바닥나면 관람객 답이
+  실패 정책으로 간다. 고정 대사 530문장 굽기 약 1만 크레딧.
+- 실측(2026-11-12, 이 맥 → ElevenLabs): 로봇 경로(`tts._qwen_open`)로 캐시 미스 첫 소리 **276~316ms**(로컬 Qwen 직접 253ms).
+  굽기 RTF 0.22. **ElevenLabs 는 비결정적**이다 — 같은 요청도 다시 구우면 테이크가 바뀐다(문장마다 시드를 고정하지만 '최선'만
+  약속한다). 검수 끝난 폴더는 백업하고, `--force` 는 `--confirm-retake` 가 있어야 돈다.
+- **실기에서 확인할 것**: 로봇 스피커로 두 목소리 청취, 두 대 동시 발화 때 429 없음, PC 인터넷을 뽑았을 때 대본은 계속·관람객
+  답은 안내 한 번, `tts-proxy.log` 에 "캐시 키가 다르다" 없음.
+
 ## 적용한 수정 (2026-07-30)
 
 1. **`main.py`** — `VoiceChat.run(reachy_mini, stop_event)` 이 대화 루프를 돌린다.

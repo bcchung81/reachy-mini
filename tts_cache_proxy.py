@@ -15,14 +15,22 @@
 
 로봇 앱은 아무것도 모른다 — 주소도 응답 형식(`audio/pcm` chunked, 24 kHz)도 그대로다.
 
+**ElevenLabs 엔진**(2026-11-12, 계획 `docs/superpowers/plans/2026-11-12-elevenlabs-tts.md`): `--engine elevenlabs`
+(`TTS_ENGINE`)이면 캐시에 없는 문장(관람객 답)을 CrispASR 대신 ElevenLabs 로 합성해 같은 형식으로 흘린다.
+키는 이 프로세스만 읽는다(`tts_elevenlabs.load_api_key`). 실패하면 같은 목소리의 미리 구운 안내를 한 번 내고
+그 답의 나머지 문장은 짧은 무음으로 넘긴다 — **빈 응답이나 5xx 를 주면 로봇이 로컬 기계음으로 대신 말한다**
+(`tts._open_qwen` 의 "첫 청크가 비었다" → 폴백). 엔진을 안 정하면 지금과 똑같이 돈다.
+
 실행:
     .venv/bin/python tts_cache_proxy.py [--host 127.0.0.1] [--port 8099]
         [--upstream http://127.0.0.1:8098] [--cache-dir ~/.local/share/reachy-mini-tts/cache]
+        [--engine crispasr|elevenlabs]
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import http.client
 import json
@@ -30,8 +38,11 @@ import logging
 import os
 import pathlib
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import tts_elevenlabs as el
 
 log = logging.getLogger("tts-proxy")
 
@@ -46,13 +57,17 @@ UPSTREAM_TIMEOUT_S = 120.0
 _HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "proxy-connection"}
 
 
-def default_cache_dir() -> pathlib.Path:
-    """캐시 위치 — TTS 자산 옆(저장소 밖, 재부팅에도 남는다). `TTS_CACHE_DIR` 로 바꾼다."""
+def default_cache_dir(engine: str = "crispasr") -> pathlib.Path:
+    """캐시 위치 — TTS 자산 옆(저장소 밖, 재부팅에도 남는다). `TTS_CACHE_DIR` 로 바꾼다.
+
+    **엔진마다 폴더가 다르다**(crispasr → `cache`, elevenlabs → `cache-elevenlabs`). 캐시 키는 로봇 요청
+    본문뿐이라 엔진이 들어가지 않는다 — 같은 폴더를 쓰면 옛 목소리가 그대로 나간다.
+    """
     env = os.environ.get("TTS_CACHE_DIR")
     if env:
         return pathlib.Path(env).expanduser()
     assets = os.environ.get("TTS_ASSETS", "~/.local/share/reachy-mini-tts")
-    return pathlib.Path(assets).expanduser() / "cache"
+    return pathlib.Path(assets).expanduser() / ("cache" if engine == "crispasr" else f"cache-{engine}")
 
 
 def cache_key(body: dict) -> str:
@@ -84,6 +99,7 @@ class Cache:
         self._lock = threading.Lock()
         self._index_mtime: float | None = None
         self._by_text: dict[str, list[dict]] = {}
+        self._engine: str | None = None
 
     def path(self, key: str) -> pathlib.Path:
         return self.root / f"{key}.pcm"
@@ -102,12 +118,13 @@ class Cache:
         try:
             mtime = p.stat().st_mtime
         except OSError:
-            self._by_text, self._index_mtime = {}, None
+            self._by_text, self._index_mtime, self._engine = {}, None, None
             return
         if mtime == self._index_mtime:
             return
         try:
-            entries = json.loads(p.read_text(encoding="utf-8")).get("entries", [])
+            data = json.loads(p.read_text(encoding="utf-8"))
+            entries = data.get("entries", [])
         except (OSError, ValueError) as exc:
             log.warning("색인을 못 읽었다(%s: %s) — 드리프트 경고 없이 돈다", type(exc).__name__, exc)
             self._by_text, self._index_mtime = {}, mtime
@@ -115,7 +132,15 @@ class Cache:
         by_text: dict[str, list[dict]] = {}
         for e in entries:
             by_text.setdefault(e.get("text", ""), []).append(e)
+        # 엔진 표지가 없는 색인은 ElevenLabs 이전(2026-11-12 전)에 구운 것 — 곧 CrispASR 다.
         self._by_text, self._index_mtime = by_text, mtime
+        self._engine = data.get("engine") or "crispasr"
+
+    def engine(self) -> str | None:
+        """이 폴더를 어느 엔진으로 구웠나(색인 표지). 색인이 없으면 None."""
+        with self._lock:
+            self._reload_index()
+            return self._engine
 
     def baked_for(self, text: str) -> list[dict]:
         """이 문장을 굽기가 어떤 설정으로 구웠(거나 구울 예정이)었나. 고정 대사가 아니면 빈 목록."""
@@ -140,6 +165,8 @@ class Stats:
         self.hits = 0
         self.misses = 0
         self.drifts = 0
+        self.el_ok = 0        # ElevenLabs 로 합성해 흘린 관람객 답 문장
+        self.el_fail = 0      # ElevenLabs 실패 — 실패 정책으로 넘긴 문장
 
     def add(self, field: str) -> None:
         with self._lock:
@@ -147,13 +174,34 @@ class Stats:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"hits": self.hits, "misses": self.misses, "drifts": self.drifts}
+            return {"hits": self.hits, "misses": self.misses, "drifts": self.drifts,
+                    "el_ok": self.el_ok, "el_fail": self.el_fail}
+
+
+# 실패 정책 ① 에서 안내 뒤 나머지 문장에 보내는 무음. **0 바이트면 안 된다** — 로봇은 첫 청크가 비면
+# "서버가 죽었다" 로 보고 로컬 합성기(say/espeak, 다른 목소리)로 대신 말한다(`tts._open_qwen`).
+SILENCE_S = 0.15
+
+
+@dataclasses.dataclass
+class ElevenLabsLive:
+    """캐시에 없는 문장(관람객 답)을 ElevenLabs 로 — 프록시의 실시간 경로 설정."""
+
+    key: str
+    voices: dict
+    model: str = el.MODEL_LIVE
+    readings: list = dataclasses.field(default_factory=list)
+    language_code: str | None = el.LANGUAGE
+    on_fail: str = "notice"            # notice(같은 목소리 안내 한 번 + 무음) | local(CrispASR 로, 목소리가 바뀐다)
+    notice_window_s: float = 15.0      # 이 시간 안의 연속 실패는 한 번의 끊김으로 본다 — 안내는 한 번만
+    open_timeout_s: float = 15.0
+    base: str | None = None            # 테스트의 가짜 서버
 
 
 class ProxyServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, addr, upstream: str, cache: Cache) -> None:
+    def __init__(self, addr, upstream: str, cache: Cache, el_live: ElevenLabsLive | None = None) -> None:
         super().__init__(addr, Handler)
         u = urllib.parse.urlsplit(upstream)
         self.upstream_host = u.hostname or "127.0.0.1"
@@ -163,6 +211,8 @@ class ProxyServer(ThreadingHTTPServer):
         # 드리프트 경고는 문장마다 한 번 — 공연 내내 같은 줄이 반복되면 진짜 신호가 묻힌다.
         self.drift_warned: set[str] = set()
         self.drift_lock = threading.Lock()
+        self.el = el_live
+        self.el_last_fail = float("-inf")   # 마지막 ElevenLabs 실패 시각(monotonic) — 안내를 한 번만 내려고
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -211,6 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         `proxy` 표지를 싣는다 — `:8099` 가 떠 있는데 표지가 없으면 옛 구성(CrispASR 직결)이다.
         """
         base = {"proxy": "tts-cache", "cache_entries": self.server.cache.count(),
+                "engine": "elevenlabs" if self.server.el else "crispasr",
                 **self.server.stats.snapshot()}
         try:
             conn = self._upstream()
@@ -220,6 +271,12 @@ class Handler(BaseHTTPRequestHandler):
             raw = resp.read()
             conn.close()
         except (OSError, http.client.HTTPException) as exc:
+            if self.server.el:
+                # 합성은 ElevenLabs 가 한다 — 로컬 CrispASR 는 wav 요청·`local` 폴백용이라 없어도 선다.
+                # 외부는 부르지 않는다(헬스는 자주 불린다). 키가 있다는 것만 확인됐다.
+                self._send_json(200, {"status": "ok", "key": el.key_status(self.server.el.key),
+                                      "local": f"down({type(exc).__name__})", **base})
+                return
             self._send_json(503, {"status": "upstream-down", "detail": f"{type(exc).__name__}: {exc}", **base})
             return
         try:
@@ -259,6 +316,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._note_once(text, drift_message(body, baked))
         self.server.stats.add("misses")
         log.info("miss %s %r", body.get("voice"), text[:40])
+        if self.server.el is not None:
+            self._el_speak(body, raw)
+            return
         self._pass("POST", raw, cache_tag="miss")
 
     def _note_once(self, text: str, message: str) -> None:
@@ -271,24 +331,103 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_hit(self, path: pathlib.Path, body: dict) -> None:
         self.server.stats.add("hits")
         log.info("hit %s %r", body.get("voice"), str(body.get("input", ""))[:40])
+        with open(path, "rb") as f:
+            self._serve_pcm(lambda: f.read(CHUNK), tag="hit")
+
+    def _pcm_headers(self, tag: str, engine: str | None = None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "audio/pcm")
         self.send_header("Transfer-Encoding", "chunked")
-        self.send_header("X-TTS-Cache", "hit")
+        self.send_header("X-TTS-Cache", tag)
+        if engine:
+            self.send_header("X-TTS-Engine", engine)
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
+
+    def _serve_pcm(self, read, tag: str, engine: str | None = None) -> None:
+        """PCM 을 청크로 흘린다. **샘플(2바이트) 경계를 맞춰** 보낸다 — 로봇도 맞추지만, 홀수 청크를 받는
+        다른 재생기가 잡음을 내지 않게."""
+        self._pcm_headers(tag, engine)
+        carry = b""
         try:
-            with open(path, "rb") as f:
-                while True:
-                    data = f.read(CHUNK)
-                    if not data:
-                        break
-                    self._write_chunk(data)
+            while True:
+                data = read()
+                if not data:
+                    break
+                data = carry + data
+                cut = len(data) - (len(data) % 2)
+                carry = data[cut:]
+                if cut:
+                    self._write_chunk(data[:cut])
             self._end_chunks()
         except (BrokenPipeError, ConnectionResetError):
             # 로봇이 끼어들기로 끊었다 — 정상이다. 더 쓸 곳이 없을 뿐이다.
             pass
+
+    # ── ElevenLabs(관람객 답) ──────────────────────────────────────
+    def _el_speak(self, body: dict, raw: bytes) -> None:
+        """캐시에 없는 문장을 ElevenLabs 로 합성해 **받는 대로** 흘린다(모아서 보내면 첫 소리가 늦는다)."""
+        cfg = self.server.el
+        try:
+            vid, payload = el.el_request(body, voices=cfg.voices, model=cfg.model, readings=cfg.readings,
+                                         language_code=cfg.language_code)
+        except el.VoiceNotMapped as exc:
+            self._el_failed(body, raw, str(exc))
+            return
+        resp = None
+        for attempt in range(2):
+            try:
+                resp = el.open_stream(vid, payload, cfg.key, timeout=cfg.open_timeout_s, base=cfg.base)
+                break
+            except el.ElevenLabsError as exc:
+                # 409(목소리 첫 사용이 겹침)·429(동시 요청 초과)·5xx 는 한 번만 짧게 다시 — 관람객이 기다린다.
+                if attempt == 0 and exc.status in el._RETRY_STATUS:
+                    time.sleep(0.3)
+                    continue
+                self._el_failed(body, raw, str(exc))
+                return
+        self.server.stats.add("el_ok")
+        read = getattr(resp, "read1", None) or resp.read
+        with resp:
+            try:
+                self._serve_pcm(lambda: read(CHUNK), tag="miss", engine="elevenlabs")
+            except (OSError, http.client.HTTPException) as exc:
+                # 머리를 보낸 뒤 끊겼다 — 받은 데까지는 이미 로봇이 말했다. 되돌릴 수 없으니 남기기만 한다.
+                log.warning("ElevenLabs 스트림이 도중에 끊겼다(%s) — 그 문장은 받은 데까지만 나갔다", type(exc).__name__)
+
+    def _el_failed(self, body: dict, raw: bytes, reason: str) -> None:
+        """실패 정책. notice: 같은 목소리 안내를 끊김 한 번에 한 번 + 나머지는 짧은 무음. local: CrispASR 로."""
+        cfg = self.server.el
+        self.server.stats.add("el_fail")
+        if cfg.on_fail == "local":
+            log.warning("ElevenLabs 실패 — 로컬 TTS(CrispASR)로 넘긴다, 목소리가 바뀐다: %s", reason)
+            self._pass("POST", raw, cache_tag="fallback-local")
+            return
+        now = time.monotonic()
+        with self.server.drift_lock:
+            first = now - self.server.el_last_fail >= cfg.notice_window_s
+            self.server.el_last_fail = now
+        if first:
+            log.warning("ElevenLabs 실패 — 같은 목소리 안내를 한 번 내고 이 답은 넘긴다: %s", reason)
+            clip = self._notice_clip(body)
+            if clip is not None:
+                with open(clip, "rb") as f:
+                    self._serve_pcm(lambda: f.read(CHUNK), tag="notice", engine="elevenlabs")
+                return
+            log.warning("연결 불안정 안내가 캐시에 없다 — 무음으로 넘긴다. TTS_ENGINE=elevenlabs ./reachy.sh bake")
+        silence = [b"\x00\x00" * int(el.PCM_RATE * SILENCE_S)]
+        self._serve_pcm(lambda: silence.pop() if silence else b"", tag="skip", engine="elevenlabs")
+
+    def _notice_clip(self, body: dict) -> pathlib.Path | None:
+        """실패한 요청과 **같은 목소리**로 구운 안내. 어조가 달라도 목소리만 맞으면 쓴다."""
+        voice = body.get("voice")
+        for e in self.server.cache.baked_for(el.NOTICE_TEXT):
+            if e.get("voice") == voice:
+                p = self.server.cache.get(e.get("key", ""))
+                if p is not None:
+                    return p
+        return None
 
     # ── 통과 ──────────────────────────────────────────────────────
     def _pass(self, method: str, raw: bytes | None, cache_tag: str | None = None) -> None:
@@ -334,11 +473,36 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--upstream", default="http://127.0.0.1:8098")
     ap.add_argument("--cache-dir", default=None)
+    ap.add_argument("--engine", default=None, choices=el.ENGINES,
+                    help="캐시에 없는 문장을 누가 합성하나(기본 TTS_ENGINE, 없으면 crispasr)")
     args = ap.parse_args()
-    cache = Cache(pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir())
-    srv = ProxyServer((args.host, args.port), args.upstream, cache)
-    log.info("TTS 캐시 프록시 %s:%d → %s · 캐시 %s(%d개)",
-             args.host, args.port, args.upstream, cache.root, cache.count())
+    engine = args.engine or el.engine_from_env()
+    live = None
+    if engine == "elevenlabs":
+        key = el.load_api_key()
+        if not key:
+            # 실패는 소리 내서 — 키 없이 조용히 Qwen 으로 돌면 시연장에서 "목소리가 왜 바뀌었나" 를 못 찾는다.
+            log.warning("TTS_ENGINE=elevenlabs 인데 ElevenLabs 키가 없다(ELEVENLABS_API_KEY 또는 저장소 루트 .env) "
+                        "— 로컬 CrispASR 로 돈다")
+            engine = "crispasr"
+        else:
+            on_fail = (os.environ.get("TTS_EL_ON_FAIL") or "notice").strip().lower()
+            if on_fail not in ("notice", "local"):
+                raise SystemExit(f"TTS_EL_ON_FAIL 은 notice/local 중 하나다: {on_fail!r}")
+            live = ElevenLabsLive(key=key, voices=el.voice_map(),
+                                  model=os.environ.get("TTS_EL_MODEL_LIVE") or el.MODEL_LIVE,
+                                  readings=el.load_readings(), on_fail=on_fail)
+    cache = Cache(pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir(engine))
+    baked_by = cache.engine()
+    if baked_by and baked_by != engine:
+        log.warning("캐시 폴더는 %s 로 구웠는데 엔진은 %s 다 — 구운 대사와 관람객 답의 목소리가 다르다. "
+                    "TTS_CACHE_DIR 를 엔진에 맞춘다(%s)", baked_by, engine, default_cache_dir(engine))
+    srv = ProxyServer((args.host, args.port), args.upstream, cache, live)
+    log.info("TTS 캐시 프록시 %s:%d → %s · 엔진 %s · 캐시 %s(%d개, 구운 엔진 %s)",
+             args.host, args.port, args.upstream, engine, cache.root, cache.count(), baked_by or "없음")
+    if live:
+        log.info("ElevenLabs 키 %s · 목소리 %s · 모델 %s · 읽기 표기 %d개 · 실패 정책 %s",
+                 el.key_status(live.key), live.voices, live.model, len(live.readings), live.on_fail)
     srv.serve_forever()
 
 

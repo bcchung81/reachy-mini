@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>목소리 오디션</title>
+<!-- scripts/el_audition.py 가 /*__DATA__*/ 자리에 후보·문장·소리 목록을 넣는다. 외부 리소스 없음. -->
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1d1f23; --muted: #6a6f78; --line: #e2e0d8;
+  --accent: #1f6feb; --accent-ink: #ffffff; --chip: #eef1f6; --chip-ink: #2a3140;
+  --play: #e8f0ff; --warn: #a15c00; --warn-bg: #fff4e0; --mc: #0b7a5b; --docent: #6b3fb8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171b; --panel: #1d2026; --ink: #e8e9ec; --muted: #9aa0aa; --line: #2e323a;
+    --accent: #5b9bff; --accent-ink: #0b1220; --chip: #262a33; --chip-ink: #d5dae3;
+    --play: #1c2a44; --warn: #ffb44d; --warn-bg: #3a2a10; --mc: #3fcf9f; --docent: #b693ff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; background: transparent; color: var(--ink); padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px;
+  padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.now { color: var(--muted); font-size: 13px; min-height: 1.5em; }
+.wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; min-width: 980px; }
+th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: middle; }
+thead th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel); position: sticky; top: 0; }
+thead th .colplay { display: block; margin-top: 4px; }
+tbody th { position: sticky; left: 0; background: var(--panel); min-width: 230px; font-weight: 400; }
+.group td { background: var(--bg); font-weight: 700; font-size: 13px; padding: 10px; }
+.vname { font-weight: 700; }
+.vdesc { color: var(--muted); font-size: 12px; }
+.vmeta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.warn { color: var(--warn); background: var(--warn-bg); border-radius: 4px; padding: 0 4px; }
+.picks { display: flex; gap: 10px; margin-top: 6px; font-size: 12px; }
+.picks label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.picks input { margin: 0; }
+.picks .mc { color: var(--mc); } .picks .docent { color: var(--docent); }
+.cell { display: flex; gap: 4px; }
+.chip { border: 1px solid transparent; background: var(--chip); color: var(--chip-ink); border-radius: 6px;
+  padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.chip:hover { border-color: var(--accent); }
+.chip.playing { background: var(--accent); color: var(--accent-ink); }
+.chip[disabled] { opacity: .35; cursor: not-allowed; }
+.legend { margin-top: 20px; display: grid; gap: 6px; }
+.legend div { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+.legend b { display: inline-block; min-width: 170px; color: var(--muted); font-weight: 600; font-size: 12px; }
+.result { margin-top: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.result h2 { font-size: 15px; margin: 0 0 8px; }
+.result textarea { width: 100%; min-height: 56px; background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px; font: inherit; font-size: 13px; }
+.result output { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 13px; background: var(--bg);
+  border-radius: 8px; padding: 8px 10px; margin: 8px 0; white-space: pre-wrap; word-break: break-all; }
+.tip { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>목소리 오디션</h1>
+  <p class="sub" id="sub"></p>
+  <p class="tip">칸의 <b>v4</b>는 고정 대사 굽기용, <b>Turbo</b>는 관람객 즉석 답용입니다. 열 머리의 ▶는 그 문장을 후보마다 이어 듣고, 이름 옆의 ▶는 그 후보의 문장을 모두 이어 듣습니다. 마지막 두세 후보는 로봇 스피커로도 들어 보세요.</p>
+  <div class="bar">
+    <span class="now" style="color:var(--ink)">이어 듣기 모델</span>
+    <div class="seg" id="modelSeg"></div>
+    <button class="btn" id="stop">■ 멈춤</button>
+    <span class="now" id="now"></span>
+  </div>
+  <div class="wrap"><table id="grid"></table></div>
+  <div class="legend" id="legend"></div>
+  <section class="result">
+    <h2>선택 결과</h2>
+    <div class="bar" style="margin:0 0 8px">
+      <span class="now" style="color:var(--ink)">고정 대사 굽기 모델</span>
+      <div class="seg" id="bakeSeg"></div>
+    </div>
+    <textarea id="memo" placeholder="메모 — 예: 사회자는 숫자 읽기가 또렷한 쪽, 도슨트 Turbo는 끝음이 뭉개짐"></textarea>
+    <output id="out"></output>
+    <button class="btn" id="copy">결과 복사</button> <span class="now" id="copied"></span>
+  </section>
+</main>
+<script>
+const D = /*__DATA__*/null;
+const LABEL = { eleven_v4: "v4", eleven_v4_turbo: "Turbo" };
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, kids = []) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "text") n.textContent = v; else if (k === "cls") n.className = v; else n.setAttribute(k, v);
+  }
+  for (const k of kids) n.append(k);
+  return n;
+};
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("audition:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("audition:" + k, JSON.stringify(v)); } catch {} },
+};
+const clipOf = (v, s, m) => D.clips.find((c) => c.voice === v && c.s === s && c.model === m);
+const chips = new Map();          // 파일 → 버튼(재생 표시)
+const audio = new Audio();
+let queue = [], current = null;
+
+function mark(file, on) { const b = chips.get(file); if (b) b.classList.toggle("playing", on); }
+function describe(c) {
+  const v = D.voices.find((x) => x.key === c.voice), s = D.sentences[c.s];
+  return `${v.name} · ${s.label} · ${LABEL[c.model] || c.model} · ${c.sec.toFixed(1)}초`;
+}
+function playNext() {
+  if (current) mark(current.file, false);
+  current = queue.shift() || null;
+  if (!current) { $("now").textContent = ""; return; }
+  mark(current.file, true);
+  $("now").textContent = "▶ " + describe(current);
+  audio.src = current.file;
+  audio.play().catch(() => { $("now").textContent = "재생하지 못했다 — 파일이 같은 폴더에 있는지 확인"; });
+}
+function play(list) { audio.pause(); if (current) mark(current.file, false); current = null; queue = list.filter(Boolean); playNext(); }
+audio.addEventListener("ended", () => setTimeout(playNext, 350));
+$("stop").onclick = () => play([]);
+
+let seqModel = store.get("seqModel", D.models[0]);
+let bakeModel = store.get("bakeModel", D.models[0]);
+function seg(root, value, onPick) {
+  root.replaceChildren(...D.models.map((m) => {
+    const b = el("button", { text: LABEL[m] || m, "aria-pressed": String(m === value) });
+    b.onclick = () => { for (const x of root.children) x.setAttribute("aria-pressed", "false"); b.setAttribute("aria-pressed", "true"); onPick(m); };
+    return b;
+  }));
+}
+seg($("modelSeg"), seqModel, (m) => { seqModel = m; store.set("seqModel", m); });
+seg($("bakeSeg"), bakeModel, (m) => { bakeModel = m; store.set("bakeModel", m); render(); });
+
+const made = (D.made || "").replace("T", " ");
+$("sub").textContent = `후보 ${D.voices.length} · 문장 ${D.sentences.length} · 모델 ${D.models.length} · 소리 ${D.clips.length}개 · ${made} 생성`;
+
+// 초당 글자 수 — 감독이 분량을 어림하는 값(CHARS_PER_SEC = 4.0)과 견줘 볼 수 있게.
+function cps(v, m) {
+  let ch = 0, sec = 0;
+  D.sentences.forEach((s, i) => { const c = clipOf(v, i, m); if (c) { ch += s.text.length; sec += c.sec; } });
+  return sec ? (ch / sec).toFixed(1) : "–";
+}
+
+const picks = store.get("picks", { mc: null, docent: null });
+const table = $("grid");
+const head = el("tr", {}, [el("th", { text: "후보" })]);
+D.sentences.forEach((s, i) => {
+  const b = el("button", { cls: "chip colplay", text: "▶ 후보마다", title: s.text });
+  b.onclick = () => play(D.voices.map((v) => clipOf(v.key, i, seqModel)));
+  head.append(el("th", { title: s.text }, [document.createTextNode(s.label), b]));
+});
+table.append(el("thead", {}, [head]));
+const body = el("tbody");
+let group = null;
+for (const v of D.voices) {
+  if (v.group !== group) {
+    group = v.group;
+    body.append(el("tr", { cls: "group" }, [el("td", { colspan: String(D.sentences.length + 1), text: group })]));
+  }
+  const rowPlay = el("button", { cls: "chip", text: "▶ 전부", title: "이 후보의 문장을 이어 듣기" });
+  rowPlay.onclick = () => play(D.sentences.map((_, i) => clipOf(v.key, i, seqModel)));
+  const meta = el("div", { cls: "vmeta" });
+  meta.append(document.createTextNode("예고 기간 "));
+  meta.append(v.notice === "730일" ? document.createTextNode(v.notice) : el("span", { cls: "warn", text: v.notice }));
+  meta.append(document.createTextNode(" · 초당 " + D.models.map((m) => `${LABEL[m] || m} ${cps(v.key, m)}자`).join(" / ")));
+  const mk = (role, cls, text) => {
+    const r = el("input", { type: "radio", name: role, value: v.key });
+    if (picks[role] === v.key) r.checked = true;
+    r.onchange = () => { picks[role] = v.key; store.set("picks", picks); render(); };
+    return el("label", { cls }, [r, document.createTextNode(text)]);
+  };
+  const th = el("th", {}, [
+    el("div", {}, [el("span", { cls: "vname", text: v.name + " " }), rowPlay]),
+    el("div", { cls: "vdesc", text: v.desc }),
+    meta,
+    el("div", { cls: "picks" }, [mk("mc", "mc", "사회자로"), mk("docent", "docent", "도슨트로")]),
+  ]);
+  const tr = el("tr", {}, [th]);
+  D.sentences.forEach((s, i) => {
+    const cell = el("div", { cls: "cell" });
+    for (const m of D.models) {
+      const c = clipOf(v.key, i, m);
+      const b = el("button", { cls: "chip", text: LABEL[m] || m });
+      if (c) { b.title = `${c.sec.toFixed(1)}초`; b.onclick = () => play([c]); chips.set(c.file, b); }
+      else { b.disabled = true; b.title = "받지 못한 소리"; }
+      cell.append(b);
+    }
+    tr.append(el("td", {}, [cell]));
+  });
+  body.append(tr);
+}
+table.append(body);
+
+D.sentences.forEach((s) => $("legend").append(el("div", {}, [el("b", { text: s.label }), document.createTextNode(s.text)])));
+
+const memo = $("memo");
+memo.value = store.get("memo", "");
+memo.oninput = () => { store.set("memo", memo.value); render(); };
+function render() {
+  const name = (k) => { const v = D.voices.find((x) => x.key === k); return v ? `${v.name}(${v.id})` : "미정"; };
+  const line = `사회자=${name(picks.mc)} · 도슨트=${name(picks.docent)} · 고정 대사 모델=${bakeModel}` +
+    (memo.value.trim() ? ` · 메모: ${memo.value.trim()}` : "");
+  $("out").textContent = line;
+  return line;
+}
+render();
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(render()); $("copied").textContent = "복사했습니다 — 대화창에 붙여 넣어 주세요"; }
+  catch { $("copied").textContent = "복사가 막혔습니다 — 위 줄을 직접 선택해 복사해 주세요"; }
+};
+</script>
+</body>
+</html>

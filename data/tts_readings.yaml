@@ -1,0 +1,13 @@
+# ElevenLabs 읽기 표기 사전 — 원문 낱말 → 소리 내 읽는 표기.
+#
+# 쓰는 곳: tts_elevenlabs.el_request(굽기·캐시 프록시의 관람객 답). 합성 직전에만 바꾼다 —
+# 대본(data/cues.yaml)·캐시 키·검증기·교육자료 카드는 원문 그대로다. 그래서 발음을 고치려고 대본을 고치지 않는다.
+#
+# 넣는 법: 재청취에서 틀리게 읽은 낱말만 넣고, 그 낱말이 든 문장만 다시 굽는다.
+#   TTS_ENGINE=elevenlabs ./reachy.sh bake --force --confirm-retake   ← 전부 다시 굽는다(크레딧 주의)
+# 긴 낱말부터 바꾼다(겹치는 짧은 낱말이 먼저 바뀌어 긴 낱말이 깨지지 않게).
+#
+# 예:
+#   GMDSS: 지엠디에스에스
+#   VLF: 브이엘에프
+readings: {}
