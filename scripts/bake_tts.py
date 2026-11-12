@@ -62,6 +62,7 @@ from tts_cache_proxy import INDEX_NAME, cache_key, default_cache_dir, is_cacheab
 # 부른 도슨트가 사회자 목소리로 구워진다.
 _ROLE_ENV = ("TTS_QWEN_VOICE", "TTS_QWEN_SPEED", "TTS_QWEN_INSTRUCT")
 SYNTH_TIMEOUT_S = 120.0
+PREV_DIR = ".prev"   # 다시 구울 때 앞 테이크를 한 세대 남기는 곳(캐시 폴더 안, 프록시·빌더는 최상위 *.pcm 만 본다)
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,8 @@ def synth_el(body: dict, key: str, *, voices: dict, model: str, readings: list, 
     """ElevenLabs 로 한 문장을 끝까지 받는다. 시드는 캐시 키에서 — 다시 구워도 가능한 한 같은 테이크."""
     vid, payload = el.el_request(body, voices=voices, model=model, readings=readings,
                                  language_code=el.LANGUAGE, seed=el.seed_for(cache_key(body)))
-    return el.synth(vid, payload, key, base=base)
+    # 여유 음량 — 프록시가 관람객 답에 거는 것과 같은 값(`el.GAIN_DB`). 색인의 `gain_db` 가 그 기록이다.
+    return el.apply_gain(el.synth(vid, payload, key, base=base))
 
 
 def use_role(role: str) -> None:
@@ -176,6 +178,26 @@ def plan(lines: list[Line], level: str | None = None) -> list[dict]:
     return list(by_key.values())
 
 
+def index_gain(cache_dir: pathlib.Path) -> float | None:
+    """폴더의 소리에 걸린 이득(dB). 색인에 없으면 None(옛 폴더·crispasr)."""
+    try:
+        g = json.loads((cache_dir / INDEX_NAME).read_text(encoding="utf-8")).get("gain_db")
+    except (OSError, ValueError):
+        return None
+    return None if g is None else float(g)
+
+
+def regain_folder(cache_dir: pathlib.Path, delta_db: float) -> int:
+    """폴더 최상위의 소리 파일에 이득을 더 건다(다시 합성하지 않는다). 파일마다 원자적으로 바꾼다."""
+    n = 0
+    for p in sorted(cache_dir.glob("*.pcm")):
+        part = p.with_name(f".{p.name}.part")
+        part.write_bytes(el.apply_gain(p.read_bytes(), delta_db))
+        os.replace(part, p)
+        n += 1
+    return n
+
+
 def write_index(cache_dir: pathlib.Path, entries: list[dict], engine: str = "crispasr") -> None:
     """프록시가 드리프트를 잡는 색인 — **지금 대본의 고정 대사 전부**(구웠든 안 구웠든).
 
@@ -184,6 +206,8 @@ def write_index(cache_dir: pathlib.Path, entries: list[dict], engine: str = "cri
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     data = {"engine": engine, "entries": [{k: v for k, v in e.items() if k != "body"} for e in entries]}
+    if engine == "elevenlabs":
+        data["gain_db"] = el.GAIN_DB      # 이 폴더의 소리에 건 여유 음량 — 다른 값으로 이어 구우면 음량이 섞인다
     tmp = cache_dir / (INDEX_NAME + ".part")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     os.replace(tmp, cache_dir / INDEX_NAME)
@@ -219,6 +243,12 @@ def main() -> int:
     ap.add_argument("--engine", default=None, choices=el.ENGINES, help="기본 TTS_ENGINE, 없으면 crispasr")
     ap.add_argument("--confirm-retake", action="store_true",
                     help="elevenlabs 에서 --force 로 검수 끝난 소리를 새 테이크로 덮는 것을 확인한다")
+    ap.add_argument("--retake", action="append", default=[], metavar="낱말",
+                    help="이 낱말이 든 문장만 다시 굽는다(여러 번 줄 수 있다). 앞 테이크는 .prev/ 에 남긴다")
+    ap.add_argument("--retake-readings", action="store_true",
+                    help="읽기 표기 사전(data/tts_readings.yaml)의 낱말이 든 문장을 다시 굽는다 — 사전을 고친 뒤")
+    ap.add_argument("--regain", action="store_true",
+                    help="elevenlabs 폴더의 소리를 지금 이득(TTS_EL_GAIN_DB)에 맞춘다 — 합성 없이 음량만")
     args = ap.parse_args()
 
     engine = args.engine or el.engine_from_env()
@@ -237,6 +267,15 @@ def main() -> int:
     entries = [e for e in entries if is_cacheable(e["body"])]
     present = [e for e in entries if (cache_dir / f"{e['key']}.pcm").is_file()]
     missing = [e for e in entries if e not in present] if not args.force else list(entries)
+    # **골라 다시 굽기.** 읽기 표기는 캐시 키에 안 들어가므로(키는 로봇 본문) 사전을 고쳐도 굽기는 "이미 있다" 로
+    # 건너뛴다 — 그래서 고친 낱말이 든 문장을 이름으로 집어 다시 굽는다. 전부 다시 굽는 --force 보다 크레딧이 적고,
+    # 검수 끝난 나머지 테이크를 건드리지 않는다(ElevenLabs 는 다시 구우면 테이크가 바뀐다).
+    terms = list(args.retake) + ([k for k, _ in el.load_readings()] if args.retake_readings else [])
+    retakes = [e for e in entries if any(t and t in e["text"] for t in terms)]
+    if terms and not retakes:
+        print(f"✗ 다시 구울 문장이 없다 — 이 낱말이 든 고정 대사가 없다: {terms}")
+        return 1
+    missing += [e for e in retakes if e not in missing]
 
     by_group: dict[str, list[int]] = {}
     for e in entries:
@@ -251,11 +290,26 @@ def main() -> int:
     if skipped:
         print(f"   ⚠ 스트리밍 PCM 이 아닌 요청 {len(skipped)}개는 캐시 대상이 아니다")
 
+    # 이득이 다른 소리가 한 폴더에 섞이면 문장마다 음량이 튄다. 폴더의 이득(색인 `gain_db`, 없으면 0)과 지금 설정을 맞춘다.
+    have_gain = (index_gain(cache_dir) or 0.0) if engine == "elevenlabs" and present else el.GAIN_DB
+    gain_off = abs(have_gain - el.GAIN_DB) > 1e-6
     if args.check:
         if len(present) < len(entries):
             print(f"   ⚠ {len(entries) - len(present)}문장이 캐시에 없다 — 그 대사는 실시간 합성으로 나간다."
                   " ./reachy.sh bake 로 굽는다")
+        if gain_off:
+            print(f"   ⚠ 이 폴더의 소리는 이득 {have_gain:+.1f} dB, 지금 설정은 {el.GAIN_DB:+.1f} dB — bake --regain 으로 맞춘다")
         return 0
+    if gain_off:
+        if not args.regain:
+            print(f"✗ 이 폴더의 소리는 이득 {have_gain:+.1f} dB 로 구웠는데 지금 설정은 {el.GAIN_DB:+.1f} dB 다 — 섞으면 "
+                  "문장마다 음량이 달라진다. --regain 으로 폴더 전체를 지금 값에 맞춘다(합성 없음)")
+            return 2
+        n = regain_folder(cache_dir, el.GAIN_DB - have_gain)
+        write_index(cache_dir, entries, engine)
+        print(f"   이득 {have_gain:+.1f} → {el.GAIN_DB:+.1f} dB 로 {n}개 파일을 맞췄다(합성 없음)")
+        if not missing:
+            return 0          # 음량만 맞추면 끝 — 키·크레딧이 필요 없다
 
     key = None
     el_cfg: dict = {}
@@ -298,6 +352,8 @@ def main() -> int:
     if not todo:
         print("   구울 것이 없다")
         return 0
+    if retakes:
+        print(f"   다시 굽기 {len(retakes)}문장({', '.join(terms)}) — 앞 테이크는 {cache_dir / PREV_DIR} 에 남긴다")
     print(f"   {len(todo)}문장을 굽는다({'ElevenLabs' if key else f'업스트림 {args.upstream}'})")
     t0 = time.time()
     audio_s = 0.0
@@ -315,7 +371,12 @@ def main() -> int:
             continue
         part = cache_dir / f".{e['key']}.pcm.part"
         part.write_bytes(data)
-        os.replace(part, cache_dir / f"{e['key']}.pcm")   # 반쯤 쓴 파일이 캐시로 보이지 않게
+        final = cache_dir / f"{e['key']}.pcm"
+        if final.is_file():
+            # 앞 테이크를 한 세대 남긴다 — 새 테이크가 더 나쁘면 되돌린다(`.prev/` 는 프록시·빌더가 안 본다).
+            (cache_dir / PREV_DIR).mkdir(exist_ok=True)
+            os.replace(final, cache_dir / PREV_DIR / final.name)
+        os.replace(part, final)   # 반쯤 쓴 파일이 캐시로 보이지 않게
         secs = len(data) / 2 / robot_tts.QWEN_PCM_RATE
         audio_s += secs
         took = time.time() - t1

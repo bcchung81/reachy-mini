@@ -345,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
-    def _serve_pcm(self, read, tag: str, engine: str | None = None) -> None:
+    def _serve_pcm(self, read, tag: str, engine: str | None = None, transform=None) -> None:
         """PCM 을 청크로 흘린다. **샘플(2바이트) 경계를 맞춰** 보낸다 — 로봇도 맞추지만, 홀수 청크를 받는
         다른 재생기가 잡음을 내지 않게."""
         self._pcm_headers(tag, engine)
@@ -359,7 +359,7 @@ class Handler(BaseHTTPRequestHandler):
                 cut = len(data) - (len(data) % 2)
                 carry = data[cut:]
                 if cut:
-                    self._write_chunk(data[:cut])
+                    self._write_chunk(transform(data[:cut]) if transform else data[:cut])
             self._end_chunks()
         except (BrokenPipeError, ConnectionResetError):
             # 로봇이 끼어들기로 끊었다 — 정상이다. 더 쓸 곳이 없을 뿐이다.
@@ -391,7 +391,8 @@ class Handler(BaseHTTPRequestHandler):
         read = getattr(resp, "read1", None) or resp.read
         with resp:
             try:
-                self._serve_pcm(lambda: read(CHUNK), tag="miss", engine="elevenlabs")
+                # 굽기와 같은 여유 음량 — 고정 대사와 관람객 답의 음량이 같아야 하고, 실기 16 kHz 변환에서 안 잘린다.
+                self._serve_pcm(lambda: read(CHUNK), tag="miss", engine="elevenlabs", transform=el.apply_gain)
             except (OSError, http.client.HTTPException) as exc:
                 # 머리를 보낸 뒤 끊겼다 — 받은 데까지는 이미 로봇이 말했다. 되돌릴 수 없으니 남기기만 한다.
                 log.warning("ElevenLabs 스트림이 도중에 끊겼다(%s) — 그 문장은 받은 데까지만 나갔다", type(exc).__name__)
@@ -494,6 +495,14 @@ def main() -> None:
                                   readings=el.load_readings(), on_fail=on_fail)
     cache = Cache(pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir(engine))
     baked_by = cache.engine()
+    if live:
+        try:
+            g = json.loads((cache.root / INDEX_NAME).read_text(encoding="utf-8")).get("gain_db")
+        except (OSError, ValueError):
+            g = None
+        if cache.count() and (g is None or abs(float(g) - el.GAIN_DB) > 1e-6):
+            log.warning("구운 대사의 이득(%s dB)과 관람객 답의 이득(%+.1f dB)이 다르다 — 음량이 섞인다. "
+                        "TTS_ENGINE=elevenlabs ./reachy.sh bake --regain", g, el.GAIN_DB)
     if baked_by and baked_by != engine:
         log.warning("캐시 폴더는 %s 로 구웠는데 엔진은 %s 다 — 구운 대사와 관람객 답의 목소리가 다르다. "
                     "TTS_CACHE_DIR 를 엔진에 맞춘다(%s)", baked_by, engine, default_cache_dir(engine))

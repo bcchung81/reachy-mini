@@ -185,3 +185,77 @@ def test_EL_시드는_캐시_키에서_나오고_번역에_실린다(monkeypatch
     bake.synth_el(body, "sk_test", voices=el.DEFAULT_VOICES, model="eleven_v4_turbo", readings=[])
     assert seen["vid"] == el.DEFAULT_VOICES["sohee"] and seen["seed"] == el.seed_for(cache_key(body))
     assert seen["language_code"] == "ko"
+
+
+# ── 골라 다시 굽기(--retake, 2026-11-12) ───────────────────────────
+@pytest.fixture
+def two_lines(monkeypatch, el_bake):
+    monkeypatch.setattr(bake, "fixed_lines", lambda cues=None: [
+        bake.Line("mc", "초장파는 길어요.", "a", None, "설명"), bake.Line("mc", "밀리미터파는 짧아요.", "b", None, "설명")])
+    return el_bake
+
+
+def _bake(tmp_path, monkeypatch, *extra):
+    monkeypatch.setattr(sys, "argv", ["bake_tts.py", "--engine", "elevenlabs", "--cache-dir", str(tmp_path), *extra])
+    return bake.main()
+
+
+def test_다시_굽기는_낱말이_든_문장만_굽고_앞_테이크를_남긴다(tmp_path, monkeypatch, two_lines):
+    assert _bake(tmp_path, monkeypatch) == 0
+    first = {p.name: p.read_bytes() for p in tmp_path.glob("*.pcm")}
+    two_lines.clear()
+    monkeypatch.setattr(bake, "synth_el", lambda body, key, **kw: two_lines.append(body["input"]) or b"\x09\x00" * 50)
+    assert _bake(tmp_path, monkeypatch, "--retake", "초장파") == 0
+    assert two_lines == ["초장파는 길어요."], "고른 문장만 다시 구워야 한다"
+    prev = list((tmp_path / bake.PREV_DIR).glob("*.pcm"))
+    assert len(prev) == 1 and prev[0].read_bytes() == first[prev[0].name]       # 앞 테이크는 그대로 남는다
+    assert (tmp_path / prev[0].name).read_bytes() == b"\x09\x00" * 50
+    assert len(list(tmp_path.glob("*.pcm"))) == len(first)                      # 최상위에는 문장 수 그대로
+
+
+def test_다시_굽기는_읽기_표기_사전의_낱말로_고를_수_있다(tmp_path, monkeypatch, two_lines):
+    assert _bake(tmp_path, monkeypatch) == 0
+    two_lines.clear()
+    monkeypatch.setattr(el, "load_readings", lambda *a, **k: [("밀리미터파", "밀리미터 파")])
+    assert _bake(tmp_path, monkeypatch, "--retake-readings") == 0
+    assert [t for t, _, _ in two_lines] == ["밀리미터파는 짧아요."]
+
+
+def test_다시_구울_문장이_없으면_크게_실패한다(tmp_path, monkeypatch, two_lines):
+    assert _bake(tmp_path, monkeypatch, "--retake", "없는낱말") == 1
+    assert two_lines == []
+
+
+def test_검수의_테이크_표지는_소리가_바뀌면_바뀐다():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import tts_review
+    assert tts_review.take_id(b"\x01\x00") != tts_review.take_id(b"\x02\x00")
+    assert tts_review.take_id(b"\x01\x00") == tts_review.take_id(b"\x01\x00")
+
+
+# ── 이득(여유 음량) — 섞어 굽지 않고, 합성 없이 맞춘다(2026-11-12) ──
+def test_이득이_다른_폴더에는_이어_굽지_않고_regain_으로_음량만_맞춘다(tmp_path, monkeypatch, el_bake):
+    import array
+    loud = array.array("h", [20000, -20000] * 50).tobytes()
+    assert _bake(tmp_path, monkeypatch) == 0
+    idx = json.loads((tmp_path / INDEX_NAME).read_text())
+    idx.pop("gain_db")                                     # 이득을 걸기 전에 구운 폴더(2026-11-12 첫 굽기)
+    (tmp_path / INDEX_NAME).write_text(json.dumps(idx, ensure_ascii=False))
+    for p in tmp_path.glob("*.pcm"):
+        p.write_bytes(loud)
+    el_bake.clear()
+    assert _bake(tmp_path, monkeypatch) == 2, "이득이 다른 소리를 섞으면 안 된다"
+    assert _bake(tmp_path, monkeypatch, "--regain") == 0
+    assert el_bake == [], "음량만 맞춘다 — 합성하지 않는다"
+    assert json.loads((tmp_path / INDEX_NAME).read_text())["gain_db"] == el.GAIN_DB
+    want = el.apply_gain(loud, el.GAIN_DB)
+    assert all(p.read_bytes() == want for p in tmp_path.glob("*.pcm"))
+    assert _bake(tmp_path, monkeypatch) == 0                # 맞춘 뒤에는 그대로 이어 굽는다
+
+
+def test_ElevenLabs_굽기는_여유_음량을_건다(monkeypatch):
+    import array
+    monkeypatch.setattr(el, "synth", lambda vid, payload, key, base=None: array.array("h", [32767] * 4).tobytes())
+    body = {"input": "안녕하세요.", "voice": "sohee", "speed": 1.13, "stream": True, "response_format": "pcm"}
+    out = array.array("h", bake.synth_el(body, "sk_test", voices=el.DEFAULT_VOICES, model="eleven_v4_turbo", readings=[]))
+    assert max(out) < 32767 * 10 ** (-1 / 20) + 1

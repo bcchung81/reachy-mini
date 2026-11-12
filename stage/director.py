@@ -7,6 +7,7 @@ LLM 호출을 여기서 독점한다 — 사회자와 도슨트가 **하나의 �
 말이 이어지기 때문이다. TTS 는 로봇에 남는다(목소리가 달라야 한다).
 """
 
+import os
 import threading
 import time
 from typing import Callable, NamedTuple
@@ -39,6 +40,8 @@ from stage.retrieval import CueIndex
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
 # 타임아웃은 **일찍 터지면 안 되므로** 가장 느린 쪽보다 더 보수적으로 잡는다.
+# ElevenLabs(2026-11-12, 530문장 6.62자/초)는 더 빠르다 — 이 값을 올리지 않는다(여유가 늘었을 뿐이다).
+# **타임아웃 전용이다.** 반응 시점은 엔진별 보통 속도(`TYPICAL_CHARS_PER_SEC`)로 따로 어림한다.
 CHARS_PER_SEC = 4.0
 
 # **여유분은 합성 지연을 덮는 몫이다 — 재생 길이가 아니다.**
@@ -95,11 +98,31 @@ QUESTION_WAIT_MIN_S = 3
 QUESTION_WAIT_MAX_S = 60
 _QUESTION_WAIT_OFF = ("끄기", "off", "0", "없음")
 
-# 듣는 쪽 반응(`react`)을 상대 발화의 어디쯤에서 낼지 — 추정 길이(`len/CHARS_PER_SEC`)
-# 에 대한 비율. 말이 시작되자마자 놀라면 내용을 듣기 전에 반응하는 꼴이고, 끝에 붙이면
-# 다음 대사와 겹친다. `CHARS_PER_SEC` 는 보수적으로 느린 값이라(실제 5~6자/초) 0.4 가
-# 실제 발화의 대략 절반쯤에 떨어진다(추정 — 시뮬에서 보고 조정한다).
-REACT_AT_FRACTION = 0.4
+# 듣는 쪽 반응(`react`)을 상대 발화의 어디쯤에서 낼지 — **보통 말 속도로 어림한 길이**에 대한 비율.
+# 말이 시작되자마자 놀라면 내용을 듣기 전에 반응하는 꼴이고, 끝에 붙이면 다음 대사와 겹친다.
+#
+# ~~`CHARS_PER_SEC`(4.0) × 0.4~~ — 2026-11-12 에 나눴다. 타임아웃용 `CHARS_PER_SEC` 는 일찍 터지면 안 돼서
+# 일부러 느린 값이고, 반응은 실제 발화의 가운데를 노려야 해서 **보통** 값이 맞다. 한 값으로 두 일을 하면
+# 엔진(목소리)이 바뀔 때 반응만 어긋난다: ElevenLabs 는 Qwen 보다 빨라 4.0 × 0.4 가 실제 발화의 66% 지점이다.
+#
+# 보통 말 속도(초당 글자, 앞뒤 무음 포함)는 PC 의 TTS 엔진(`TTS_ENGINE` — `reachy.sh` 와 같은 변수)을 따른다.
+# - crispasr(Qwen3-TTS 1.7B, 사회자 1.27·도슨트 1.13배): 실제 5~6자/초. **5.0 은 예전 시점(len × 0.1초)과
+#   똑같이 떨어지도록 고른 값이다** — 기본 구성의 동작은 바뀌지 않는다.
+# - elevenlabs(사회자 Juan·도슨트 Yooni, eleven_v4_turbo): 고정 대사 530문장 실측 6.62자/초(사회자 6.86 ·
+#   도슨트 6.58, 2026-11-12) — 0.5 지점이 실제 발화의 가운데다.
+TYPICAL_CHARS_PER_SEC = {"crispasr": 5.0, "elevenlabs": 6.6}
+REACT_AT_FRACTION = 0.5
+
+
+def typical_chars_per_sec(env=None) -> tuple[float, str | None]:
+    """(보통 말 속도, 경고). 모르는 엔진 이름이면 crispasr 값으로 — 조용히 넘기지 않고 경고를 돌려준다."""
+    env = os.environ if env is None else env
+    engine = (env.get("TTS_ENGINE") or "crispasr").strip().lower()
+    if engine in TYPICAL_CHARS_PER_SEC:
+        return TYPICAL_CHARS_PER_SEC[engine], None
+    return TYPICAL_CHARS_PER_SEC["crispasr"], (
+        f"TTS_ENGINE={engine!r} 를 모른다 — 반응 시점을 crispasr 말 속도로 어림한다"
+        f"({'/'.join(TYPICAL_CHARS_PER_SEC)} 중 하나)")
 
 # 무대 연출에 필요한 로봇 앱 능력(설계 §12.5). hello 의 `caps` 에 없으면 감독은 그
 # 기능을 보내지 않고 접속 때 한 번 알린다 — 재배포가 반쯤만 된 상태가 로그에 보여야 한다.
@@ -245,6 +268,10 @@ class Director:
         self._now = now
         self._expect_units = expect_units or {}
         self._warn = warn
+        # 반응 시점용 보통 말 속도 — 기동 때 한 번 정한다(공연 중에 엔진이 바뀌지 않는다).
+        self._react_cps, problem = typical_chars_per_sec()
+        if problem:
+            warn(problem)
         # 관람객 수준. `stage/__main__.py::main()` 에서 `StageServer` → `Director`
         # 로 흘러온다 — 기본값("일반")은 오직 테스트 편의를 위해서다. 실기 기동에서
         # 이 값이 안 흘러오면(배선을 빠뜨리면) 수준이 늘 "일반" 으로 굳는다.
@@ -1682,7 +1709,7 @@ class Director:
             if "gaze" in caps:
                 cmds.append(Command(to=listener, type="gaze", fields={"target": "partner"}))
             if react and "react" in caps:
-                delay = len(text) / CHARS_PER_SEC * REACT_AT_FRACTION
+                delay = len(text) / self._react_cps * REACT_AT_FRACTION
                 self._react_plan = (listener, react, self._machine.seq, delay)
         return cmds
 

@@ -322,7 +322,7 @@ def _bake_notice(cdir, voice, pcm):
 def test_EL_엔진_빗나감은_ElevenLabs_소리를_로봇_형식_그대로_흘린다(el_stack, monkeypatch):
     url = el_stack["make"]()
     h, first, pcm = _robot_speak(url, ROBOT_BODY, monkeypatch)
-    assert pcm == EL_PCM                                   # 홀수 청크를 맞춰 흘려도 바이트가 같다
+    assert pcm == el.apply_gain(EL_PCM)                    # 홀수 청크를 맞춰 흘려도 굽기와 같은 이득으로 같은 바이트
     assert h["Content-Type"] == "audio/pcm" and h["X-TTS-Cache"] == "miss" and h["X-TTS-Engine"] == "elevenlabs"
     call = _FakeEL.calls[0]
     assert call["path"] == "/v1/text-to-speech/MCVOICE/stream?output_format=pcm_24000"   # serena → 사회자 목소리
@@ -417,3 +417,40 @@ def test_검수_대조는_띄어쓰기_문장부호_천단위_쉼표를_무시�
     import tts_review
     assert tts_review.similarity("약 3,500킬로미터 떨어진 곳이에요.", "약 3500 킬로미터 떨어진 곳이에요") == 1.0
     assert tts_review.similarity("초장파는 VLF예요.", "초장파는 브이엘에프예요") < 0.8   # 약어를 다르게 읽으면 낮다
+
+
+# ── 여유 음량(2026-11-12) ───────────────────────────────────────────
+def test_여유_음량은_dB_만큼_줄이고_0dB_는_그대로다():
+    import array
+    pcm = array.array("h", [32767, -32768, 1000, 0]).tobytes()
+    assert el.apply_gain(pcm, 0.0) == pcm
+    half = array.array("h", el.apply_gain(pcm, -6.0206))
+    assert list(half) == [16384, -16384, 500, 0]
+    assert el.GAIN_DB <= -1.0, "실기 16 kHz 변환에서 잘리지 않으려면 최소 -1 dB(실측)"
+
+
+def test_검수_발음_대조는_맞춤법만_다른_같은_소리를_같다고_본다():
+    """글자 대조의 헛경보(2026-11-12): 판은/파는(연음), 닉호/니코(거센소리), 맡/맞(받침 대표음), MHz·1000·DOCENT(STT 표기)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import tts_review as t
+    for a, b in [("초장파는 VLF예요", "초장판은 VLF예요"), ("타이타닉호 이야기", "타이타니코 이야기"),
+                 ("페달이 요를 맡습니다", "페달이 요를 맞습니다"), ("121.5메가헤르츠와", "121.5MHz와"),
+                 ("천 번이면 1킬로헤르츠", "1000번이면 1kHz"), ("1제곱킬로미터당 백만 대", "1km²당 100만대"),
+                 ("도슨트, 크로마키가", "DOCENT 크로마키가"), ("주파수에 반비례", "주파수의 반비례")]:
+        assert t.same_sound(a, b), (a, b)
+    # 소리가 다르면 다르다 — 그리고 어디가 다른지 낱말로 짚는다
+    assert not t.same_sound("도슨트, 타이타닉호", "노슨트, 타이타니코")
+    assert t.diffs("도슨트, 타이타닉호", "노슨트, 타이타니코") == [["도", "노"]]
+    assert t.read_number("3,500") == "삼천오백" and t.read_number("121.5") == "백이십일점오"
+
+
+def test_검수_판정은_한_글자라도_다르면_힌트_받아쓰기로_가른다():
+    """~~문장 일치도 0.95~~ 는 긴 문장의 한 낱말 오류(도슨트→노슨트, 0.98)를 통과시켰다."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import tts_review as t
+    text = "도슨트, 타이타닉호 이야기를 들려주실래요?"
+    assert t.verdict({"text": text, "heard": "도슨트 타이타니코 이야기를 들려주실래요", "psim": 1.0}) == "ok"
+    assert t.verdict({"text": text, "heard": "노슨트, 타이타니코 이야기를 들려주실래요?", "psim": 0.98,
+                      "biased": text}) == "stt"
+    assert t.verdict({"text": text, "heard": "노슨트, 타이타니코 이야기를 들려주실래요?", "psim": 0.98,
+                      "biased": "노슨트, 타이타닉호 이야기를 들려주실래요?"}) == "suspect"

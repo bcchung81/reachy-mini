@@ -38,6 +38,23 @@ MODEL_LIVE = "eleven_v4_turbo"    # 관람객 답 — 첫 소리가 빠르다
 DEFAULT_VOICES = {"serena": "hjCvGtSCRPyjYwe2lDf1", "sohee": "n2fbxG88jqAoaVPUy3IG"}
 LANGUAGE = "ko"
 ENGINES = ("crispasr", "elevenlabs")
+# **여유 음량(headroom)** — ElevenLabs 소리는 거의 최대치(0 dBFS)에 붙어 나온다(530문장 중 294개가 ±32767 에 닿음).
+# 실기는 24 kHz 를 16 kHz 로 바꿔 트는데(`tts._Resampler`, 넘치면 `np.clip`), 그 변환이 최대 +0.27 dB 넘쳐
+# 252문장에서 샘플이 잘렸다(실측 2026-11-12). -1 dB 면 0 — 여유를 더해 -2 dB 로 굽기·관람객 답에 **똑같이** 건다
+# (둘이 다르면 고정 대사와 답의 음량이 달라진다). 예전 Qwen 보다 여전히 3 dB 남짓 크다(최대 진폭 중앙 17431 대 약 26000).
+GAIN_DB = float(os.environ.get("TTS_EL_GAIN_DB") or -2.0)
+
+
+def apply_gain(pcm: bytes, db: float | None = None) -> bytes:
+    """s16le PCM 에 이득을 건다(짝수 바이트). 0 dB 면 그대로."""
+    db = GAIN_DB if db is None else db
+    if abs(db) < 1e-9 or not pcm:
+        return pcm
+    import numpy as np
+    a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) * (10 ** (db / 20))
+    return np.clip(np.rint(a), -32768, 32767).astype(np.int16).tobytes()
+
+
 # 관람객 답을 합성하다 ElevenLabs 가 실패했을 때 같은 목소리로 한 번 내는 안내(결정 2026-11-12: 실패 정책 ①).
 # 굽기가 역할마다 미리 굽는다. **한 문장**이어야 한다 — 프록시가 한 파일로 꺼내 쓴다.
 NOTICE_TEXT = "잠시 연결이 불안정해서 다음으로 넘어갈게요."
@@ -124,7 +141,8 @@ def engine_from_env(env: dict | None = None) -> str:
 
 
 def seed_for(cache_key: str) -> int:
-    """문장마다 고정한 시드 — 같은 문장을 다시 구워도 가능한 한 같은 테이크가 나오게(ElevenLabs 는 '최선'만 약속한다)."""
+    """문장마다 고정한 시드. **재현은 안 된다**(실측 2026-11-12: 같은 시드 두 번 → 다른 테이크 — ElevenLabs 는
+    '최선'만 약속한다). 그래서 구운 폴더는 백업하고, `--retake` 는 시드가 같아도 새 테이크를 받는다."""
     return int(cache_key[:8], 16) & 0x7FFFFFFF
 
 

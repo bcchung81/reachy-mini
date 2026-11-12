@@ -18,7 +18,7 @@
 | 코드 | 바뀐 것 없음. `scripts/bake_tts.py`·`tts_cache_proxy.py`는 Qwen(CrispASR) 전용 |
 | 캐시 | `~/.local/share/reachy-mini-tts/cache` = Qwen 음성 — **건드리지 않는다**(되돌릴 자리) |
 | 교육자료 | 일반 = 종이 무대 완성(`docs/design/paper-stage.html`, Qwen 음성) · 초중등 웹툰·전문가 분해도 = 미착수 |
-| **진행(2026-11-12 오후)** | 키 설정·인증 확인 → 계획 승인(실패 정책 = 같은 목소리 안내) → 커밋 `2181b14` → **1단계 완료**: `tts_elevenlabs.py`(어댑터) · `scripts/el_audition.py`(+`el_audition.html`) · `tests/test_tts_elevenlabs.py`(16개 통과). 오디션 140개를 `~/.local/share/reachy-mini-tts/audition/2026-11-12/index.html`에 생성, 약 2천 크레딧. ~~사용자 청취 대기~~ → **결정: 사회자 Juan · 도슨트 Yooni · 고정 대사도 `eleven_v4_turbo` · 속도는 자연 속도**. 2단계 **완료**: 프록시·굽기 ElevenLabs 엔진(`TTS_ENGINE=elevenlabs`), 530문장 굽기(실패 0), 종이 무대 재빌드, 검수 페이지(`~/.local/share/reachy-mini-tts/review/cache-elevenlabs/index.html`). **다음: 사용자 재청취 → 발음 사전 → 부분 재굽기 → 백업 → A6 실기 리허설** — 계획서 「진행 기록」. 라이브러리 목소리는 "내 목소리"에 추가하지 않아도 API로 바로 쓸 수 있다(U2 불필요, 슬롯 0/30). 후보 말 속도는 초당 6.3~6.8자(감독 환산 4.0자보다 빠르다) |
+| **진행(2026-11-12 오후)** | 키 설정·인증 확인 → 계획 승인(실패 정책 = 같은 목소리 안내) → 커밋 `2181b14` → **1단계 완료**: `tts_elevenlabs.py`(어댑터) · `scripts/el_audition.py`(+`el_audition.html`) · `tests/test_tts_elevenlabs.py`(16개 통과). 오디션 140개를 `~/.local/share/reachy-mini-tts/audition/2026-11-12/index.html`에 생성, 약 2천 크레딧. ~~사용자 청취 대기~~ → **결정: 사회자 Juan · 도슨트 Yooni · 고정 대사도 `eleven_v4_turbo` · 속도는 자연 속도**. 2단계 **완료**: 프록시·굽기 ElevenLabs 엔진(`TTS_ENGINE=elevenlabs`), 530문장 굽기(실패 0), 종이 무대 재빌드, 검수 페이지(`~/.local/share/reachy-mini-tts/review/cache-elevenlabs/index.html`). **다음: 사용자 재청취 → 발음 사전 → 부분 재굽기 → 백업 → A6 실기 리허설** — 계획서 「진행 기록」. 커밋 `fd0d21b` 뒤 추가: 골라 다시 굽기(`bake --retake-readings`·`--retake 낱말`), 검수 페이지 테이크 표지, 감독 반응 시점의 엔진별 말 속도. **기계 검증 완료**(여유 음량 -2 dB로 실기 잘림 0, 의심 문장 6개 교체, 남은 것 "넣는데" 1문장만 사람 귀) — 계획서 「진행 기록」. 백업 2벌. **남은 다음: A6 실기 리허설.** 라이브러리 목소리는 "내 목소리"에 추가하지 않아도 API로 바로 쓸 수 있다(U2 불필요, 슬롯 0/30). 후보 말 속도는 초당 6.3~6.8자(감독 환산 4.0자보다 빠르다) |
 | 커밋 | 안 함 — `scripts/handout_paper/` · `docs/design/paper-stage.html` · `tests/test_handout_paper.py` · `docs/lessons.md` · 핸드오프 문서 2개 |
 
 ---
@@ -74,12 +74,12 @@ A8 초중등 웹툰 · A9 전문가 분해도 — A0 승인 뒤 언제든(빌더
 | 초과 사용 과금(usage-based billing) 켜짐/꺼짐 | **API로는 꺼짐**(`can_extend_character_limit: False`). 한도에 닿는 순간 실시간 답이 끊긴다. 켤 수 있는지는 구독 화면에서 확인 → [결정] D7 |
 | 첫 달 할인가 | 둘째 달부터 정가(Creator $22)로 오른다 |
 
-### U4. (선택) LLM·STT 실측용 키 — A7을 할 때만
+### U4. (선택) LLM·STT 실측용 키 — A7을 할 때만 → **완료**(`.env` 에 `OPENAI_API_KEY`, 인증 확인 2026-11-12). Claude·Azure 는 쓰지 않는다
 
 - `.env`의 `# ANTHROPIC_API_KEY=` · `# OPENAI_API_KEY=` 줄에서 `#`을 지우고 값을 넣는다. 각 콘솔에서 **월 지출 한도**를 먼저 건다.
 - Azure(STT 국내 처리)는 STT 후보로 남길 때만 만든다.
 
-### U5. 법무 검토 요청
+### U5. ~~법무 검토 요청~~ → **불필요**(2026-11-12 사용자 결정)
 
 - 기관 개인정보 담당자에게 11-10 문서 §10(국외 이전·로봇 카메라·만 14세 미만)을 보낸다. **TTS만 쓰는 단계(A3~A6)는 로봇이 할 말만 밖으로 나간다** — 관람객 음성이 나가는 STT 전환(A7)은 검토가 끝난 뒤에 한다.
 
@@ -155,10 +155,10 @@ TTS_CACHE_DIR=~/.local/share/reachy-mini-tts/cache-elevenlabs .venv/bin/python -
   4. 두 대가 동시에 말하는 구간에서 429가 나지 않는다.
 - 결과는 `docs/real-robot-deployment.md`에 새 절로 적는다(§15.9 TTS 캐시 다음).
 
-### A7. LLM·STT 실측 → 결정 (U4·U5 뒤, 별도 승인)
+### A7. LLM·STT 실측 → 결정 (별도 승인 — 키 준비됨, 법무 조건 없음, OpenAI 만)
 
-- LLM: `.demo-logs/app.log`의 실제 관람객 질문 20~50개 × 4수준으로 Luna(사고 끔) vs Haiku 5.5(사고 끔) 블라인드 비교. 전문가 수준만 Sonnet 5.5로 보내는 안도 함께 잰다. 초등 규칙(수치 금지) 회귀 테스트를 새 모델 응답으로 다시 돌린다.
-- STT: OpenAI `gpt-transcribe` vs Azure Korea Central — 아이 목소리 샘플을 꼭 넣는다.
+- LLM: `.demo-logs/app.log`의 실제 관람객 질문 20~50개 × 4수준으로 `gpt-6-luna`(사고 끔) vs 지금 로컬 Gemma 블라인드 비교(~~vs Haiku 5.5~~ — Claude 안 씀). 전문가 수준만 OpenAI 상위 모델(`gpt-6-sol`·`gpt-6.1-sol`·`gpt-6.1-terra`·`gpt-6-astra` 중)로 보내는 안도 함께 잰다. 초등 규칙(수치 금지) 회귀 테스트를 새 모델 응답으로 다시 돌린다.
+- STT: OpenAI `gpt-transcribe` vs 지금 로컬 STT — 아이 목소리 샘플을 꼭 넣는다(~~Azure~~ 제외).
 - 측정에는 실제 비용이 든다 → 예산을 먼저 정한다.
 
 ### A8. 초중등 웹툰(157) · A9. 전문가 분해도(148) — 별도 승인
@@ -183,7 +183,7 @@ TTS_CACHE_DIR=~/.local/share/reachy-mini-tts/cache-elevenlabs .venv/bin/python -
 | D3 | 속도 | **자연 속도 + 분량 환산 재보정**. v4는 속도 숫자가 없고, 실시간 답도 자연 속도라 둘이 맞는다. 굽기 뒤 실제 초당 글자 수를 재서 `stage/director.py:42` `CHARS_PER_SEC`·`data/levels.yaml:9` 주석·`scripts/handout_hud/template.html:225` `CPS`를 함께 고친다 | A3 전 |
 | D4 | 실시간 합성 실패 시 | ① 같은 목소리 안내 후 넘기기(목소리 유지). ② 로컬 Qwen 폴백은 목소리가 바뀌므로 비권장 | A4 전 |
 | D5 | LLM | 실측 후(A7) | — |
-| D6 | STT | 실측 + 법무 검토 후(A7) | — |
+| D6 | STT | OpenAI `gpt-transcribe` — 로컬 대비 실측으로 확인(A7). 법무 조건 없음 | — |
 | D7 | 초과 사용 과금 | 공연 기간에는 켜고 월 상한을 건다(끊김보다 비용이 낫다) — U3 확인 결과에 따라 | A6 전 |
 | D8 | 지금 작업 트리 커밋 | 종이 무대·테스트·문서를 한 번에 커밋해 두고 ElevenLabs 작업을 시작하면, 되돌릴 기준점이 생긴다 | A1 전 |
 

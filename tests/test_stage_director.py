@@ -3637,3 +3637,39 @@ def test_방금_멈춘_발화의_늦은_종료_보고는_유령이_아니라_정
     assert h.d.state is State.IDLE                               # 버렸다 — 다음 턴을 깨우지 않는다
     h.d.on_speaking_ended("docent", "c1:docent", 999)           # 정체 모를 보고는 여전히 유령
     assert "유령 speaking_ended" in h.warnings[-1]
+
+
+# ── 반응 시점은 엔진의 보통 말 속도로(2026-11-12) ──────────────────
+def test_반응_시점용_말_속도는_엔진을_따르고_모르는_엔진은_경고한다():
+    from stage.director import TYPICAL_CHARS_PER_SEC, typical_chars_per_sec
+    assert typical_chars_per_sec({}) == (TYPICAL_CHARS_PER_SEC["crispasr"], None)
+    assert typical_chars_per_sec({"TTS_ENGINE": "elevenlabs"}) == (6.6, None)
+    cps, problem = typical_chars_per_sec({"TTS_ENGINE": "elevenlab"})
+    assert cps == TYPICAL_CHARS_PER_SEC["crispasr"] and "모른다" in problem
+
+
+def test_기본_엔진의_반응_시점은_예전과_같다():
+    """crispasr 는 예전 식(len / CHARS_PER_SEC × 0.4 = len × 0.1초)과 같은 시점이어야 한다 — 기본 구성 동작 불변."""
+    from stage.director import REACT_AT_FRACTION, TYPICAL_CHARS_PER_SEC
+    for n in (1, 14, 57, 130):
+        assert abs(n / TYPICAL_CHARS_PER_SEC["crispasr"] * REACT_AT_FRACTION - n / CHARS_PER_SEC * 0.4) < 1e-9
+
+
+def test_ElevenLabs_에서는_빠른_말에_맞춰_반응이_앞당겨진다(monkeypatch):
+    """ElevenLabs 는 Qwen 보다 빨라(6.6자/초) 예전 시점(len × 0.1초)이면 실제 발화의 66% 지점이다 — 가운데로."""
+    monkeypatch.setenv("TTS_ENGINE", "elevenlabs")
+    text = "설명 설명 설명 설명 설명"
+    h = Harness(sheet=CueSheet([_대본_큐(answers=(text,))]))
+    _둘_다_붙은(h)
+    h.d.start()
+    h.ended("mc", "c1")
+    h.started("docent", "c1:docent")
+    h.clear()
+    at = len(text) / 6.6 * 0.5
+    assert at < len(text) * 0.1
+    h.clock.t += at - 0.05
+    h.d.tick()
+    assert [t for _, t, _ in h.sent if t == "react"] == []
+    h.clock.t += 0.1
+    h.d.tick()
+    assert [(r, t) for r, t, _ in h.sent if t == "react"] == [("mc", "react")]

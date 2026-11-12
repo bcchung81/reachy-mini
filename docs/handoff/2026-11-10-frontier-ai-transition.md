@@ -16,11 +16,11 @@
 | 방향 | **[결정]** 오픈웨이트 외부 서빙이 아니라 **프론티어 모델 API**로 옮긴다. 그중 **차선안**(TTS = ElevenLabs)으로 간다 |
 | 배포 | **[결정]** 실기(Reachy Mini Wireless)에 배포해 운영할 수 있어야 한다 |
 | 구조 | **[권장]** PC 게이트웨이형 — 로봇 앱 코드 수정 0, API 키는 PC에만 |
-| LLM | **[미결]** OpenAI `gpt-6-luna`(사고 끔) vs Claude Haiku 5.5(사고 끔) — 실제 질문으로 실측해 결정 |
-| STT | **[미결]** OpenAI `gpt-transcribe`(경로 그대로) vs Azure Speech Korea Central(국내 처리). ElevenLabs Scribe는 무보존이 엔터프라이즈 전용이라 후순위 |
-| TTS | **[결정]** ElevenLabs. 고정 대사 굽기 = `eleven_v4`, 실시간 답 = `eleven_v4_turbo` **[권장]** |
-| 목소리 | **[권장]** 사회자 Jennie, 도슨트 Seulki — 오디션으로 확정 **[미결]** |
-| 요금제 | ElevenLabs **구독 완료**(2026-11-12, 사용자 보고 — 권장안 Creator 월 $22, 요금제 이름은 구독 화면으로 확인). 1~2개월 사용량을 보고 Pro 승급 판단 |
+| LLM | **[결정 2026-11-12 사용자 결정] Claude 는 쓰지 않는다** → OpenAI `gpt-6-luna`(`reasoning_effort:"none"`)가 기본 후보. 실측으로 품질·지연 확인 **[미결]**. 전문가 수준용 상위 모델은 계정에 있는 `gpt-6-sol`·`gpt-6.1-sol`·`gpt-6.1-terra`·`gpt-6-astra` 중에서 고른다(가격·지연 미확인) |
+| STT | **[권장 → 사실상 결정]** OpenAI `gpt-transcribe`(경로 그대로, 계정에서 사용 가능 확인). ~~Azure Speech Korea Central(국내 처리)~~ — 법무 검토 불필요(2026-11-12 사용자 결정)라 국내 처리 장점이 의미 없어졌고 키도 없다. 지금 로컬 STT 대비 실측(아이 목소리 포함)만 남았다 |
+| TTS | **[결정]** ElevenLabs. ~~고정 대사 굽기 = `eleven_v4`~~ → **고정 대사·실시간 답 모두 `eleven_v4_turbo`**(2026-11-12 오디션 결정). **구현·굽기 완료**(530문장, 여유 음량 -2 dB) — `TTS_ENGINE=elevenlabs` |
+| 목소리 | ~~[권장] 사회자 Jennie, 도슨트 Seulki~~ → **[결정 2026-11-12 오디션] 사회자 Juan `hjCvGtSCRPyjYwe2lDf1` · 도슨트 Yooni `n2fbxG88jqAoaVPUy3IG`**(예고 기간 730일). Jennie 는 예고 기간 미설정이라 비교용이었다 |
+| 요금제 | ElevenLabs **Creator 구독 완료**(API 확인 2026-11-12: 월 131,000 크레딧, 초과 사용 불가, 갱신 12-12). Turbo 로 월 26.2만 자 — **실제 공연 횟수로 한도 재계산 필요**(§5) |
 | 교육자료 | **[결정]** 일반 = 종이 무대 24번(완성) → **음성만 ElevenLabs로 교체**. 초중등 = **웹툰 칸 연출 157번**, 전문가 = **분해도 148번** 기법으로 새로 제작(§7) |
 
 ---
@@ -43,37 +43,37 @@
 ```
  로봇(앱만)                       PC(GPU 불필요)                         외부
  ───────────                      ─────────────────────────────          ──────────────
- REACHY_LLM_URL  ───────────────► 게이트웨이 /v1/chat/completions ─────► LLM(Claude 또는 OpenAI)
- REACHY_STT_URL  ───────────────► 게이트웨이 /v1/audio/transcriptions ─► STT(OpenAI 또는 Azure)
+ REACHY_LLM_URL  ───────────────► 게이트웨이 /v1/chat/completions ─────► LLM(OpenAI — Claude 안 씀)
+ REACHY_STT_URL  ───────────────► 게이트웨이 /v1/audio/transcriptions ─► STT(OpenAI gpt-transcribe)
  TTS_QWEN_URL    ───────────────► tts_cache_proxy(넓힘) ─┬─ 캐시 적중 → 고정 대사 PCM(오프라인)
                                                           └─ 미스 → ElevenLabs(pcm_24000 스트림)
                                   · API 키 주입  · 형식 번역  · 실패 시 경고 + 폴백
 ```
 
 - 로봇은 지금처럼 PC 세 주소만 안다(`docs/real-robot-deployment.md` §실기 토폴로지). **로봇 앱 코드·키 변경 없음** → "주소만 바꿔 옮긴다" 규칙 그대로.
-- Claude가 OpenAI 호환이 아니어도 번역은 게이트웨이 안에서 끝난다(Claude는 공식 `anthropic` SDK로 부른다 — OpenAI 호환 shim 금지).
+- ~~Claude가 OpenAI 호환이 아니어도 번역은 게이트웨이 안에서 끝난다~~ — Claude 는 쓰지 않는다(2026-11-12 사용자 결정). LLM·STT 모두 OpenAI 라 로봇의 OpenAI 호환 요청을 거의 그대로 넘기고, 게이트웨이는 키 주입·`reasoning_effort`·`languages` 같은 차이만 맞춘다.
 - 대안(로봇 직결형)은 PC를 없앨 수 있지만 키·SDK·캐시(약 123 MB)를 로봇에 올려야 하고, 오프라인이면 실시간 답이 통째로 죽는다(CM4 4 GB라 로컬 폴백 불가). **채택하지 않는다.**
 
 ---
 
 ## 3. 역할별 결정과 근거
 
-### LLM [미결 — 실측으로 결정]
+### LLM [Claude 제외 — 2026-11-12 사용자 결정. OpenAI 안에서 실측으로 결정]
 
 | 후보 | 100만 토큰당 입/출 | 첫 토큰 | 붙이는 법 | 주의 |
 |---|---|---|---|---|
 | OpenAI `gpt-6-luna` | $0.10 / $0.50 | 사고 끔 0.74~1.37초(AA) | OpenAI 호환 그대로 | `reasoning_effort:"none"` 필수(기본 medium이면 5초대). 공개 지능 지수 9(중앙값 14) — 도슨트 정확성 위험 |
-| Claude Haiku 5.5 (`claude-haiku-5-5`) | $0.10 / $0.50(10만 토큰 이하) | 사고 끈 상태 **미측정** | `anthropic` SDK, 시스템 프롬프트 캐싱 | `temperature` 보내면 400. 사고 끄기는 effort high 이하에서만 |
-| (품질 경로) Claude Sonnet 5.5 | $2 / $10 | 미측정 | 동일 | 전문가 수준 답·감독 애드리브 후보(§6) |
+| ~~Claude Haiku 5.5 (`claude-haiku-5-5`)~~ 쓰지 않음 | $0.10 / $0.50(10만 토큰 이하) | 사고 끈 상태 **미측정** | `anthropic` SDK, 시스템 프롬프트 캐싱 | `temperature` 보내면 400. 사고 끄기는 effort high 이하에서만 |
+| ~~(품질 경로) Claude Sonnet 5.5~~ 쓰지 않음 → OpenAI 상위 모델(`gpt-6-sol`·`gpt-6.1-sol`·`gpt-6.1-terra`·`gpt-6-astra` 중) | 미확인 | 미측정 | OpenAI 호환 그대로 | 전문가 수준 답·감독 애드리브 후보(§6) |
 
 결정 방법: `.demo-logs/app.log`의 실제 관람객 질문 20~50개 × 4수준으로 블라인드 비교(정확성·수준 규칙 준수·한국어) + 한국에서의 지연 실측.
 
-### STT [미결]
+### STT [OpenAI `gpt-transcribe` — Azure 제외, 2026-11-12 사용자 결정]
 
 | 후보 | 가격 | 장점 | 주의 |
 |---|---|---|---|
 | OpenAI `gpt-transcribe` | 분당 $0.0045 | `/v1/audio/transcriptions` 그대로 | `language` → `languages` 배열. 서버의 자동 감지·한국어 재시도 로직은 게이트웨이로 옮겨야 함 |
-| Azure Speech Korea Central | 빠른 전사 시간당 $0.36 | **국내에서 처리**(관람객 음성이 나라 밖으로 안 나감) | 자체 API — 게이트웨이 번역 필요 |
+| ~~Azure Speech Korea Central~~ 제외 | 빠른 전사 시간당 $0.36 | **국내에서 처리**(관람객 음성이 나라 밖으로 안 나감) | 자체 API — 게이트웨이 번역 필요 |
 
 ### TTS [결정: ElevenLabs]
 
@@ -165,7 +165,7 @@
 
 ### 전문가
 
-- **LLM**: 답의 정확성 요구가 가장 높다 → **전문가 수준 답만 Sonnet 5.5로 라우팅**하는 안을 지연과 함께 실측 **[미결]**(감독이 수준을 알고 있다 — `stage/__main__.py`의 `build_system_prompt(r, level)`).
+- **LLM**: 답의 정확성 요구가 가장 높다 → **전문가 수준 답만 ~~Sonnet 5.5~~ OpenAI 상위 모델로 라우팅**하는 안을 지연과 함께 실측 **[미결]**(감독이 수준을 알고 있다 — `stage/__main__.py`의 `build_system_prompt(r, level)`).
 - **TTS**: 대사가 가장 길다(13분) — 굽기·검수량 최대. 전문 용어·약어 발음 사전이 가장 많이 필요.
 - **교육자료**: 분해도(148)로 새 HTML을 만든다(§7.4).
 
@@ -241,7 +241,7 @@
 
 현재: `scripts/handout_paper/`(빌더·틀·장면) → `docs/design/paper-stage.html`(19큐, 일반 수준, Qwen 캐시 음성, 7.5 MB). 장면 코드는 낱말 위치로 시각을 잡으므로 **모션은 손댈 필요가 없다.**
 
-1. 선행: ElevenLabs 키(지금 환경에 **없음**), 목소리 확정(§5), `bake_tts.py`의 ElevenLabs 경로.
+1. ~~선행: ElevenLabs 키(지금 환경에 **없음**), 목소리 확정(§5), `bake_tts.py`의 ElevenLabs 경로.~~ **완료(2026-11-12)** — 굽기 `TTS_ENGINE=elevenlabs ./reachy.sh bake`, 재빌드·`?check=1` 경고 0.
 2. 새 캐시 폴더에 굽기: `TTS_CACHE_DIR=~/.local/share/reachy-mini-tts/cache-elevenlabs ./reachy.sh bake`(ElevenLabs 경로 구현 후).
 3. 다시 빌드: `TTS_CACHE_DIR=…/cache-elevenlabs .venv/bin/python -m scripts.handout_paper.build`
    - 빌더는 캐시 문장을 큐시트 순서로 줄 세우고 글이 다르면 멈춘다(`docs/lessons.md` — 색인 순서 ≠ 말하는 순서).
@@ -254,15 +254,18 @@
 ## 9. 바꿀 코드(전부 PC 쪽) — 착수 전 `plan.md` 승인
 
 - `tts_cache_proxy.py`: ElevenLabs 어댑터(역할→목소리 ID, 어조→태그, 읽기 표기 사전, 키 주입, `pcm_24000`), 실패 정책·경고. 캐시 키는 **원래 로봇 본문**으로 계속 계산.
-- LLM·STT 게이트웨이(새 파일 또는 프록시 확장): Claude는 `anthropic` SDK, OpenAI는 키·`reasoning_effort`·`languages`.
+- LLM·STT 게이트웨이(새 파일 또는 프록시 확장): ~~Claude는 `anthropic` SDK~~(안 씀), OpenAI는 키·`reasoning_effort`·`languages`.
 - `scripts/bake_tts.py`: 엔진 선택 + 새 캐시 폴더. 맞장구·연결 불안정 안내 문장 추가.
-- 환경변수(신규, 제안): `REACHY_GATEWAY_LLM`·`…_MODEL`·`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`, `TTS_UPSTREAM=elevenlabs`, `ELEVENLABS_API_KEY`, `TTS_EL_VOICE_MC`, `TTS_EL_VOICE_DOCENT`, `TTS_EL_MODEL_BAKE`, `TTS_EL_MODEL_LIVE`. **키가 없으면 지금과 똑같이 로컬로 동작**(외부는 스위치 뒤, 기본 꺼짐).
+- 환경변수(신규, 제안): `REACHY_GATEWAY_LLM`·`…_MODEL`·~~`ANTHROPIC_API_KEY`~~/`OPENAI_API_KEY`(`.env` 에 있음), `TTS_UPSTREAM=elevenlabs`, `ELEVENLABS_API_KEY`, `TTS_EL_VOICE_MC`, `TTS_EL_VOICE_DOCENT`, `TTS_EL_MODEL_BAKE`, `TTS_EL_MODEL_LIVE`. **키가 없으면 지금과 똑같이 로컬로 동작**(외부는 스위치 뒤, 기본 꺼짐).
 - 테스트로 박제: 키 없으면 외부 호출 없음 / 업스트림이 바뀌어도 캐시 키 불변 / 엔진마다 캐시 폴더 분리 / 폴백 때 경고 1줄 / 수준 규칙(초등 수치 금지) 회귀.
 - 문서: `docs/real-robot-deployment.md`(게이트웨이 토폴로지), `docs/lessons.md`.
 
 ---
 
-## 10. 개인정보·법무 [검토 필요]
+## 10. 개인정보·법무 ~~[검토 필요]~~ → **[검토 불필요 — 2026-11-12 사용자 결정]**
+
+아래는 조사 기록으로 남긴다(판단 근거). 진행 조건이 아니다.
+
 
 - 국내 처리 보장: **Azure Speech Korea Central(STT·표준 TTS)뿐**. 프론티어 LLM은 서울 처리 보장 경로가 없다(OpenAI `kr`은 저장만, Bedrock 서울의 Haiku 5.5는 Global 라우팅).
 - 외부로 나가는 것: 관람객 음성(STT) · 대화 텍스트(LLM) · 카메라 이미지(비전 질문일 때 LLM) · 로봇 대사(TTS).
@@ -271,24 +274,39 @@
 
 ---
 
-## 11. 미결 사항 체크리스트
+## 11. 미결 사항 체크리스트 (2026-11-12 저녁 갱신)
 
-- [ ] LLM 실측: Luna(사고 끔) vs Haiku 5.5(사고 끔) — 한국어 품질·수준 규칙·지연(한국 기준)
-- [ ] 전문가 수준 답 Sonnet 5.5 라우팅 실측
-- [ ] STT 결정(OpenAI vs Azure Korea Central) — 아이 목소리 샘플 포함
-- [ ] 목소리 오디션(사회자·도슨트) — v4 vs v4 Turbo 소리 차이, 로봇 스피커 재생
-- [x] ElevenLabs 가입(2026-11-12 사용자 보고)
-- [ ] API 키 발급·저장소 밖 보관, 초과 과금 방식 확인, 예고 기간 1년 이상 목소리 확정 → 11-12 문서 U1~U3
-- [ ] 실패 정책(같은 목소리 안내 vs Qwen 폴백)
-- [ ] 속도 정책(굽기 때 늦추기 vs 자연 속도 + 분량 재보정)
-- [ ] 법무 검토(국외 이전·카메라·아동)
-- [ ] 초중등 웹툰 HTML: 157 NOTES·소스 정독 → 칸 문법을 턴 구조에 매핑 → 01·02 시안(동작하는 HTML, 렌더 확인 후 공유) → 19큐
+**TTS(ElevenLabs) — 거의 끝**
+- [x] ElevenLabs 가입(Creator, API 로 확인)
+- [x] API 키 — ~~저장소 밖 보관~~ → **저장소 루트 `.env`**(사용자 결정, `.gitignore`), 프록시·굽기만 읽는다. 초과 과금 = 꺼짐(API 확인). 목소리 예고 기간 730일 확인
+- [x] 목소리 오디션 — 사회자 Juan · 도슨트 Yooni · 굽기도 Turbo(후보 10 × 7문장 × 2모델)
+- [x] 실패 정책 — 같은 목소리 안내 한 번 + 나머지 0.15초 무음(빈 응답이면 로봇이 기계음으로 폴백 — `docs/lessons.md`)
+- [x] 속도 정책 — 자연 속도(실측 6.6자/초). 타임아웃 `CHARS_PER_SEC` 4.0 유지, 감독의 반응 시점만 엔진별 보통 속도로 분리
+- [x] `plan.md`(`docs/superpowers/plans/2026-11-12-elevenlabs-tts.md`) 승인 → TTS 게이트웨이(캐시 프록시 ElevenLabs 엔진) → 굽기 530문장 → 기계 검증(여유 음량 -2 dB, 의심 6문장 교체) → 종이 무대 재빌드(§8 완료)
+- [ ] **실기 리허설**(11-12 문서 A6) — 로봇 스피커로 두 목소리, 두 대 동시 발화 429 없음, PC 인터넷 끊김, 큰 음량에서 에코 제거·끼어들기, 끄덕임 시점
+- [ ] 사람 귀 1문장 — 13-chromakey 1턴 일반 "합성해 넣는데"(STT 가 7테이크 모두 "놓는데" — STT 편향으로 판단)
+- [ ] 크레딧 한도 재계산 — 실제 하루 공연 횟수 필요(Creator 로 충분한지, Pro 인지)
+- [ ] 어조 지시(`instructions`) — 530문장 모두 역할 어조("밝고 또렷하게"·"차분하고 낮게")를 싣는데 ElevenLabs 경로는 **쓰지 않는다**(오디션으로 고른 목소리 자체가 어조). 오디오 태그 번역은 미구현, 계획서의 "한 번 경고" 도 미구현
+- [ ] 프록시의 "키 없으면 crispasr 로 + 경고" 는 코드만 있고 테스트가 없다(굽기 쪽은 있음)
+- [ ] 커밋 — `fd0d21b` 뒤의 변경(여유 음량·골라 다시 굽기·검증 도구·감독 반응 시점·문서)이 커밋 안 됨
+
+**LLM·STT(OpenAI) — 착수 전(별도 승인)** — 키 준비됨, 법무 선행 조건 없음
+- [x] ~~법무 검토(국외 이전·카메라·아동)~~ — 불필요(2026-11-12 사용자 결정)
+- [ ] LLM 실측: OpenAI `gpt-6-luna`(사고 끔) — 실제 관람객 질문 × 4수준으로 한국어 품질·수준 규칙·지연(한국 기준), 지금 로컬 Gemma 와 비교. ~~vs Haiku 5.5~~(Claude 안 씀). 키는 `.env` 에 있음
+- [ ] 전문가 수준 답 상위 모델 라우팅 실측 — ~~Sonnet 5.5~~ → `gpt-6-sol`·`gpt-6.1-sol`·`gpt-6.1-terra`·`gpt-6-astra` 중(먼저 가격·지연 확인)
+- [ ] 초등 규칙(수치 금지) 회귀 — 새 LLM 응답으로
+- [ ] STT 실측: OpenAI `gpt-transcribe` vs 지금 로컬(mlx-whisper large-v3-turbo) — 아이 목소리 샘플 포함. ~~Azure~~ 제외
+- [ ] LLM·STT 게이트웨이 구현(§9 의 LLM·STT 부분)
+
+**수준별 교육자료 — 착수 전(별도 승인)**
+- [ ] 초중등 웹툰 HTML: 157 NOTES·소스 정독 → 칸 문법을 턴 구조에 매핑 → 01·02 시안(동작하는 HTML, 렌더 확인 후 공유) → 19큐. 음성은 ElevenLabs 캐시(초등·중고등)로 바로 빌드
 - [ ] 전문가 분해도 HTML: 148 NOTES·소스 정독 → three.js 내장 방식 결정 → 큐별 부품 표 초안 → 01·02 시안 → 19큐, 전시장 PC 프레임 실측
-- [ ] `plan.md` 작성·승인 → 게이트웨이 구현 → 굽기 → 종이 무대 재빌드 → 초중등·전문가 HTML
 
-## 12. 작업 트리 상태(커밋 안 됨)
+## 12. 작업 트리 상태
 
-- `scripts/handout_paper/`(build.py · template.html · scenes.js) · `docs/design/paper-stage.html` · `tests/test_handout_paper.py` · `docs/lessons.md`(TTS 캐시 색인 순서 항목 추가) · 이 문서.
+- ~~커밋 안 됨~~ → 커밋 `2181b14`(종이 무대·핸드오프·계획서) · `fd0d21b`(ElevenLabs 엔진·오디션·검수·새 목소리 종이 무대).
+- 커밋 안 된 것(2026-11-12 저녁): `tts_elevenlabs.py`·`tts_cache_proxy.py`·`scripts/bake_tts.py`(여유 음량·`--regain`·`--retake`) · `scripts/tts_review.*`(소리 기준 검증) · `stage/director.py`(반응 시점) · `data/tts_readings.yaml` · `docs/design/paper-stage.html` · 테스트 3개 · 문서.
+- 저장소 밖: 캐시 `~/.local/share/reachy-mini-tts/cache-elevenlabs`(530문장) · 백업 `cache-elevenlabs.bak-2026-11-12-원본`(이득 전)·`…-검증` · 오디션 `audition/2026-11-12/` · 검수 `review/cache-elevenlabs/`.
 - 중단된 작업: 종이 무대에 수준 선택을 넣던 작업 — **방향이 바뀌어 폐기**(초중등·전문가는 다른 기법으로 별도 HTML).
 
 ## 13. 주요 출처(2026-11-10 확인)

@@ -47,6 +47,8 @@ label.chk { font-size: 13px; display: inline-flex; gap: 4px; align-items: center
 .script { margin: 2px 0; }
 .heard { font-size: 13px; color: var(--muted); }
 .heard b { color: var(--bad); font-weight: 600; }
+.flags { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.flag { font-size: 11px; color: var(--mid); background: var(--mid-bg); border-radius: 4px; padding: 1px 6px; }
 .acts { display: grid; gap: 4px; }
 .acts .btn { padding: 4px 8px; font-size: 12px; }
 .acts .btn[aria-pressed="true"].ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
@@ -63,10 +65,11 @@ label.chk { font-size: 13px; display: inline-flex; gap: 4px; align-items: center
 <main>
   <h1>고정 대사 검수</h1>
   <p class="sub" id="sub"></p>
-  <p class="tip">로컬 STT 로 다시 받아쓴 글과 대본을 대조해 <b>다른 것부터</b> 늘어놓았습니다. 대조율은 어디부터 들을지 정하는 참고일 뿐입니다 — 숫자·약어는 STT 표기 차이로 낮게 나올 수 있습니다. 틀리게 읽은 문장은 <b>발음 문제</b>로 표시하고 어떻게 읽어야 하는지 적어 주세요.</p>
+  <p class="tip">로컬 STT 로 다시 받아쓴 글을 대본과 <b>발음 기준</b>으로 대조했습니다(숫자·단위를 읽는 소리로 펴고 연음·받침 규칙을 적용). <b>발음 의심</b>은 대본을 힌트로 줘도 다르게 들린 문장, <b>STT 차이</b>는 힌트를 주면 맞게 들리는 문장입니다. 억양·자연스러움은 기계가 못 잽니다 — 틀리게 읽은 문장은 <b>발음 문제</b>로 표시하고 어떻게 읽어야 하는지 적어 주세요.</p>
   <div class="sticky">
     <div class="bar">
       <select id="role"><option value="">역할 전체</option><option value="mc">사회자</option><option value="docent">도슨트</option></select>
+      <select id="verdict"><option value="">판정 전체</option><option value="suspect">발음 의심</option><option value="stt">STT 차이</option><option value="flag">소리 품질 표시</option></select>
       <select id="level"><option value="">수준 전체</option><option>초등</option><option>중고등</option><option>일반</option><option>전문가</option></select>
       <input type="search" id="q" placeholder="문장 검색">
       <label class="chk"><input type="checkbox" id="undone"> 남은 것만</label>
@@ -100,6 +103,13 @@ let state = {};
 try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch { state = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
 const st = (k) => (state[k] ||= { mark: "", memo: "" });
+// 표시는 **테이크마다** — 캐시 키는 다시 구워도 그대로라, 키로만 기억하면 새 테이크가 '확인함' 으로 보인다.
+const sk = (r) => r.key + ":" + (r.take || "");
+// 테이크 표지가 생기기 전(2026-11-12)의 표시는 키로만 저장됐다 — 그때는 테이크가 하나뿐이라 지금 테이크로 옮긴다.
+for (const r of D.rows) {
+  if (state[r.key] && !state[sk(r)]) { state[sk(r)] = state[r.key]; delete state[r.key]; }
+}
+save();
 
 $("sub").textContent = `${D.engine || "?"} · ${D.cache} · ${D.rows.length}문장 · ${D.made} 대조`;
 
@@ -131,18 +141,18 @@ function play(r) {
 $("stop").onclick = () => { audio.pause(); $("now").textContent = ""; };
 
 function visible() {
-  const role = $("role").value, level = $("level").value, q = $("q").value.trim(), undone = $("undone").checked;
-  return D.rows.filter((r) => (!role || r.role === role) && (!level || r.levels.includes(level)) &&
-    (!q || r.text.includes(q) || r.heard.includes(q)) && (!undone || !st(r.key).mark));
+  const vd = $("verdict").value, role = $("role").value, level = $("level").value, q = $("q").value.trim(), undone = $("undone").checked;
+  return D.rows.filter((r) => (!vd || (vd === "flag" ? (r.flags || []).length : r.verdict === vd)) && (!role || r.role === role) && (!level || r.levels.includes(level)) &&
+    (!q || r.text.includes(q) || r.heard.includes(q)) && (!undone || !st(sk(r)).mark));
 }
 function nextUndone() {
-  const rows = visible().filter((r) => !st(r.key).mark);
+  const rows = visible().filter((r) => !st(sk(r)).mark);
   const i = current ? rows.findIndex((r) => r.key === current.key) : -1;
   return rows[i + 1] || rows[0];
 }
 $("next").onclick = () => { const r = nextUndone(); if (r) play(r); };
 $("okNext").onclick = () => {
-  if (current && !st(current.key).mark) { st(current.key).mark = "ok"; save(); }
+  if (current && !st(sk(current)).mark) { st(sk(current)).mark = "ok"; save(); }
   const r = nextUndone(); render(); if (r) play(r);
 };
 
@@ -150,8 +160,10 @@ function render() {
   const list = $("list");
   list.replaceChildren();
   for (const r of visible()) {
-    const s = st(r.key);
-    const cls = r.sim >= 0.95 ? "hi" : r.sim >= 0.85 ? "mid" : "lo";
+    const s = st(sk(r));
+    const v = r.verdict || (r.sim >= 0.95 ? "ok" : "suspect");
+    const cls = v === "ok" ? "hi" : v === "stt" ? "mid" : "lo";
+    const pct = Math.round((r.psim ?? r.sim) * 100) + "%";
     const pb = el("button", { cls: "play", text: "▶", title: "듣기" });
     pb.onclick = () => play(r);
     const ok = el("button", { cls: "btn ok", text: "✓ 확인", "aria-pressed": String(s.mark === "ok") });
@@ -164,28 +176,30 @@ function render() {
     const where = r.where.length > 1 ? `${r.where[0]} 외 ${r.where.length - 1}곳` : r.where[0];
     const row = el("div", { cls: "row" + (current && current.key === r.key ? " on" : ""), id: "r-" + r.key }, [
       pb,
-      el("div", { cls: "sim " + cls, text: Math.round(r.sim * 100) + "%" }),
+      el("div", { cls: "sim " + cls, text: (v === "suspect" ? "의심 " : v === "stt" ? "STT " : "") + pct, title: "발음 대조 " + pct + " · 글자 대조 " + Math.round(r.sim * 100) + "%" }),
       el("div", {}, [
         el("div", { cls: "meta", text: `${r.role === "mc" ? "사회자" : "도슨트"} · ${where} · ${r.sec.toFixed(1)}초` }),
         el("div", { cls: "script", text: r.text }),
         el("div", { cls: "heard" }, [document.createTextNode("들림: "), heardNode(r.text, r.heard)]),
+        ...(r.biased && v !== "ok" ? [el("div", { cls: "heard" }, [document.createTextNode("대본을 힌트로 줘도: "), heardNode(r.text, r.biased)])] : []),
+        ...((r.flags || []).length ? [el("div", { cls: "flags" }, (r.flags || []).map((f) => el("span", { cls: "flag", text: f })))] : []),
       ]),
       el("div", { cls: "acts" }, s.mark === "bad" ? [ok, bad, memo] : [ok, bad]),
     ]);
     list.append(row);
   }
-  const done = D.rows.filter((r) => st(r.key).mark).length;
-  const bads = D.rows.filter((r) => st(r.key).mark === "bad").length;
+  const done = D.rows.filter((r) => st(sk(r)).mark).length;
+  const bads = D.rows.filter((r) => st(sk(r)).mark === "bad").length;
   $("progress").textContent = `확인 ${done} / ${D.rows.length} · 발음 문제 ${bads}`;
   output();
 }
 function output() {
-  const bad = D.rows.filter((r) => st(r.key).mark === "bad");
+  const bad = D.rows.filter((r) => st(sk(r)).mark === "bad");
   $("out").textContent = bad.length
-    ? bad.map((r) => `- ${r.where[0]} | ${r.text} | ${st(r.key).memo || "(메모 없음)"}`).join("\n")
+    ? bad.map((r) => `- ${r.where[0]} | ${r.text} | ${st(sk(r)).memo || "(메모 없음)"}`).join("\n")
     : "아직 없음";
 }
-for (const id of ["role", "level", "q", "undone"]) $(id).addEventListener("input", render);
+for (const id of ["verdict", "role", "level", "q", "undone"]) $(id).addEventListener("input", render);
 $("copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("out").textContent); $("copied").textContent = "복사했습니다 — 대화창에 붙여 넣어 주세요"; }
   catch { $("copied").textContent = "복사가 막혔습니다 — 위 목록을 직접 선택해 복사해 주세요"; }
