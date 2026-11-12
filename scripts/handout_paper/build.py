@@ -24,6 +24,8 @@ HUD = ROOT / "docs" / "design" / "handout-hud.html"
 TPL = pathlib.Path(__file__).with_name("template.html")
 ICON = ROOT / "scripts" / "handout_hud" / "reachy-mini-icon.png"
 SCENES = pathlib.Path(__file__).with_name("scenes.js")
+# 공연 모드(로봇 2대가 말하고 화면은 따라간다, 2026-11-12) — 세 교육자료 HTML 이 같은 모듈을 인라인한다.
+LIVE = ROOT / "scripts" / "handout_live" / "live_follow.js"
 OUT = ROOT / "docs" / "design" / "paper-stage.html"
 LEVEL_KEY, LEVEL_NAME = "l3", "일반"
 RATE = 24000
@@ -94,7 +96,7 @@ def main() -> None:
 
     icon = "data:image/png;base64," + base64.b64encode(ICON.read_bytes()).decode()
     payload = json.dumps({"level": LEVEL_NAME, "cues": out_cues}, ensure_ascii=False).replace("</", "<\\/")
-    OUT.write_text(TPL.read_text().replace("/*__SCENES__*/", SCENES.read_text()).replace("__ICON__", icon).replace("__DATA__", payload))
+    OUT.write_text(TPL.read_text().replace("/*__LIVE__*/", LIVE.read_text()).replace("/*__SCENES__*/", SCENES.read_text()).replace("__ICON__", icon).replace("__DATA__", payload))
     print(f"wrote {OUT.relative_to(ROOT)} — {OUT.stat().st_size:,} bytes")
 
 

@@ -369,6 +369,9 @@ class Handler(BaseHTTPRequestHandler):
     def _el_speak(self, body: dict, raw: bytes) -> None:
         """캐시에 없는 문장을 ElevenLabs 로 합성해 **받는 대로** 흘린다(모아서 보내면 첫 소리가 늦는다)."""
         cfg = self.server.el
+        if body.get("instructions"):
+            self._note_once("\0instructions", "로봇 요청의 어조 지시(instructions)는 ElevenLabs 로 보내지 않는다 — 오디션으로 고른 "
+                            f"목소리가 어조를 맡는다(예: {str(body.get('instructions'))[:30]!r}). 이 경고는 한 번만 낸다")
         try:
             vid, payload = el.el_request(body, voices=cfg.voices, model=cfg.model, readings=cfg.readings,
                                          language_code=cfg.language_code)
@@ -467,6 +470,28 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
 
 
+def make_live(engine: str, env: dict | None = None) -> tuple[str, ElevenLabsLive | None]:
+    """기동 때 실제로 쓸 (엔진, 실시간 경로). elevenlabs 인데 키가 없으면 **경고하고 crispasr 로**.
+
+    따로 뺀 이유: 이 분기가 `main()` 안에만 있으면 테스트할 수 없다(서버가 뜬다) — "키 없이 켜면 조용히 Qwen 으로 돈다" 가
+    시연장에서 "목소리가 왜 바뀌었나" 로만 드러나는 사고를 테스트로 막는다.
+    """
+    env = os.environ if env is None else env
+    if engine != "elevenlabs":
+        return engine, None
+    key = el.load_api_key(env)
+    if not key:
+        log.warning("TTS_ENGINE=elevenlabs 인데 ElevenLabs 키가 없다(ELEVENLABS_API_KEY 또는 저장소 루트 .env) "
+                    "— 로컬 CrispASR 로 돈다")
+        return "crispasr", None
+    on_fail = (env.get("TTS_EL_ON_FAIL") or "notice").strip().lower()
+    if on_fail not in ("notice", "local"):
+        raise SystemExit(f"TTS_EL_ON_FAIL 은 notice/local 중 하나다: {on_fail!r}")
+    return engine, ElevenLabsLive(key=key, voices=el.voice_map(env),
+                                  model=env.get("TTS_EL_MODEL_LIVE") or el.MODEL_LIVE,
+                                  readings=el.load_readings(), on_fail=on_fail)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description="TTS 결과 캐시 프록시")
@@ -477,22 +502,7 @@ def main() -> None:
     ap.add_argument("--engine", default=None, choices=el.ENGINES,
                     help="캐시에 없는 문장을 누가 합성하나(기본 TTS_ENGINE, 없으면 crispasr)")
     args = ap.parse_args()
-    engine = args.engine or el.engine_from_env()
-    live = None
-    if engine == "elevenlabs":
-        key = el.load_api_key()
-        if not key:
-            # 실패는 소리 내서 — 키 없이 조용히 Qwen 으로 돌면 시연장에서 "목소리가 왜 바뀌었나" 를 못 찾는다.
-            log.warning("TTS_ENGINE=elevenlabs 인데 ElevenLabs 키가 없다(ELEVENLABS_API_KEY 또는 저장소 루트 .env) "
-                        "— 로컬 CrispASR 로 돈다")
-            engine = "crispasr"
-        else:
-            on_fail = (os.environ.get("TTS_EL_ON_FAIL") or "notice").strip().lower()
-            if on_fail not in ("notice", "local"):
-                raise SystemExit(f"TTS_EL_ON_FAIL 은 notice/local 중 하나다: {on_fail!r}")
-            live = ElevenLabsLive(key=key, voices=el.voice_map(),
-                                  model=os.environ.get("TTS_EL_MODEL_LIVE") or el.MODEL_LIVE,
-                                  readings=el.load_readings(), on_fail=on_fail)
+    engine, live = make_live(args.engine or el.engine_from_env())
     cache = Cache(pathlib.Path(args.cache_dir).expanduser() if args.cache_dir else default_cache_dir(engine))
     baked_by = cache.engine()
     if live:

@@ -98,6 +98,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
   <div class="start" id="start"><button type="button" id="startbtn">▶ 공연 시작<small>로봇 목소리가 나와요 · 01부터 19까지 이어서</small></button></div>
 </div>
 <script type="application/json" id="data">__DATA__</script>
+<script>/*__LIVE__*/</script>
 <script>
 (async function () {
   'use strict';
@@ -222,7 +223,9 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
     /** 말에 맞춘 시각: turn 의 si 번째 문장에서 kw 가 나오는 때(글자 위치 비례 — 캐시 음성에는 낱말 시각이 없다) */
     sc.at = function (turn, si, kw, lead) { var s = sc.U(turn).s[si || 0]; if (!kw) return s.t0; var i = s.x.indexOf(kw); if (i < 0) { console.warn('대사에 없는 낱말:', kw, s.x); return s.t0; } return Math.max(0, s.t0 + (s.t1 - s.t0) * i / s.x.length - (lead == null ? .12 : lead)); };
     /** 큐 전체 대사에서 kw 가 from 이후 처음 나오는 때. 없으면 경고하고 from 을 돌려준다 */
-    sc.w = function (kw, from) { from = from || 0; for (var i = 0; i < cue.utt.length; i++) { var ss = cue.utt[i].s; for (var j = 0; j < ss.length; j++) { var s = ss[j], k = s.x.indexOf(kw); if (k < 0) continue; var t = s.t0 + (s.t1 - s.t0) * k / s.x.length - .12; if (t >= from - .01) return Math.max(0, t); } } console.warn('[' + cue.id + '] 대사에 없는 낱말:', kw); return from; };
+    // 낱말을 말하는 시각 — `find` 는 없으면 null(조용히), `w` 는 없으면 경고(장면 코드가 쓰는 낱말은 반드시 대사에 있어야 한다).
+    sc.find = function (kw, from, role) { from = from || 0; if (!kw) return null; for (var i = 0; i < cue.utt.length; i++) { if (role && cue.utt[i].role !== role) continue; var ss = cue.utt[i].s; for (var j = 0; j < ss.length; j++) { var s = ss[j], k = s.x.indexOf(kw); if (k < 0) continue; var t = s.t0 + (s.t1 - s.t0) * k / s.x.length - .12; if (t >= from - .01) return Math.max(0, t); } } return null; };
+    sc.w = function (kw, from) { var t = sc.find(kw, from); if (t == null) { console.warn('[' + cue.id + '] 대사에 없는 낱말:', kw); return from || 0; } return t; };
     sc.add = function (a) {
       a.id = sc.actors.length + 1; a.parts = a.parts || []; a.h = a.h == null ? 10 : a.h; a.rot = a.rot || 0; a.at = a.at || 0; a.phase = a.phase || 0;
       if (a.label) { var d = document.createElement('div'); d.className = 'lab ' + (a.label.c || ''); var sp = document.createElement('span');
@@ -249,10 +252,16 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
         pose: function (tq, step, st) { var on = st.role === r[0]; return on ? { dy: BOB[step % 6], rot: TILT[step % 6] * DEG, jit: 0 } : null; } });
       sc.add({ parts: [[P_(S.rect(96, 34), r[5], { h: 16 })]], x: r[1], y: 388, rot: (i ? 2 : -2) * DEG, h: 16, at: .4 + i * .17, fixed: 1, label: { c: 'l-name', t: r[4] } });
     });
-    // 아래 카드(포인트마다 한 장 — 도슨트가 그 포인트를 말하기 시작할 때 놓인다) · 기억해 두기
-    var gap = 26, cw = (1480 - gap * (n - 1)) / n;
+    // 아래 카드 · 기억해 두기. 카드는 **그 포인트를 실제로 말하는 순간**에 놓인다 — 제목 첫 낱말("맥스웰 · 이론" → "맥스웰")을 대사에서 찾는다.
+    // ~~도슨트 i턴 시작~~ 은 틀렸다: 턴 번호와 포인트 번호가 같지 않아 02 에서 '맥스웰' 카드가 맥스웰을 말하기 20초 전(발명·발견 도입 턴)에
+    // 떴다(웹툰 작업자 C 가 같은 어긋남을 찾음). **도슨트 말에서만, 첫 도슨트 턴부터** 찾는다 — 사회자 여는 말에 같은 낱말('전파체험관')이
+    // 먼저 나와 카드가 인사말 도중에 뜨는 것을 막는다. 낱말이 없으면 예전 자리로, 앞 카드보다 일찍 놓이지 않게 순서를 지킨다.
+    var gap = 26, cw = (1480 - gap * (n - 1)) / n, prevAt = sc.at('docent0');
     cue.items.forEach(function (it, i) {
-      sc.add({ parts: [[P_(S.rect(cw, 186), COL.cream, { h: 7 })]], x: 60 + cw / 2 + i * (cw + gap), y: 772, rot: [-.5, .4, -.3][i % 3] * DEG, h: 7, at: sc.at('docent' + i), fixed: 1,
+      var cardAt = sc.find(String(it.t || '').split(/\s*·\s*/)[0], prevAt, 'docent');
+      if (cardAt == null) cardAt = sc.at('docent' + i);
+      cardAt = prevAt = Math.max(cardAt, prevAt);
+      sc.add({ parts: [[P_(S.rect(cw, 186), COL.cream, { h: 7 })]], x: 60 + cw / 2 + i * (cw + gap), y: 772, rot: [-.5, .4, -.3][i % 3] * DEG, h: 7, at: cardAt, fixed: 1,
         label: { c: 'l-card', w: cw - 48, num: String(i + 1), title: it.t, t: it.b } });
     });
     sc.add({ parts: [[P_(S.tag(1010, 58), COL.amber, { h: 18 })]], x: 800, y: 636, rot: -.5 * DEG, h: 18, at: sc.at('after'), fixed: 1, label: { c: 'l-rem', pre: '기억해 두기', t: cue.remember } });
@@ -334,7 +343,13 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
   }
 
   // ───────────────────────────────────────────── 재생
-  var audios = CUES.map(function (c) { var a = new Audio(c.audio); a.preload = 'auto'; return a; });
+  // 공연 모드(`/stage/paper` 또는 `?live`) — 로봇 2대가 말하고 이 화면은 소리 없이 따라간다(scripts/handout_live/live_follow.js).
+  // 오디오를 만들지 않는다: 화면이 소리를 내면 로봇과 겹친다. 시계는 감독 이벤트다.
+  var LF = LiveFollow.create({ cues: CUES, level: DATA.level, onCue: function (i) { cur = i; lastKey = ''; paint(); } });
+  var SILENT = { pause: function () {}, play: function () {}, currentTime: 0, paused: true, ended: false, addEventListener: function () {} };
+  var audios = CUES.map(function (c) { if (LF.enabled) return SILENT; var a = new Audio(c.audio); a.preload = 'auto'; return a; });
+  // 장면 시계는 이 함수 하나 — 미리보기는 오디오, 공연은 감독 이벤트.
+  function clock() { return LF.enabled ? LF.time() : audios[cur].currentTime; }
   var WARN = [], cw = console.warn; console.warn = function () { WARN.push(Array.prototype.join.call(arguments, ' ')); cw.apply(console, arguments); };
   var q = new URLSearchParams(location.search), frozen = q.get('t') != null ? parseFloat(q.get('t')) : null, lastKey = '';
   var fmt = function (s) { s = Math.max(0, s); return Math.floor(s / 60) + ':' + ('0' + Math.floor(s % 60)).slice(-2); };
@@ -350,7 +365,13 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
   $('#startbtn').addEventListener('click', function () { $('#start').hidden = true; setCue(0, true); });
   $('#scrub').addEventListener('input', function () { audios[cur].currentTime = parseFloat(this.value); });
   document.addEventListener('keydown', function (ev) { if (/^(SELECT|INPUT)$/.test((ev.target || {}).tagName || '')) return; if (ev.key === ' ') { ev.preventDefault(); toggle(); } else if (ev.key === 'ArrowRight' && cur + 1 < CUES.length) setCue(cur + 1, !audios[cur].paused); else if (ev.key === 'ArrowLeft' && cur > 0) setCue(cur - 1, !audios[cur].paused); });
-  $('#note').textContent = DATA.level + ' 수준 · 캐시 음성 재활용';
+  $('#note').textContent = DATA.level + ' 수준 · ' + (LF.enabled ? '공연 따라가기(소리는 로봇이 낸다)' : '미리보기 — 캐시 음성 재생');
+  if (LF.enabled) {
+    // 재생·탐색은 공연이 정한다 — 운영자가 눌러 화면만 어긋나게 만들지 않도록 숨긴다.
+    ['#prev', '#nextc', '#play', '#scrub', '#time', '#cues'].forEach(function (s) { $(s).hidden = true; });
+    $('#start').hidden = true;
+    document.documentElement.setAttribute('data-live', '1');
+  }
 
   bakeAll();
   // `?check=1` — 19장을 모두 지어 보고 '대사에 없는 낱말' 경고를 body[data-warn] 에 적는다(헤드리스 점검용)
@@ -359,13 +380,13 @@ button:focus-visible,input:focus-visible{outline:3px solid #7FD3F5;outline-offse
   paint();
   var rz = null; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { shownScene = -1; bakeAll(); lastKey = ''; }, 250); });
   (function loop() {
-    var t = frozen != null ? frozen : audios[cur].currentTime, key = cur + ':' + Math.floor(t * STEP + 1e-6);
+    var t = frozen != null ? frozen : clock(), key = cur + ':' + Math.floor(t * STEP + 1e-6);
     if (key !== lastKey) { draw(cur, t); lastKey = key; }
     bubbles(CUES[cur], t);
-    if (frozen == null) { $('#scrub').value = t; $('#time').textContent = fmt(t) + ' / ' + fmt(CUES[cur].dur); $('#play').textContent = audios[cur].paused ? '▶ 재생' : '❚❚ 멈춤'; }
+    if (frozen == null && !LF.enabled) { $('#scrub').value = t; $('#time').textContent = fmt(t) + ' / ' + fmt(CUES[cur].dur); $('#play').textContent = audios[cur].paused ? '▶ 재생' : '❚❚ 멈춤'; }
     requestAnimationFrame(loop);
   })();
-  window.paperStage = { draw: draw, getScene: getScene, setCue: setCue };
+  window.paperStage = { draw: draw, getScene: getScene, setCue: setCue, live: LF, cue: function () { return cur; }, clock: clock };
   document.documentElement.setAttribute('data-ready', '1');
 })();
 </script>

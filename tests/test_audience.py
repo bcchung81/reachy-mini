@@ -211,8 +211,9 @@ def test_보조_소켓_hello_에는_이력_경고가_없고_허용_칸만_있다
     aud["hub"].publish("sent", role="mc", type="mic", fields={"open": True})
     with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
         hello = json.loads(ws.recv(timeout=3))
-    assert set(hello) == {"kind", "cues", "say", "snapshot"}
-    assert hello["say"] == {"kind": "say", "role": "mc", "text": "마지막 대사", "cue_id": "01-intro"}
+    assert set(hello) == {"kind", "cues", "say", "started", "snapshot"}
+    assert hello["say"] == {"kind": "say", "role": "mc", "text": "마지막 대사", "cue_id": "01-intro",
+                            "cue": "01-intro", "turn": "open"}
     assert hello["cues"][0] == {"id": "01-intro", "title": "체험관 개요"}             # topic(저작 메모) 없음
     assert set(hello["snapshot"]) == set(AUDIENCE_SNAPSHOT_KEYS)                        # connected·rejected 없음
     raw = json.dumps(hello, ensure_ascii=False)
@@ -228,7 +229,8 @@ def test_보조_소켓은_대사만_흘리고_경고와_마이크는_흘리지_�
         aud["hub"].publish("sent", role="docent", type="say",
                            fields={"cue_id": "01-intro:docent", "seq": 2, "text": "도슨트 대사"})
         got = _recv_until(ws, lambda m: m["kind"] != "snapshot")
-        assert got == {"kind": "say", "role": "docent", "text": "도슨트 대사", "cue_id": "01-intro:docent"}
+        assert got == {"kind": "say", "role": "docent", "text": "도슨트 대사", "cue_id": "01-intro:docent",
+                       "cue": "01-intro", "turn": "docent1"}
         snap = _recv_until(ws, lambda m: m["kind"] == "snapshot")
         assert set(snap) == {"kind", *AUDIENCE_SNAPSHOT_KEYS}
 
@@ -309,3 +311,175 @@ def test_모르는_코스의_교육자료는_400으로_거절한다(aud):
 def test_보조_화면은_코스_안_위치로_번호를_그린다():
     src = _page()
     assert 'pos.textContent = cp[0] ? cp[0] + " / " + cp[1] : "";' in src
+
+
+# ── 서버: 따라가기용 큐·턴 필드 ───────────────────────────────────────
+
+
+def test_보조_소켓의_say_에_큐와_턴이_실린다(aud):
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        json.loads(ws.recv(timeout=3))                                               # hello
+        for seq, (label, want) in enumerate([
+            ("01-intro", ("01-intro", "open")),
+            ("01-intro:pt1", ("01-intro", "ask1")),
+            ("01-intro:pt0:docent", ("01-intro", "docent0")),
+            ("01-intro:docent", ("01-intro", "docent1")),                           # 마지막 도슨트 = 포인트 수 - 1
+            ("01-intro:after", ("01-intro", "after")),
+            ("01-intro:qa", ("01-intro", "qa")),
+            ("02-x:docent", ("02-x", "docent0")),                                   # 포인트 1개 큐
+        ], start=1):
+            aud["hub"].publish("sent", role="docent", type="say", fields={"cue_id": label, "seq": seq, "text": label})
+            got = _recv_until(ws, lambda m: m["kind"] == "say")
+            assert (got["cue"], got["turn"]) == want, label
+
+
+def test_모르는_라벨은_자막만_흐르고_큐_대목은_None_이다(aud):
+    """단독 모드(`solo:qa`)나 규칙에 안 맞는 라벨 — 자막(text)은 그대로 흐르고 교육자료는 장을 바꾸지 않는다."""
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        json.loads(ws.recv(timeout=3))
+        aud["hub"].publish("sent", role="mc", type="say", fields={"cue_id": "solo:qa", "seq": 1, "text": "단독 답"})
+        got = _recv_until(ws, lambda m: m["kind"] == "say")
+    assert got == {"kind": "say", "role": "mc", "text": "단독 답", "cue_id": "solo:qa", "cue": None, "turn": None}
+
+
+def test_스냅샷에_관람객_수준이_실린다(aud):
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        hello = json.loads(ws.recv(timeout=3))
+        snap = _recv_until(ws, lambda m: m["kind"] == "snapshot")
+    assert hello["snapshot"]["level"] == "초등" and snap["level"] == "초등"      # 가짜감독의 스냅샷 level
+
+
+def test_감독이_큐시트를_못_주면_경고하고_자막은_계속_흐른다(tmp_path):
+    """연결이 여럿이어도 경고는 **한 번**이다 — 연결마다 송신 스레드가 있어 같은 순간에 `_points_of` 를 부른다."""
+    class 큐시트못주는감독(가짜감독):
+        def cues(self):
+            time.sleep(0.2)                                      # 여러 스레드가 겹치게 느리게 실패한다
+            raise RuntimeError("큐시트 없음")
+
+    page = tmp_path / "p.html"
+    page.write_text("x", encoding="utf-8")
+    hub, warned = DashboardHub(), []
+    ds = DashboardServer(hub, 큐시트못주는감독(), page=page, interval=0.05, warn=warned.append)
+    with _served(ds) as port:
+        socks = [connect(f"ws://127.0.0.1:{port}/ws/audience", open_timeout=3) for _ in range(6)]
+        try:
+            for ws in socks:
+                json.loads(ws.recv(timeout=3))
+            hub.publish("sent", role="mc", type="say", fields={"cue_id": "01-intro", "seq": 1, "text": "그래도 자막"})
+            for ws in socks:
+                got = _recv_until(ws, lambda m: m["kind"] == "say")
+                assert got["text"] == "그래도 자막" and got["cue"] is None and got["turn"] is None
+        finally:
+            for ws in socks:
+                ws.close()
+    assert sum("큐시트" in w for w in warned) == 1, warned                            # 한 번만 알린다
+
+
+def test_여러_관람객_기기가_동시에_붙어도_모두_같은_대사를_받는다(aud):
+    """감독은 느린 폰을 기다리지 않는다 — 허브는 쌓기만 하고 연결마다 송신 스레드가 따로다."""
+    socks = [connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) for _ in range(20)]
+    try:
+        for ws in socks:
+            json.loads(ws.recv(timeout=3))                                           # hello
+        t0 = time.monotonic()
+        aud["hub"].publish("sent", role="mc", type="say", fields={"cue_id": "01-intro", "seq": 1, "text": "다 같이"})
+        assert time.monotonic() - t0 < 0.5
+        for ws in socks:
+            got = _recv_until(ws, lambda m: m["kind"] == "say")
+            assert got["text"] == "다 같이" and got["turn"] == "open"
+    finally:
+        for ws in socks:
+            ws.close()
+
+
+# ── 공연 모드: 로봇의 발화 시작·끝(2026-11-12) ────────────────────────
+# 실제 시연에서는 로봇 2대가 소리를 내고 교육자료 화면은 소리 없이 따라간다 — 그 시계가 이 두 이벤트다.
+
+
+def test_보조_소켓은_로봇의_발화_시작과_끝을_큐_턴과_함께_흘린다(aud):
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        json.loads(ws.recv(timeout=3))                                               # hello
+        aud["hub"].publish("recv", role="docent", type="speaking_started", fields={"cue_id": "01-intro:pt0:docent", "seq": 7})
+        got = _recv_until(ws, lambda m: m["kind"] != "snapshot")
+        assert got == {"kind": "speaking_started", "role": "docent", "seq": 7, "cue_id": "01-intro:pt0:docent",
+                       "cue": "01-intro", "turn": "docent0"}
+        aud["hub"].publish("recv", role="docent", type="speaking_ended", fields={"cue_id": "01-intro:pt0:docent", "seq": 7})
+        got = _recv_until(ws, lambda m: m["kind"] != "snapshot")
+        assert got["kind"] == "speaking_ended" and got["turn"] == "docent0"
+
+
+def test_보조_소켓은_관람객_STT_와_오류는_여전히_흘리지_않는다(aud):
+    """발화 시작·끝을 허용하면서 `recv` 전체를 연 것이 아니다 — 관람객 말(heard)·로봇 오류는 운영 정보다."""
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        json.loads(ws.recv(timeout=3))
+        aud["hub"].publish("recv", role="mc", type="heard", fields={"text": "관람객 원문"})
+        aud["hub"].publish("recv", role="mc", type="error", fields={"where": "tts", "detail": "운영 비밀"})
+        aud["hub"].publish("recv", role="mc", type="speaking_started", fields={"cue_id": "01-intro", "seq": 1})
+        got = _recv_until(ws, lambda m: m["kind"] != "snapshot")
+    assert got["kind"] == "speaking_started"                                         # 앞의 둘은 건너뛰었다
+
+
+def test_공연_도중에_붙은_화면은_지금_발화가_몇_초째인지_hello_로_안다(aud):
+    """화면을 새로 고쳐도 지금 대목의 어디쯤인지 안다 — 경과는 서버가 잰다(화면 PC 시계와 무관)."""
+    aud["hub"].publish("sent", role="mc", type="say", fields={"cue_id": "01-intro:pt1", "seq": 3, "text": "질문"})
+    aud["hub"].publish("recv", role="mc", type="speaking_started", fields={"cue_id": "01-intro:pt1", "seq": 3})
+    time.sleep(0.3)
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        hello = json.loads(ws.recv(timeout=3))
+    assert hello["say"]["turn"] == "ask1"
+    assert hello["started"]["turn"] == "ask1" and 0.25 <= hello["started"]["age_s"] < 3
+
+
+def test_새_대사를_보냈는데_아직_시작_보고가_없으면_started_는_비어_있다(aud):
+    """앞 발화의 시작 보고를 새 대사의 것으로 착각하면 화면이 엉뚱한 시각에서 출발한다."""
+    aud["hub"].publish("recv", role="mc", type="speaking_started", fields={"cue_id": "01-intro", "seq": 1})
+    aud["hub"].publish("sent", role="docent", type="say", fields={"cue_id": "01-intro:pt0:docent", "seq": 2, "text": "설명"})
+    with connect(f"ws://127.0.0.1:{aud['port']}/ws/audience", open_timeout=3) as ws:
+        hello = json.loads(ws.recv(timeout=3))
+    assert hello["say"]["turn"] == "docent0" and hello["started"] is None
+
+
+# ── 교육자료 모션 화면(공연 모드, 2026-11-12) ─────────────────────────
+
+
+@pytest.fixture
+def motion(tmp_path):
+    page = tmp_path / "paper-stage.html"
+    page.write_text("<!doctype html><title>종이 무대</title>", encoding="utf-8")
+    hub, warned = DashboardHub(), []
+    ds = DashboardServer(hub, 가짜감독(), page=tmp_path / "x.html", interval=0.05, warn=warned.append,
+                         motion_pages={"paper": page, "webtoon": tmp_path / "없는.html"})
+    with _served(ds) as port:
+        yield {"port": port, "warned": warned}
+
+
+def test_교육자료_모션_화면은_감독과_같은_오리진에서_준다(motion):
+    """file:// 로 연 페이지는 Origin: null 이라 /ws/audience 가 거절한다 — 같은 오리진에서 줘야 공연을 따라간다."""
+    status, ctype, body = _get(motion["port"], "/stage/paper")
+    assert status == 200 and ctype.startswith("text/html") and "종이 무대" in body
+
+
+def test_모르는_모션_화면과_경로_장난은_404(motion):
+    for path in ("/stage/none", "/stage/../dashboard.py", "/stage/", "/stage/paper/x"):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            _get(motion["port"], path)
+        assert e.value.code == 404, path
+
+
+def test_모션_화면_파일이_없으면_500_과_경고(motion):
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _get(motion["port"], "/stage/webtoon")
+    assert e.value.code == 500 and any("교육자료 모션 화면" in w for w in motion["warned"])
+
+
+def test_같은_오리진의_모션_화면은_관람객_소켓에_붙는다(motion):
+    """`/stage/paper` 를 준 서버의 Origin 으로 붙으면 받는다(다른 사이트는 거절 — 위 테스트)."""
+    port = motion["port"]
+    with connect(f"ws://127.0.0.1:{port}/ws/audience", origin=f"http://127.0.0.1:{port}", open_timeout=3) as ws:
+        assert json.loads(ws.recv(timeout=3))["kind"] == "hello"
+
+
+def test_실제_모션_화면_목록은_세_수준_화면이다():
+    from stage.dashboard import MOTION_PAGES
+    assert set(MOTION_PAGES) == {"paper", "webtoon", "exploded"}
+    assert MOTION_PAGES["paper"].name == "paper-stage.html" and MOTION_PAGES["paper"].exists()

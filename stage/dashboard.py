@@ -28,6 +28,7 @@ from websockets.sync.server import serve as _ws_serve
 
 from stage.console import dispatch as console_dispatch
 from stage.handout import render_handout
+from stage.say_label import parse_say_label
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8778
@@ -37,19 +38,44 @@ PAGE = pathlib.Path(__file__).with_name("dashboard_page.html")
 # 로봇 대사와 스냅샷의 아래 칸만 흘린다. 조정실 소켓(`/ws`)의 hello 에는 경고·거부 사유·관람객 STT 원문이 담긴
 # 이벤트 이력이 실리고 스냅샷에는 연결·거부·카메라 상태가 있다 — 관람객 화면에 나갈 것이 아니다.
 AUDIENCE_PAGE = pathlib.Path(__file__).with_name("audience_page.html")
+# 교육자료 모션 화면(2026-11-12) — 실제 시연에서는 로봇 2대가 말하고 이 화면은 소리 없이 따라간다(공연 모드,
+# `scripts/handout_live/live_follow.js`). **감독과 같은 오리진에서 줘야 한다** — `file://` 로 연 페이지는 `Origin: null` 이라
+# `/ws/audience` 의 Origin 검사(`_check_origin`)가 거절한다(그게 맞다 — 검사를 풀지 않고 여기서 준다).
+# 이름은 허용 목록이다(경로를 그대로 파일 이름으로 쓰지 않는다 — `/stage/../..` 같은 경로가 파일을 고르지 못하게).
+_DESIGN = pathlib.Path(__file__).resolve().parent.parent / "docs" / "design"
+MOTION_PAGES = {
+    "paper": _DESIGN / "paper-stage.html",        # 일반 — 종이 무대(aimotion 24)
+    "webtoon": _DESIGN / "webtoon-stage.html",    # 초등·중고등 — 웹툰 칸(aimotion 157)
+    "exploded": _DESIGN / "exploded-stage.html",  # 전문가 — 분해도(aimotion 148)
+}
 AUDIENCE_SNAPSHOT_KEYS = (
     "cue_index", "cue_id", "cue_count", "state", "speaking_role",
     "question_wait_s", "question_wait_total_s", "mode", "show_running", "course_position",
+    # 관람객 수준 이름 — 교육자료가 감독의 수준을 따라간다(2026-10-01 계획 Task 2). 관람객 화면에 내보내도 되는 값이다.
+    "level",
 )
+# 로봇이 보고하는 발화 시작·끝(2026-11-12) — **교육자료 공연 모드가 로봇 발화를 따라가는 시계**다. 실제 시연에서는
+# 로봇 2대가 소리를 내고 화면은 소리 없이 따라간다(`scripts/handout_live/live_follow.js`). 싣는 칸은 역할·라벨·순번·큐·턴뿐.
+SPEAKING_TYPES = ("speaking_started", "speaking_ended")
 
 
-def audience_event(ev: dict) -> dict | None:
-    """허브 이벤트 → 보조 화면 이벤트. **로봇에게 실제로 보낸 대사(`sent`/`say`)만** 넘긴다 — 나머지는 None."""
-    if ev.get("kind") != "sent" or ev.get("type") != "say":
-        return None
+def audience_event(ev: dict, points_of: Callable[[str], int | None] | None = None) -> dict | None:
+    """허브 이벤트 → 보조 화면 이벤트. **로봇에게 보낸 대사(`sent`/`say`)와 로봇의 발화 시작·끝(`recv`)만** 넘긴다.
+
+    `cue`·`turn` 은 발화 라벨(`cue_id`)을 푼 것이다(`stage/say_label.py`) — 교육자료가 지금 말하는 대목을
+    따라가는 데 쓴다. 풀 수 없으면(`points_of` 가 없거나 큐시트에 없는 라벨, 단독 모드) 둘 다 None 이고
+    자막(`text`)은 그대로 흐른다. 나머지 이벤트(경고·관람객 STT·연결)는 None — 관람객 화면에 나갈 것이 아니다.
+    """
     fields = ev.get("fields") or {}
-    return {"kind": "say", "role": ev.get("role"), "text": str(fields.get("text", "")),
-            "cue_id": str(fields.get("cue_id", ""))}
+    label = str(fields.get("cue_id", ""))
+    ref = parse_say_label(label, points_of) if points_of is not None else None
+    where = {"cue_id": label, "cue": ref.cue if ref else None, "turn": ref.turn if ref else None}
+    if ev.get("kind") == "sent" and ev.get("type") == "say":
+        return {"kind": "say", "role": ev.get("role"), "text": str(fields.get("text", "")), **where}
+    if ev.get("kind") == "recv" and ev.get("type") in SPEAKING_TYPES:
+        seq = fields.get("seq")
+        return {"kind": ev.get("type"), "role": ev.get("role"), "seq": seq if isinstance(seq, int) else None, **where}
+    return None
 
 
 def audience_snapshot(snap: dict | None) -> dict | None:
@@ -63,15 +89,21 @@ class DashboardServer:
     def __init__(self, hub, director, camera=None, dispatch: Callable = console_dispatch,
                  page: pathlib.Path = PAGE, interval: float = SNAPSHOT_INTERVAL_S,
                  warn: Callable[[str], None] = print,
-                 audience_page: pathlib.Path = AUDIENCE_PAGE) -> None:
+                 audience_page: pathlib.Path = AUDIENCE_PAGE,
+                 motion_pages: dict[str, pathlib.Path] | None = None) -> None:
         self._hub = hub
         self._director = director
         self._camera = camera
         self._dispatch = dispatch
         self._page = page
         self._audience_page = audience_page
+        self._motion_pages = dict(MOTION_PAGES if motion_pages is None else motion_pages)
         self._interval = interval
         self._warn = warn
+        # 큐 id → 포인트 수. 라벨을 풀 때 처음 한 번 감독에게 묻는다(큐시트는 기동 뒤 안 바뀐다).
+        self._points: dict[str, int] | None = None
+        # 연결마다 송신 스레드가 있어 같은 순간에 `_points_of` 를 부른다 — 잠그지 않으면 실패 경고가 연결 수만큼 난다.
+        self._points_lock = threading.Lock()
 
     # ── HTTP ──────────────────────────────────────────────────────
     def process_request(self, connection, request):
@@ -89,6 +121,11 @@ class DashboardServer:
             return self._serve_file(connection, self._audience_page, "관람객 보조 화면")
         if path == "/handout":
             return self._serve_handout(connection, split.query)
+        if path.startswith("/stage/"):
+            page = self._motion_pages.get(path[len("/stage/"):])
+            if page is None:
+                return connection.respond(404, "not found")
+            return self._serve_file(connection, page, f"교육자료 모션 화면({page.name})")
         return connection.respond(404, "not found")
 
     @staticmethod
@@ -253,15 +290,23 @@ class DashboardServer:
         sub = self._hub.subscribe()
         stop = threading.Event()
         try:
-            last_say = None
+            # 마지막 대사 하나 + (그 뒤에 왔다면) 마지막 발화 시작 — 공연 도중에 붙은 화면이 지금 몇 초째인지 안다.
+            # 경과(`age_s`)는 **서버가** 잰다: 화면 PC 와 감독 PC 의 시계가 달라도 어긋나지 않게.
+            last_say, last_started = None, None
             for ev in reversed(self._hub.history()):
-                last_say = audience_event(ev)
-                if last_say is not None:
+                got = audience_event(ev, self._points_of)
+                if got is None:
+                    continue
+                if got["kind"] == "speaking_started" and last_started is None and last_say is None:
+                    last_started = {**got, "age_s": round(max(0.0, time.time() - float(ev.get("t") or time.time())), 3)}
+                if got["kind"] == "say":
+                    last_say = got
                     break
             ws.send(self._dumps({
                 "kind": "hello",
                 "cues": [{"id": c["id"], "title": c["title"]} for c in self._director.cue_list()],
                 "say": last_say,
+                "started": last_started,
                 "snapshot": audience_snapshot(self._safe_snapshot()),
             }))
             threading.Thread(target=self._pump, args=(ws, sub, stop, True), daemon=True).start()
@@ -314,7 +359,7 @@ class DashboardServer:
                 )
                 dropped_seen = dropped
             if audience and ev is not None:
-                ev = audience_event(ev)
+                ev = audience_event(ev, self._points_of)
             try:
                 if ev is not None:
                     ws.send(self._dumps(ev))
@@ -339,6 +384,25 @@ class DashboardServer:
                 )
                 ws.close(1011, "dashboard send failed")
                 return
+
+    def _points_of(self, cue_id: str) -> int | None:
+        """그 큐의 포인트 수 — 발화 라벨의 마지막 도슨트(`:docent`)를 몇 번째로 읽을지 정한다.
+
+        감독이 큐시트를 못 주면 **한 번만 알리고** 라벨을 못 읽을 뿐 자막은 계속 흐른다(교육자료·보조 화면이
+        죽을 이유가 아니다).
+        """
+        with self._points_lock:
+            if self._points is None:
+                try:
+                    self._points = {c.id: len(c.points) for c in self._director.cues()}
+                except Exception as exc:  # noqa: BLE001
+                    self._warn(
+                        f"라벨을 읽으려 감독에게 큐시트를 물었으나 실패했다({type(exc).__name__}: {exc}) — "
+                        "자막은 그대로 흐르고 큐·대목 정보만 빠진다"
+                    )
+                    self._points = {}
+            points = self._points
+        return points.get(cue_id)
 
     def _safe_snapshot(self) -> dict | None:
         try:

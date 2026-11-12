@@ -1,5 +1,11 @@
 # 교육자료 "공연 따라가기" 라이브 모드 Implementation Plan
 
+> **진행(2026-11-12)**: Task 1(`stage/say_label.py`·`tests/test_say_label.py`)과 Task 2(관람객 소켓의 `say` 에 `cue`·`turn`, 스냅샷 `level`)를
+> 계획서 코드 그대로 구현했다. 여기에 더해 **로봇의 `speaking_started`·`speaking_ended` 를 관람객 소켓으로 내보내고**, hello 에 `started.age_s` 를 싣고,
+> 대시보드가 교육자료 모션 화면을 `/stage/<이름>` 으로 준다 — 실제 시연에서 로봇 2대가 말하고 모션 화면이 소리 없이 따라가게 하려고(사용자 지시).
+> 공용 모듈 `scripts/handout_live/live_follow.js`, 확인 도구 `scripts/handout_live/fake_show.py`, `docs/real-robot-deployment.md` §15.12.
+> Task 3~8(`/handout` 폰 교육자료 재구성 등)은 그대로 남아 있다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 공연 중 관람객 기기의 교육자료(`/handout`)가 감독이 말하게 한 대사를 따라 **지금 이야기 중인 큐의 장을 저절로 고르고**, 도슨트가 말하는 대목에 맞춰 카드를 켜고 그림(신호 보내기·주파수 다이얼)을 **저절로 움직이게** 한다. 로봇 재배포·프로토콜 변경 없이 PC(무대감독) 쪽만 바꾼다.

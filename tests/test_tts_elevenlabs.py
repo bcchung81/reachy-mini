@@ -454,3 +454,32 @@ def test_검수_판정은_한_글자라도_다르면_힌트_받아쓰기로_가�
                       "biased": text}) == "stt"
     assert t.verdict({"text": text, "heard": "노슨트, 타이타니코 이야기를 들려주실래요?", "psim": 0.98,
                       "biased": "노슨트, 타이타닉호 이야기를 들려주실래요?"}) == "suspect"
+
+
+# ── 기동 분기·어조 지시(2026-11-12, 핸드오프 체크리스트의 빈틈) ─────
+def test_EL_엔진인데_키가_없으면_경고하고_crispasr_로_돈다(tmp_path, caplog):
+    import tts_cache_proxy as p
+    env = {"ELEVENLABS_ENV_FILE": str(tmp_path / "없는.env")}       # 저장소 .env 의 진짜 키를 읽지 않게
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        assert p.make_live("elevenlabs", env) == ("crispasr", None)
+    assert "키가 없다" in caplog.text
+
+
+def test_EL_엔진에_키가_있으면_실시간_경로를_만든다(caplog):
+    import tts_cache_proxy as p
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        engine, live = p.make_live("elevenlabs", {"ELEVENLABS_API_KEY": SECRET})
+    assert engine == "elevenlabs" and live.key == SECRET and live.voices == el.DEFAULT_VOICES
+    assert live.on_fail == "notice" and live.model == el.MODEL_LIVE
+    assert SECRET not in caplog.text
+    assert p.make_live("crispasr", {"ELEVENLABS_API_KEY": SECRET}) == ("crispasr", None)
+
+
+def test_EL_어조_지시는_보내지_않고_한_번만_알린다(el_stack, monkeypatch, caplog):
+    url = el_stack["make"]()
+    body = dict(ROBOT_BODY, instructions="밝고 또렷하게, 진행자처럼 활기차게")
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        _robot_speak(url, body, monkeypatch)
+        _robot_speak(url, dict(body, input="두 번째 문장이에요."), monkeypatch)
+    assert len([r for r in caplog.records if "어조 지시" in r.getMessage()]) == 1
+    assert all("instructions" not in c["body"] for c in _FakeEL.calls)
