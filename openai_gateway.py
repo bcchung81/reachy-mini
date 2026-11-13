@@ -16,10 +16,17 @@
 - 키 값은 로그·오류 응답·예외 어디에도 싣지 않는다. OpenAI 의 401 메시지는 키 일부(`sk-…abcd`)를 되돌려 주므로 오류
   요약에서 키와 `sk-…` 꼴을 지운다(`scrub`).
 
+**외부 전용**(2026-11-13, `--no-local` — `reachy.sh` 의 `REACHY_LOCAL_MODELS=off`): 안쪽 로컬 서버를 아예 안 띄운 구성.
+엔진이 openai 이고 키가 있을 때만 뜬다(`external_only_problems` — 아니면 기동에서 멈춘다). OpenAI 가 실패하면 넘길 곳이
+없으니 **경고 한 줄 + 502** — 로봇 LLM 은 예외를 받아 "다시 말해 줄래요" 대사로, 감독은 폴백 대사로, 로봇 STT 는 못 들은
+것으로 간다(`stt.transcribe` → ""). 헬스는 `"engines": "llm=openai,stt=openai,local=off"` 를 싣는다.
+
 실행(보통은 `reachy.sh` 가 띄운다):
     .venv/bin/python openai_gateway.py --host 127.0.0.1 \
         --llm-port 8080 --llm-local http://127.0.0.1:8081 --llm-engine openai \
         --stt-port 8090 --stt-local http://127.0.0.1:8091 --stt-engine openai
+    .venv/bin/python openai_gateway.py --host 127.0.0.1 --no-local \
+        --llm-port 8080 --llm-engine openai --stt-port 8090 --stt-engine openai
 """
 
 from __future__ import annotations
@@ -210,6 +217,22 @@ def config_from_env(env: dict | None = None, *, llm_engine: str | None = None,
     if cfg.stt_openai():
         cfg.stt_keywords = tuple(stt_keywords_from_env(env))
     return cfg
+
+
+def external_only_problems(cfg: Config, services: list[str]) -> list[str]:
+    """외부 전용(`--no-local`)으로 띄울 수 없는 이유들 — 비면 띄운다.
+
+    로컬이 없는 게이트웨이가 local 엔진이거나 키가 없으면 **모든 요청에 502** 만 준다. 띄워 두면 로봇은 "생각이 안 나요"
+    만 되풀이하고 원인은 로그 속에 묻힌다 — 기동에서 멈춘다.
+    """
+    out = []
+    for s in services:
+        eng = cfg.llm_engine if s == "llm" else cfg.stt_engine
+        if eng != "openai":
+            out.append(f"{s.upper()} 엔진이 {eng} 다 — 외부 전용이면 REACHY_{s.upper()}_ENGINE=openai 여야 한다")
+    if not cfg.key:
+        out.append("OpenAI 키가 없다(OPENAI_API_KEY 또는 저장소 루트 .env) — 외부 전용이면 넘길 곳이 없다")
+    return out
 
 
 def stt_keywords_from_env(env: dict) -> list[str]:
@@ -558,8 +581,11 @@ def control_keywords(env: dict | None = None) -> list[str]:
     - 끼어들기 호출어(로봇 앱 `voice_loop.BARGE_IN_WAKE` — 기본 "미니야,그만,잠깐만,스톱"): 앱이 **STT 결과에서** 이 말을 찾아
       말을 끊는다. 앱 모듈은 마이크 장치까지 불러오므로 import 하지 않고, PC 의 `REACHY_BARGE_IN_WAKE` 가 있으면 그것을,
       없으면 앱 소스의 기본값을 읽는다. 로봇 config 에서 바꿨다면 PC 에도 같은 값을 준다.
+    - 진행어(2026-11-13, 감독 `stage.cues._ADVANCE_WORDS` — "다음"·"이어서"·"진행" …): 관람객이 큐 사이 질문 창에서 "다음"·
+      "이어서 진행" 으로 넘긴다. 한두 음절짜리 짧은 말이라 가장 잘 틀린다 — 틀리면 질문으로 가서 도슨트가 그 말에 답을 만든다.
     """
     env = os.environ if env is None else env
+    from stage.cues import _ADVANCE_WORDS
     from stage.director import SPEAKER_LABEL
 
     out = list(dict.fromkeys(SPEAKER_LABEL.values()))
@@ -571,7 +597,8 @@ def control_keywords(env: dict | None = None) -> list[str]:
         except OSError:
             wake = ""
     out += [w.strip() for w in wake.split(",") if w.strip()]
-    return out
+    out += list(_ADVANCE_WORDS)
+    return list(dict.fromkeys(out))
 
 
 def limit_keywords(words: list[str], max_count: int = KEYWORDS_MAX) -> tuple[list[str], list[str]]:
@@ -686,12 +713,13 @@ class GatewayServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, addr, service: str, local: str, cfg: Config, shared: "Shared") -> None:
+    def __init__(self, addr, service: str, local: str | None, cfg: Config, shared: "Shared") -> None:
         super().__init__(addr, Handler)
         self.service = service
-        u = urllib.parse.urlsplit(local)
-        self.local_host = u.hostname or "127.0.0.1"
-        self.local_port = u.port or 80
+        # local=None — 외부 전용(안쪽 로컬 서버 없음). 실패는 502 로 돌려준다(`_no_local`).
+        u = urllib.parse.urlsplit(local) if local else None
+        self.local_host = (u.hostname or "127.0.0.1") if u else None
+        self.local_port = (u.port or 80) if u else 0
         self.cfg = cfg
         self.shared = shared
 
@@ -751,7 +779,9 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self.server.cfg
         info = {"gateway": "openai", "service": self.server.service,
                 # `reachy.sh` 가 "같은 설정의 게이트웨이가 떠 있나" 를 이 한 줄로 가른다 — 모양을 바꾸면 거기도 바꾼다.
-                "engines": f"llm={cfg.llm_engine},stt={cfg.stt_engine}",
+                # 외부 전용이면 `,local=off` 가 붙는다 — 로컬 폴백이 있는 게이트웨이를 외부 전용으로 착각해 재사용하지 않게.
+                "engines": f"llm={cfg.llm_engine},stt={cfg.stt_engine}"
+                           + (",local=off" if self.server.local_host is None else ""),
                 "key": key_status(cfg.key)}
         if self.server.service == "llm":
             info.update(engine=cfg.llm_engine, model=cfg.llm_model, expert_model=cfg.llm_model_expert or None)
@@ -774,6 +804,11 @@ class Handler(BaseHTTPRequestHandler):
         """OpenAI 로 가고 키가 있으면 로컬이 죽어 있어도 200(외부는 부르지 않는다 — 헬스는 자주 불린다).
         아니면 로컬 헬스를 그대로 — 로컬이 곧 이 서비스다."""
         base = self._base_info()
+        if self.server.local_host is None:
+            # 외부 전용 — 물어볼 로컬이 없다. 기동이 "openai + 키" 를 확인했다(`external_only_problems`).
+            ok = self._openai_on()
+            self._send_json(200 if ok else 503, {"status": "ok" if ok else "no-engine", **base, "local": "off"})
+            return
         try:
             conn = self._local_conn(timeout=3.0)
             conn.request("GET", "/health")
@@ -904,6 +939,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _llm_fallback(self, raw: bytes, body: dict, model: str, reason: str) -> None:
         """실패 정책: 로컬 서버로 **원래 본문**을 넘기고 경고 한 줄(요청마다). 로컬도 없으면 502 — 지금과 같은 오류."""
+        if self.server.local_host is None:
+            self._no_local(f"OpenAI LLM({model}) 실패 — 외부 전용이라 넘길 로컬 LLM 이 없다, 502"
+                           f"(로봇은 '다시 말해 줄래요' 대사, 감독은 폴백 대사로 간다): {reason}")
+            return
         log.warning("OpenAI LLM(%s) 실패 — 로컬 LLM 으로 넘긴다: %s", model, scrub(reason, self.server.cfg.key))
         self._local("POST", to_local_chat(raw, body), tag="fallback")
 
@@ -932,6 +971,10 @@ class Handler(BaseHTTPRequestHandler):
                 langs = [cfg.default_lang]
                 text, detected = self._transcribe_retry(file, langs)
         except GatewayError as exc:
+            if self.server.local_host is None:
+                self._no_local(f"OpenAI STT({cfg.stt_model}) 실패 — 외부 전용이라 넘길 로컬 STT 가 없다, 502"
+                               f"(로봇은 못 들은 것으로 친다): {exc}")
+                return
             log.warning("OpenAI STT(%s) 실패 — 로컬 STT 로 넘긴다: %s", cfg.stt_model, scrub(str(exc), cfg.key))
             self._local("POST", raw, tag="fallback")
             return
@@ -994,8 +1037,17 @@ class Handler(BaseHTTPRequestHandler):
         return (d.get("text") or "").strip(), codes
 
     # ── 로컬 통과 ──────────────────────────────────────────────────
+    def _no_local(self, message: str) -> None:
+        """외부 전용에서 로컬로 넘길 자리 — 경고 한 줄(키는 지운다) + 502. 로봇·감독은 지금의 실패 경로를 탄다."""
+        log.warning("%s", scrub(message, self.server.cfg.key))
+        self._send_json(502, {"error": "no-local", "detail": "외부 전용(--no-local) — 로컬 서버를 띄우지 않았다"},
+                        {"X-Reachy-Gateway": "no-local"})
+
     def _local(self, method: str, raw: bytes | None, tag: str) -> None:
         """안쪽 로컬 서버로 넘기고 응답을 **받는 대로** 돌려준다(스트리밍 LLM 이 모아서 나가면 첫 절이 늦는다)."""
+        if self.server.local_host is None:
+            self._no_local(f"{self.server.service.upper()} 요청을 넘길 로컬 서버가 없다(외부 전용) — 502: {method} {self.path}")
+            return
         t0 = time.monotonic()
         try:
             conn = self._local_conn()
@@ -1034,9 +1086,9 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
 
 
-def make_servers(cfg: Config, host: str, *, llm: tuple[int, str] | None = None,
-                 stt: tuple[int, str] | None = None) -> list[GatewayServer]:
-    """리스너를 만든다(띄우지는 않는다). `llm`/`stt` = (포트, 로컬 주소). 테스트가 포트 0 으로 부른다."""
+def make_servers(cfg: Config, host: str, *, llm: tuple[int, str | None] | None = None,
+                 stt: tuple[int, str | None] | None = None) -> list[GatewayServer]:
+    """리스너를 만든다(띄우지는 않는다). `llm`/`stt` = (포트, 로컬 주소 — None 이면 외부 전용). 테스트가 포트 0 으로 부른다."""
     shared = Shared(cfg)
     out = []
     if llm is not None:
@@ -1052,13 +1104,14 @@ def describe(cfg: Config, servers: list[GatewayServer]) -> list[str]:
     for s in servers:
         where = f"{s.server_address[0]}:{s.server_address[1]}"
         local = f"{s.local_host}:{s.local_port}"
+        on_fail = f"실패하면 로컬 {local}" if s.local_host else "실패하면 502(외부 전용 — 로컬 폴백 없음)"
         if s.service == "llm":
             if cfg.llm_openai():
                 expert = (f"전문가 → {cfg.llm_model_expert}(effort {cfg.llm_effort_expert})" if cfg.llm_model_expert
                           else "전문가 라우팅 없음")
                 tier = f", service_tier {cfg.llm_service_tier}" if cfg.llm_service_tier else ""
                 lines.append(f"LLM {where} → OpenAI {cfg.llm_model}(effort {cfg.llm_effort}{tier}) · {expert} · "
-                             f"실패하면 로컬 {local} · 시간 상한 {cfg.llm_timeout_s:g}초")
+                             f"{on_fail} · 시간 상한 {cfg.llm_timeout_s:g}초")
             else:
                 lines.append(f"LLM {where} → 로컬 {local}(통과)")
         else:
@@ -1066,7 +1119,7 @@ def describe(cfg: Config, servers: list[GatewayServer]) -> list[str]:
                 kw = (f"키워드 {len(cfg.stt_keywords)}개(예: {', '.join(cfg.stt_keywords[:4])} …)" if cfg.stt_keywords
                       else "키워드 없음")
                 lines.append(f"STT {where} → OpenAI {cfg.stt_model}(언어 {','.join(cfg.stt_languages)}, {kw}) · "
-                             f"실패하면 로컬 {local} · 시도당 {cfg.stt_timeout_s:g}초 × {cfg.stt_retries + 1}번")
+                             f"{on_fail} · 시도당 {cfg.stt_timeout_s:g}초 × {cfg.stt_retries + 1}번")
             else:
                 lines.append(f"STT {where} → 로컬 {local}(통과)")
     lines.append(f"OpenAI 키 {key_status(cfg.key)}")
@@ -1083,6 +1136,8 @@ def main() -> None:
     ap.add_argument("--stt-port", type=int, default=None)
     ap.add_argument("--stt-local", default="http://127.0.0.1:8091")
     ap.add_argument("--stt-engine", default=None, choices=ENGINES, help="기본 REACHY_STT_ENGINE, 없으면 local")
+    ap.add_argument("--no-local", action="store_true",
+                    help="외부 전용 — 안쪽 로컬 서버 없이(엔진 openai 와 키가 있어야 뜬다, 실패는 502)")
     args = ap.parse_args()
     if args.llm_port is None and args.stt_port is None:
         ap.error("--llm-port 와 --stt-port 중 하나는 있어야 한다")
@@ -1090,9 +1145,16 @@ def main() -> None:
         cfg = config_from_env(llm_engine=args.llm_engine, stt_engine=args.stt_engine)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
+    if args.no_local:
+        problems = external_only_problems(cfg, [s for s, port in (("llm", args.llm_port), ("stt", args.stt_port))
+                                                if port is not None])
+        if problems:
+            raise SystemExit("외부 전용(--no-local)으로 띄울 수 없다 — " + " / ".join(problems))
     servers = make_servers(cfg, args.host,
-                           llm=(args.llm_port, args.llm_local) if args.llm_port is not None else None,
-                           stt=(args.stt_port, args.stt_local) if args.stt_port is not None else None)
+                           llm=(args.llm_port, None if args.no_local else args.llm_local)
+                           if args.llm_port is not None else None,
+                           stt=(args.stt_port, None if args.no_local else args.stt_local)
+                           if args.stt_port is not None else None)
     log.info("OpenAI 게이트웨이 — %s", " | ".join(describe(cfg, servers)))
     for s in servers[1:]:
         threading.Thread(target=s.serve_forever, daemon=True).start()

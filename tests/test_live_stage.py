@@ -47,6 +47,8 @@ def stage():
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="live-stage-"))
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0)); dport = s.getsockname()[1]
+    # `--disable-gpu` 그대로 — 소프트웨어 WebGL(swiftshader)을 켜면 그리기가 느려져 시계 시험이 1초쯤 밀렸다(2026-11-13 실측).
+    # 그래서 GPU 없는 헤드리스에서 분해도(three.js)는 WebGL 을 못 만든다 — 그 예외 하나만 아래 `_errors_but_webgl` 가 거른다.
     proc = subprocess.Popen([CHROME, "--headless=new", f"--remote-debugging-port={dport}", "--no-first-run", "--disable-gpu",
                              "--autoplay-policy=no-user-gesture-required", f"--user-data-dir={tmp / 'profile'}", "about:blank"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -68,7 +70,9 @@ def stage():
             while True:
                 m = json.loads(cdp.recv(timeout=60))
                 if m.get("method") == "Runtime.exceptionThrown":
-                    errors.append(json.dumps(m["params"]["exceptionDetails"], ensure_ascii=False)[:300])
+                    d = m["params"]["exceptionDetails"]
+                    errors.append(((d.get("exception") or {}).get("description") or "")[:160] + " · "
+                                  + json.dumps(d, ensure_ascii=False)[:300])
                 if m.get("id") == n[0]:
                     return m.get("result", {})
 
@@ -99,6 +103,11 @@ def stage():
 
 
 BADGE = "(document.querySelector('[data-live-badge]')||{}).textContent"
+
+
+def _errors_but_webgl(errors):
+    """GPU 없는 헤드리스에서만 나는 분해도의 WebGL 생성 실패를 뺀 나머지(페이지는 이때 스스로 안내 띠를 띄운다)."""
+    return [e for e in errors if "Error creating WebGL context" not in e]
 UTT = "JSON.parse(document.getElementById('data').textContent).cues[{c}].utt[{k}]"
 
 
@@ -164,3 +173,80 @@ def test_수준이_다르면_배지가_알린다(stage):
 
 def test_자바스크립트_오류가_없다(stage):
     assert stage["errors"] == []
+
+
+def test_자동_선택_화면은_수준과_지금_큐로_화면을_고른다(stage):
+    """운영자가 연 /stage/auto 하나가 (수준, 큐)로 화면을 고른다(2026-11-13).
+    ① 교육자료 화면을 안 열어 '시연영상이 안 보인다' ② 웹툰·분해도엔 01·02큐뿐이라 06큐에서 수준을 바꾸면 01큐에 멈췄다."""
+    js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
+    SA = "(window.stageAuto||{})"
+    director.level, director.cue_id = "일반", "01-intro"
+    js("location.href = '/stage/auto'")
+    wait(f"{SA}.screen === 'paper'", 15)
+    # 전문가 · 01 → 분해도(가졌다). 카드 화면을 뒤에 미리 띄워 둔다 — 03큐로 넘어갈 때 빈 화면이 없게.
+    director.level = "전문가"
+    wait(f"{SA}.screen === 'exploded'", 10)
+    wait(f"JSON.stringify({SA}.loaded.slice().sort()) === JSON.stringify(['exploded','hud'])", 10)
+    # 06큐 대사가 나가면 — 스냅샷을 기다리지 않고 — 카드 화면으로. 그 화면은 이미 공연을 따라가고 있다(전문가 카드 · 06장).
+    director.cue_id = "06-bands"
+    say(hub, "mc", "06-bands", 901); started(hub, "mc", "06-bands", 901)
+    wait(f"{SA}.screen === 'hud'", 10)
+    assert js(f"{SA}.why") == "분해도에 06-bands 가 아직 없다 — 카드 화면으로 이어 보기"
+    shown = "document.querySelector('iframe.on')"
+    win = f"{shown}.contentWindow"
+    wait(f"{shown}.getAttribute('data-page') === 'hud'", 5)
+    wait(f"{win}.hud && {win}.hud.state.lv === 'l4' && {win}.hud.state.slide === 5", 15)
+    wait(f"({win}.document.querySelector('[data-live-badge]')||{{}}).textContent === '공연 따라가는 중'", 15)
+    # 초등 · 06 → 카드 화면(초등 카드로 바뀐다). 다시 01 → 웹툰(가졌다). 틀은 다시 읽지 않는다(이미 띄운 화면을 쓴다).
+    director.level = "초등"
+    wait(f"{SA}.screen === 'hud' && {win}.hud.state.lv === 'l1'", 10)
+    director.cue_id = "01-intro"
+    say(hub, "mc", "01-intro", 902)
+    wait(f"{SA}.screen === 'webtoon'", 10)
+    # 일반은 종이 무대(19큐 전부 가졌다)
+    director.level = "일반"
+    wait(f"{SA}.screen === 'paper' && document.documentElement.getAttribute('data-screen') === 'paper'", 10)
+    assert _errors_but_webgl(stage["errors"]) == []
+
+
+def test_카드_화면은_공연을_따라_장_수준_차례_말풍선을_바꾼다(stage):
+    """웹툰·분해도에 없는 큐를 맡는 카드 화면(2026-11-13) — 소리 없이 감독 이벤트만으로 따라간다."""
+    js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
+    director.level, director.cue_id = "중고등", "07-maritime"
+    js("location.href = '/stage/hud'")
+    wait("document.documentElement.getAttribute('data-live') === '1' && window.hud.state.lv === 'l2'", 15)
+    assert js("getComputedStyle(document.querySelector('header.bar')).display") == "none"      # 도구줄은 숨긴다
+    assert js("document.querySelectorAll('audio').length") == 0                                  # 소리를 만들지 않는다
+    say(hub, "mc", "07-maritime", 950); started(hub, "mc", "07-maritime", 950)
+    wait("window.hud.state.slide === 6 && window.hud.state.turn === 'open'", 10)
+    cue = "JSON.parse(document.getElementById('data').textContent).cues[6]"
+    first = js(f"window.hud.chunksOf({cue}.open)[0]")
+    wait(f"document.querySelector('.hud.mc .t').textContent === {json.dumps(first)}", 5)
+    assert js("document.querySelector('.hud.mc').classList.contains('speaking')") is True
+    ended(hub, "mc", "07-maritime", 950)
+    say(hub, "docent", "07-maritime:pt0:docent", 951); started(hub, "docent", "07-maritime:pt0:docent", 951)
+    wait("window.hud.state.turn === 'docent0' && document.querySelector('.hud.docent').classList.contains('speaking')", 10)
+    ans = js(f"window.hud.chunksOf({cue}.lv.l2.ans[0])[0]")
+    wait(f"document.querySelector('.hud.docent .t').textContent === {json.dumps(ans)}", 5)   # 중고등 대본
+    assert js("document.querySelector('.headline').classList.contains('now')") is True        # 제목은 open·docent0 차례
+    # 관람객 질문 흐름 — 생성 답의 글은 싣지 않는다
+    say(hub, "docent", "07-maritime:qa", 952); started(hub, "docent", "07-maritime:qa", 952)
+    wait("document.querySelector('.hud.docent .t').textContent === '…'", 5)
+    # 감독 수준이 바뀌면 그 수준 카드로
+    director.level = "전문가"
+    wait("window.hud.state.lv === 'l4' && window.hud.state.slide === 6", 10)
+    assert _errors_but_webgl(stage["errors"]) == []
+
+
+def test_조정실_안의_시연_화면이_고른_화면을_머리에_알린다(stage):
+    js, wait, director = stage["js"], stage["wait"], stage["director"]
+    director.level, director.cue_id = "중고등", "06-bands"
+    js("location.href = '/'")
+    wait("document.getElementById('stage-screen') && document.getElementById('stage-screen').textContent.indexOf('카드 화면') >= 0", 20)
+    assert js("document.getElementById('stage-screen').classList.contains('fallback')") is True
+    # 1280×720 을 패널에 맞춰 줄였다 — 틀이 패널 밖으로 안 나간다
+    r = js("(function(){var v=document.getElementById('stage-view').getBoundingClientRect(),"
+           "f=document.getElementById('stage-frame').getBoundingClientRect();"
+           "return [f.width<=v.width+1, f.height<=v.height+1, f.left>=v.left-1, f.top>=v.top-1]})()")
+    assert r == [True, True, True, True], r
+    assert _errors_but_webgl(stage["errors"]) == []

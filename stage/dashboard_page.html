@@ -115,6 +115,11 @@
     font-size: 13px; font-weight: 700; border-bottom: 1px solid #1D3A40;
   }
   .solo-banner[hidden] { display: none; }
+  /* 1인 모드(2026-11-13) — 한 대가 안 붙어 남은 로봇이 양쪽 대사를 자기 목소리로 읽는다. 실기에서 운영자가 모른 채
+     공연해 "사회자·도슨트 둘 다 남자 목소리" 였다 — 기동 출력의 경고는 조정실을 볼 때 이미 지나가 있다. */
+  .one-robot-banner { flex: 0 0 auto; padding: 8px 24px; background: #3A2410; color: #FFD58A; font-size: 14px;
+                      font-weight: 800; border-bottom: 1px solid #6B4318; }
+  .one-robot-banner[hidden] { display: none; }
 
   /* 예전에는 `.monitors` 가 최상단 폭 전체를 쓰는 독립 줄이었다(자체 좌우 padding).
      지금은 `.right-col` 안에 있어 그 부모(`.stage-grid`)의 padding 을 그대로 쓴다 —
@@ -128,7 +133,7 @@
     /* 창 높이에 비례(최대 320px). 고정 320px 이면 720px 창에서 모니터만 460px 을 먹어
        하단(런다운·제어·로그)이 창 밖으로 밀리고 페이지 스크롤이 생겼다 — 운영자 화면은
        스크롤 없이 한눈에 들어와야 한다(즉시 중단 버튼이 창 밖에 있으면 안 된다). */
-    height: clamp(120px, 34vh, 320px);
+    height: clamp(80px, 15vh, 170px);   /* 2026-11-13 시연 화면이 위에 들어오며 줄였다(실기 카메라는 SDK 오류로 어차피 안 나온다) */
     border-radius: 6px 6px 0 0;
     background: #05070A;
     border: 1px solid #242B35;
@@ -253,6 +258,18 @@
   .ctrl-btn.primary { border-color: #4CC3D9; background: #10262B; }
   .ctrl-btn.primary kbd { color: #8FDCEA; }
   .ctrl-btn.abort { grid-column: span 2; border: none; background: #E5484D; color: #fff; font-size: 18px; font-weight: 900; }
+  /* 교육자료 화면 열기(2026-11-13) — 실기 구동에서 교육자료(시연영상)를 아무도 안 열어 안 보였다. 조정실에서 바로 연다. */
+  /* 머리의 "교육자료 ↗"(관람객 폰용 카드 /handout)와 다른 것이다 — 이것은 공연을 따라가는 모션 화면(/stage/…)이라 '시연 영상' 이라 부른다. */
+  /* 시연 화면(2026-11-13) — 조정실 안에서 프로젝터와 같은 화면을 본다. 화면은 1280×720 으로 그려 패널 크기에 맞춰 줄인다
+     (작은 틀에 그대로 넣으면 페이지가 좁은 화면 배치로 바뀌어 프로젝터와 다른 모양이 된다). */
+  .stage-panel { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .stage-panel .panel-head { align-items: center; gap: 10px; }
+  .stage-screen { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #FFD58A; }
+  .stage-screen.fallback { color: #F0A64A; }
+  .stage-pop { flex: 0 0 auto; padding: 5px 12px; border-radius: 6px; border: 1px solid #F5A524; background: #2A2110;
+               color: #FFD58A; font-size: 13px; font-weight: 800; cursor: pointer; }
+  .stage-view { position: relative; height: clamp(170px, 44vh, 560px); background: #05070A; border-radius: 6px; overflow: hidden; }
+  .stage-view iframe { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; border: 0; transform-origin: 0 0; }
   .ctrl-btn.abort kbd { color: #FFE1E2; }
   /* 공연 시작 ↔ 공연 종료 토글(2026-09-25). 시작은 초록 테두리, 진행 중(종료 버튼)은 주황 테두리 —
      빨간 채움(즉시 중단)과 헷갈리지 않게 채우지 않는다. 종료는 되감기라 중단보다 무겁지만 비상정지는 아니다. */
@@ -346,6 +363,7 @@
 <!-- 단독일 때만 보인다(팟캐스트면 hidden) — 문구는 고정이라 서버에서 오지 않는다,
      그래서 여기 정적으로 심어 두고 JS 는 hidden 만 켜고 끈다. -->
 <div id="solo-banner" class="solo-banner" hidden>단독 모드 — 사회자 로봇이 관람객 질문에 답합니다</div>
+<div id="one-robot-banner" class="one-robot-banner" hidden></div>
 
 <!-- 2단 그리드 — 왼쪽은 런다운(위)·진행 제어(아래)로 세로 전체를 쓰고, 오른쪽은 카메라
      두 대(위) 아래로 이벤트 로그가 가로 폭 전부를 쓴다. 예전에는 넷이 한 줄(.lower)에
@@ -382,6 +400,8 @@
         <button type="button" id="btn-show" class="ctrl-btn show" data-cmd="s"><span id="btn-show-label">공연 시작</span><kbd id="btn-show-key">S</kbd></button>
         <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
       </div>
+      <!-- ~~시연 영상 열기 버튼 묶음~~(2026-11-13 오전) — 같은 날 오후 조정실 안의 시연 화면 패널(오른쪽 위)로 옮겼다:
+           새 창(탭)으로 열면 조정하는 동안 화면이 안 보여 "시연영상과 무대조정이 따로 논다" 였다. -->
       <div class="auto">
         <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
         <div class="auto-track"><div id="auto-bar"></div></div>
@@ -389,7 +409,7 @@
         <div class="wait-set">
           <span class="wait-label">침묵 대기</span>
           <button type="button" id="wait-dec" class="wait-btn" aria-label="침묵 대기 1초 줄이기">−</button>
-          <span id="wait-value">8초</span>
+          <span id="wait-value">20초</span>
           <button type="button" id="wait-inc" class="wait-btn" aria-label="침묵 대기 1초 늘리기">+</button>
           <button type="button" id="wait-off" class="wait-btn wait-toggle">끄기</button>
         </div>
@@ -398,6 +418,20 @@
   </div>
 
   <div class="right-col">
+    <!-- 시연 화면(2026-11-13) — 관람객 수준을 고르고 [공연 시작]을 누르면 여기서 화면이 바뀌고 로봇 발화를 따라간다.
+         /stage/auto?embed: (수준, 지금 큐)로 화면을 고른다 — 전용 화면(웹툰·분해도)에 없는 큐는 같은 수준 종이 무대.
+         [프로젝터로 띄우기] = 같은 화면을 새 창(reachy-stage — 여러 번 눌러도 쌓이지 않는다)으로. 화면은 소리를 내지 않는다(로봇이 말한다). -->
+    <section class="panel stage-panel" aria-label="시연 화면">
+      <div class="panel-head">
+        <span class="panel-title">시연 화면</span>
+        <span id="stage-screen" class="stage-screen">불러오는 중…</span>
+        <button type="button" id="btn-stage" class="stage-pop" data-href="/stage/auto"
+                title="새 창으로 연다 — 프로젝터로 옮겨 전체 화면(⌃⌘F)">프로젝터로 띄우기 ↗</button>
+      </div>
+      <div class="stage-view" id="stage-view">
+        <iframe id="stage-frame" title="시연 화면" src="/stage/auto?embed"></iframe>
+      </div>
+    </section>
     <div class="monitors">
       <section class="monitor-col" aria-label="사회자 모니터">
         <div class="cam offline" id="mon-mc">
@@ -697,6 +731,7 @@ function renderSnapshot(s) {
 
   renderLevelState(s);
   renderModeState(s);
+  renderOneRobot(s);   // 모드 토글이 없는 구버전 서버에서도 그린다(renderModeState 는 거기서 일찍 끝난다)
   renderShowToggle(s);
   renderCourseState(s);
 
@@ -1137,6 +1172,19 @@ function applySoloLockdown(isSolo) {
   document.getElementById("solo-banner").hidden = !isSolo;
 }
 
+// 1인 모드 띠(2026-11-13) — snapshot.solo_role 은 진행에 쓸 수 있는 로봇이 한 대뿐일 때 그 역할(둘이거나 없으면 null).
+function renderOneRobot(s) {
+  var el = document.getElementById("one-robot-banner");
+  var solo = s && (s.solo_role === "mc" || s.solo_role === "docent") ? s.solo_role : null;
+  if (!solo) { el.hidden = true; return; }
+  var name = { mc: "사회자", docent: "도슨트" };
+  var gone = solo === "mc" ? "docent" : "mc";
+  el.textContent = "1인 모드 — " + name[gone] + " 로봇이 없어 " + name[solo] + " 로봇이 " + name[gone] +
+    " 대사도 자기 목소리로 읽는다. 두 대로 하려면 무대감독 창에 찍힌 합류 명령(주소 포함)으로 " + name[gone] + " 로봇을 붙인다";
+  // ~~REACHY_ROLE=… ./reachy.sh robot up~~ 을 그대로 보여 주지 않는다 — 주소 없이 치면 기본 주소(도슨트 로봇)의 config 를 덮어쓴다.
+  el.hidden = false;
+}
+
 // ── 큐 이동 확인 바 — 클릭은 선택만, 확인해야 이동한다 ─────────────
 function selectCue(id) {
   var row = null;
@@ -1184,6 +1232,38 @@ function refreshGotoBarForCurrent() {
   }
   if (selectedCueId && stillThere) selectCue(selectedCueId);
 }
+
+// ── 시연 화면(2026-11-13) ─────────────────────────────────────────
+// 조정실 안의 틀 — 1280×720 으로 그린 화면을 패널에 맞춰 줄이고 가운데 둔다(프로젝터와 같은 모양).
+(function () {
+  var view = document.getElementById("stage-view");
+  var frame = document.getElementById("stage-frame");
+  function fit() {
+    var w = view.clientWidth, h = view.clientHeight;
+    if (!w || !h) return;
+    var k = Math.min(w / 1280, h / 720);
+    frame.style.transform = "translate(" + Math.round((w - 1280 * k) / 2) + "px," + Math.round((h - 720 * k) / 2) + "px) scale(" + k + ")";
+  }
+  fit();
+  if (window.ResizeObserver) { new ResizeObserver(fit).observe(view); } else { window.addEventListener("resize", fit); }
+  // 어느 화면을 골랐는지 — /stage/auto?embed 가 알려 준다(같은 오리진만 받는다).
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin || !ev.data || ev.data.type !== "stage-auto") return;
+    var d = ev.data, el = document.getElementById("stage-screen");
+    el.textContent = (d.level || "—") + (d.cue ? " · " + d.cue : "") + " → " + d.label + (d.why ? " — " + d.why : "");
+    el.classList.toggle("fallback", !!d.why);
+    el.title = el.textContent;
+  });
+})();
+
+// 프로젝터로 — 같은 오리진의 /stage/auto 를 새 창으로 연다(교육자료 화면이 이 서버의 /ws/audience 에 붙어 공연을 따라간다 —
+// file:// 는 Origin 검사에 막힌다).
+document.querySelectorAll("#btn-stage[data-href]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var w = window.open(btn.getAttribute("data-href"), "reachy-stage");
+    if (w) { w.focus(); } else { btn.textContent = "팝업이 막혔다 — 주소창에 " + btn.getAttribute("data-href"); }
+  });
+});
 
 document.getElementById("goto-confirm").addEventListener("click", function () {
   if (!selectedCueId) return;

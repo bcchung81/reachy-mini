@@ -17,6 +17,7 @@ from stage.cues import CueSheet
 from stage.director import MIN_CHARS, Director, UnitMismatch
 from stage.machine import Command
 from stage.protocol import ROLES, ProtocolError, decode, encode
+from stage.ws_quiet import quiet_empty_handshakes
 
 
 class StageServer:
@@ -311,6 +312,7 @@ class StageServer:
     # ── 기동 ──────────────────────────────────────────────────────
     def serve(self, host: str, port: int):
         """블로킹. 반환값은 websockets 서버 객체(테스트에서 shutdown 용)."""
+        quiet_empty_handshakes()   # 요청 없이 닫힌 빈 연결의 스택은 운영 로그를 덮는다(stage/ws_quiet.py)
         return _ws_serve(self.handler, host, port)
 
     def tick_forever(self, interval_s: float, should_stop: Callable[[], bool]) -> None:

@@ -121,7 +121,9 @@ def warm_tts() -> str:
         tts_mod = _tts_mod()
         if tts_mod._qwen_synth("준비되었습니다.") is None:
             raise RuntimeError(f"TTS 서버 응답 없음: {tts_mod.QWEN_URL}")
-        return "(Qwen3-TTS)"
+        # 엔진 이름은 reachy.sh 가 물려주는 TTS_ENGINE 으로 — "(Qwen3-TTS)" 로 박아 두면 ElevenLabs 로 돌 때도 그렇게 찍혀
+        # 어느 목소리가 데워졌는지 화면이 거짓말을 한다(2026-11-13 외부 전용 실측에서 봤다).
+        return "(ElevenLabs)" if os.environ.get("TTS_ENGINE") == "elevenlabs" else "(Qwen3-TTS)"
 
     # TTS_BACKEND=say 로 명시했을 때만 온다 — 그 경로는 macOS 전용이다.
     cmd = shutil.which("say")

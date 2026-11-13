@@ -19,6 +19,8 @@ from scripts.handout_hud import cards as C
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = C.ROOT
 DEFAULT_OUT = ROOT / "docs" / "design" / "handout-hud.html"
+# 공연 모드(2026-11-13) — 다른 교육자료 화면(종이 무대·웹툰·분해도)과 같은 모듈을 인라인한다(외부 리소스 없음).
+LIVE_JS = ROOT / "scripts" / "handout_live" / "live_follow.js"
 
 # 02·03 장은 코드가 그리는 그림(경로·다이얼)과 그림에 맞춘 움직임이 있다
 SPECIAL = {
@@ -90,7 +92,7 @@ def render(data: dict) -> str:
     icon = "data:image/png;base64," + base64.b64encode((HERE / "reachy-mini-icon.png").read_bytes()).decode("ascii")
     tpl = (HERE / "template.html").read_text(encoding="utf-8")
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return tpl.replace("__ICON__", icon).replace("__DATA__", payload)
+    return tpl.replace("/*__LIVE__*/", LIVE_JS.read_text(encoding="utf-8")).replace("__ICON__", icon).replace("__DATA__", payload)
 
 
 def main(argv=None) -> None:

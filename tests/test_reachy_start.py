@@ -31,6 +31,8 @@ _PLAN_ENV = (
     # 아래 정확 일치 테스트가 개발자 셸에 따라 깨진다.
     "REACHY_LLM_ENGINE",
     "REACHY_STT_ENGINE",
+    # 외부 전용 스위치(2026-11-13) — 셸에 off 가 남아 있으면 local 엔진 계획이 거절된다(exit 2).
+    "REACHY_LOCAL_MODELS",
 )
 
 
@@ -225,6 +227,7 @@ rssh() {
   case "$*" in
     cat\ *) echo '{}' ;;
     *curl*) echo 200 ;;
+    *"iw dev wlan0"*) echo "Power save: ${POWER_SAVE:-off}" ;;   # 기동마다 Wi-Fi 절전을 본다(2026-11-13)
     *)      cat > "$WROTE.$ROBOT_HOST" ;;
   esac
 }
@@ -358,8 +361,8 @@ start_robot 0.0.0.0 9777 9778 http://127.0.0.1:9778/ 10.9.8.21 10.9.8.22
     assert not any(c.startswith(("post 10.9.8.22", "get 10.9.8.22", "ssh 10.9.8.22"))
                    for c in calls[:director])
     assert calls.index("post 10.9.8.21 /api/apps/start-app/voice_chat") < director
-    # 정리(EXIT trap)는 감독 뒤에, 두 배역 자리 모두에 간다(건너뛴 도슨트 포함).
-    assert [c for c in calls[director:] if c.startswith("post ")] == [
+    # 정리(EXIT trap)는 감독 뒤에, 두 배역 자리 모두에 간다(건너뛴 도슨트 포함). 두 로봇에 동시에 보내므로 순서는 안 본다.
+    assert sorted(c for c in calls[director:] if c.startswith("post ")) == [
         "post 10.9.8.21 /api/apps/stop-current-app",
         "post 10.9.8.22 /api/apps/stop-current-app",
     ]
@@ -871,3 +874,105 @@ stop_all >/dev/null
     calls = _calls(tmp_path)
     assert "kill TTS 캐시 프록시" in calls
     assert "sweep tts_cache_proxy.py" in calls
+
+
+# ── Ctrl-C 가 안 꺼진다(2026-11-13) — 꺼진 로봇에 앱 정지를 25초씩 기다렸다 ─────────────
+def test_로봇_호출은_연결_시간_상한이_따로_있다(tmp_path):
+    """상한(-m)만 있으면 꺼진 로봇에도 그 상한을 다 기다린다 — 두 로봇이 꺼진 채 Ctrl-C 하면 정리가 50초(실측)."""
+    r = _source(r'''
+curl() { echo "curl $*" >> "$CALLS"; return 7; }
+ROBOT_API=http://10.9.8.21:8000
+rpost /api/apps/stop-current-app 25
+rget /api/daemon/status
+''', tmp_path)
+    assert _calls(tmp_path) == [
+        "curl -s --connect-timeout 4 -m 25 -X POST http://10.9.8.21:8000/api/apps/stop-current-app",
+        "curl -s --connect-timeout 4 -m 10 http://10.9.8.21:8000/api/daemon/status"], r.stdout + r.stderr
+
+
+def test_정리는_로봇들에_동시에_보내고_기다린다고_말한다(tmp_path):
+    """한 대씩 보내면 꺼진 로봇 수만큼 기다림이 쌓인다. 정리 중 Ctrl-C 는 받지 않으니 얼마나 걸리는지 말한다."""
+    # 가짜의 sleep 은 `/bin/sleep` — macOS bash 3.2 에서 백그라운드 함수 안의 `command sleep` 은 그 작업을 바로 죽인다(실측).
+    import time
+    t0 = time.monotonic()
+    r = _source(r'''
+rpost() { /bin/sleep 2; echo "post $ROBOT_HOST $1" >> "$CALLS"; return 7; }
+START_ROBOT_HOSTS="10.9.8.21 10.9.8.22"
+start_cleanup
+echo "끝"
+''', tmp_path)
+    dt = time.monotonic() - t0
+    assert "끝" in r.stdout, r.stdout + r.stderr
+    assert dt < 3.5, f"두 로봇을 차례로 기다렸다({dt:.1f}초)"
+    assert sorted(_calls(tmp_path)) == ["post 10.9.8.21 /api/apps/stop-current-app",
+                                        "post 10.9.8.22 /api/apps/stop-current-app"]
+    assert "안 닿는 로봇은 4초 안에 건너뛴다" in r.stdout
+    assert r.stdout.count("로봇 앱 정지 실패") == 2
+
+
+# ── "둘 다 남자 목소리"(2026-11-13) — 켜져 있던 도슨트가 핑 한 번에 빠져 1인 모드로 돌았다 ──────────
+def test_로봇_확인은_핑_한_번에_포기하지_않는다(tmp_path):
+    """로봇 Wi-Fi 절전(기본 on)이면 조용하던 뒤의 첫 패킷이 빠진다 — 핑 한 번(2초)에 건너뛰면 감독이 1인 모드로 돈다."""
+    r = _source(r'''
+n=0
+ping() { n=$((n + 1)); echo "ping $n" >> "$CALLS"; [ "$n" -ge 3 ]; }
+up() { echo "up $1" >> "$CALLS"; return 0; }
+ROBOT_HOST=10.9.8.22; ROBOT_API=http://10.9.8.22:8000
+robot_reachable; echo "rc=$?"
+''', tmp_path)
+    assert "rc=0" in r.stdout and "핑 3번째에 응답" in r.stdout, r.stdout + r.stderr
+    assert _calls(tmp_path) == ["ping 1", "ping 2", "ping 3", "up http://10.9.8.22:8000/api/daemon/status"]
+    r = _source(r'''
+ping() { return 2; }
+ROBOT_HOST=10.9.8.22; ROBOT_API=http://10.9.8.22:8000
+robot_reachable; echo "rc=$?"
+''', tmp_path)
+    assert "rc=1" in r.stdout and "핑 3번 무응답" in r.stdout
+
+
+def test_기동마다_로봇_Wi_Fi_절전을_끈다(tmp_path):
+    r = _source(_FAKE_ROBOT + r'''
+ROBOT_HOST=10.9.8.22
+robot_wifi_awake; echo "rc=$?"
+''', tmp_path, env_extra={"POWER_SAVE": "on"})
+    assert "rc=0" in r.stdout and "Wi-Fi 절전 끔 (10.9.8.22)" in r.stdout, r.stdout + r.stderr
+    assert any("set power_save off" in c for c in _calls(tmp_path))
+    (tmp_path / "calls.txt").unlink()
+    r = _source(_FAKE_ROBOT + r'''
+ROBOT_HOST=10.9.8.22
+robot_wifi_awake; echo "rc=$?"
+''', tmp_path, env_extra={"POWER_SAVE": "off"})
+    assert "rc=0" in r.stdout and "절전 끔" not in r.stdout
+    assert not any("set power_save" in c for c in _calls(tmp_path))       # 이미 꺼져 있으면 건드리지 않는다
+
+
+def test_앱_관리자가_정지_중에_멈췄으면_데몬을_재시작해_풀고_띄운다(tmp_path):
+    """2026-11-13 도슨트: 앱 프로세스는 없는데 상태가 stopping 에서 안 풀려 시작(400)·정지 모두 거절 — 건너뛰어져 1인 모드."""
+    r = _source(_FAKE_ROBOT + r'''
+restarted=0
+rpost() {
+  echo "post $ROBOT_HOST $1" >> "$CALLS"
+  case "$1" in
+    /api/apps/start-app/*)
+      if [ -f "$CALLS.restarted" ]; then echo '{"info":{"name":"voice_chat"},"state":"starting","error":null}'
+      else echo '{"detail":"An app is already running"}'; fi ;;
+    /api/apps/stop-current-app) echo '{"detail":"No app is currently running"}' ;;
+  esac
+}
+rget() {
+  case "$1" in
+    /api/apps/current-app-status) [ -f "$CALLS.restarted" ] && echo 'null' || echo '{"info":{"name":"voice_chat"},"state":"stopping","error":null}' ;;
+    /api/daemon/status) echo '{"state":"running"}' ;;
+  esac
+}
+rssh() { echo "ssh $ROBOT_HOST $*" >> "$CALLS"; case "$*" in *systemctl\ restart*) touch "$CALLS.restarted" ;; esac; }
+robot_wake() { echo "wake" >> "$CALLS"; }
+ROBOT_HOST=10.9.8.22; ROBOT_API=http://10.9.8.22:8000; ROBOT_APP=voice_chat
+robot_start_app; echo "rc=$?"
+''', tmp_path)
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert "'정지 중' 에 멈춰 있다" in r.stdout and "데몬 재시작 (10.9.8.22" in r.stdout
+    calls = _calls(tmp_path)
+    assert "ssh 10.9.8.22 sudo -n systemctl restart reachy-mini-daemon" in calls
+    restart = calls.index("ssh 10.9.8.22 sudo -n systemctl restart reachy-mini-daemon")
+    assert calls[restart + 1:] == ["wake", "post 10.9.8.22 /api/apps/start-app/voice_chat"]

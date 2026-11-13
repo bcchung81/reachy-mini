@@ -114,6 +114,9 @@ class Harness:
             level_name=level_name,
             **kw,
         )
+        # 이 파일의 시각 계산(8.1초 뒤 진행 등)은 침묵 대기 8초 기준으로 짰다. 공연 기본값은 20초로 늘렸다(2026-11-13
+        # 사용자 결정) — 기본값 자체는 `test_공연_기본_침묵_대기는_20초다` 가 본다. 경고를 남기지 않게 값만 맞춘다.
+        self.d._question_wait_s = 8.0
 
     def types(self, role=None):
         return [(r, t) for r, t, _ in self.sent if role is None or r == role]
@@ -3673,3 +3676,55 @@ def test_ElevenLabs_에서는_빠른_말에_맞춰_반응이_앞당겨진다(mon
     h.clock.t += 0.1
     h.d.tick()
     assert [(r, t) for r, t, _ in h.sent if t == "react"] == [("mc", "react")]
+
+
+# ── 두 로봇이 다 붙으면 공연 시작법을 알린다(2026-11-13) ──────────────
+# 실기 첫 구동: 운영자가 s 를 모른 채 1분 기다리다 감독을 껐다 — 로봇에 say 0건, TTS 요청 0건인데 "음성이 안 나온다" 로 보였다.
+def test_두_로봇이_다_붙고_공연이_안_돌면_s_로_시작하라고_한_번_알린다():
+    h = Harness()
+    h.d.on_connect("mc")
+    assert not any("s 를 치고" in w for w in h.warnings), "한 대만 붙었을 때는 아직이다"
+    h.d.on_connect("docent")
+    assert sum("s 를 치고" in w for w in h.warnings) == 1
+
+
+def test_공연_중에_다시_붙은_로봇에는_시작_안내를_하지_않는다():
+    h = Harness()
+    _둘_다_붙은(h)
+    h.d.start_show()
+    h.d.on_disconnect("docent")
+    h.warnings.clear()
+    h.d.on_connect("docent")
+    assert not any("s 를 치고" in w for w in h.warnings)
+
+
+def test_1인_모드로_공연을_시작하면_크게_알린다(monkeypatch):
+    """2026-11-13 실기: 도슨트가 안 붙은 채 시작해 도슨트 대사가 사회자 목소리로 나갔다("둘 다 남자 목소리").
+    합류 명령은 주소까지 — 주소 없는 robot up 은 기본 주소(도슨트 로봇)의 config 를 덮어쓴다."""
+    monkeypatch.setenv("REACHY_DOCENT_HOST", "192.168.0.5")
+    h = Harness()
+    h.d.on_connect("mc")
+    h.warnings.clear()
+    h.d.start_show()
+    w = [x for x in h.warnings if "1인 모드로 시작한다" in x]
+    assert len(w) == 1 and "도슨트 로봇이 없어 사회자 로봇이 도슨트 대사도 자기 목소리로" in w[0]
+    assert "REACHY_ROLE=docent REACHY_ROBOT_HOST=192.168.0.5 ./reachy.sh robot up" in w[0]
+
+
+def test_두_대로_시작하면_1인_모드_경고가_없다():
+    h = Harness()
+    _둘_다_붙은(h)
+    h.warnings.clear()
+    h.d.start_show()
+    assert not any("1인 모드" in x for x in h.warnings)
+
+
+
+def test_공연_기본_침묵_대기는_20초다():
+    """큐 사이 질문 창 — 8초면 관람객이 질문을 떠올리기 전에 넘어갔다(2026-11-13 사용자 결정: 20초).
+    진행은 "다음"·"이어서 진행" 이 맡고, 침묵 자동 진행은 공연이 멈춰 서지 않게 하는 안전판이다."""
+    from stage.director import QUESTION_WAIT_S
+    d = Director(CueSheet([Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner",
+                                points=(Turn("", _모든_수준("첫 해설")),))]),
+                 generate=lambda *a: "", send=lambda *a: None, warn=lambda m: None)
+    assert QUESTION_WAIT_S == 20.0 and d.snapshot()["question_wait_total_s"] == 20.0

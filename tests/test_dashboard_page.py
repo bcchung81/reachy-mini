@@ -451,3 +451,33 @@ def test_런다운은_코스_밖_큐를_흐리게_제외로_그린다():
     body = _media_block(_src(), "function refreshRundownTags()")
     assert 'if (i !== idx && !inCourse(row.id)) {' in body
     assert 'row.tag.textContent = "제외";' in body
+
+
+def test_시연_화면은_조정실_안에_있고_프로젝터로_띄울_수_있다():
+    """2026-11-13: 새 탭으로 연 교육자료가 조정실과 따로 놀았다(조정하는 동안 화면이 안 보였다) — 조정실 안에 넣는다.
+    같은 오리진의 /stage/… 여야 화면이 /ws/audience 에 붙는다(file:// 는 Origin 검사에 막힌다)."""
+    src = _src()
+    assert '<iframe id="stage-frame" title="시연 화면" src="/stage/auto?embed"></iframe>' in src
+    assert 'id="btn-stage"' in src and 'data-href="/stage/auto"' in src and "프로젝터로 띄우기" in src
+    assert 'window.open(btn.getAttribute("data-href"), "reachy-stage")' in src   # 같은 창 이름 — 눌러도 창이 쌓이지 않는다
+    assert "시연 영상 열기" not in src.replace("~~시연 영상 열기 버튼 묶음~~", "")      # 옛 버튼 묶음은 패널로 옮겼다
+    # 1280×720 으로 그려 줄인다 — 작은 틀에 그대로 넣으면 페이지가 좁은 화면 배치로 바뀌어 프로젝터와 다른 모양이 된다
+    assert "Math.min(w / 1280, h / 720)" in src and "width: 1280px; height: 720px" in src
+    # 고른 화면 알림은 같은 오리진만 받는다
+    assert 'ev.origin !== location.origin' in src and 'ev.data.type !== "stage-auto"' in src
+    # 대시보드가 실제로 주는 경로여야 한다
+    import sys
+    sys.path.insert(0, str(PAGE.parent.parent))
+    from stage.dashboard import MOTION_PAGES
+    for href in re.findall(r'(?:data-href|src)="/stage/([a-z0-9-]+)', src):
+        assert href in MOTION_PAGES, href
+
+
+def test_1인_모드면_조정실에_띠를_띄운다():
+    """2026-11-13: 한 대만 붙은 채 공연해 도슨트 대사가 사회자 목소리로 나갔다 — 조정실에서 바로 보이게."""
+    src = _src()
+    assert '<div id="one-robot-banner" class="one-robot-banner" hidden></div>' in src
+    body = _media_block(src, "function renderOneRobot(s)")
+    assert 's.solo_role === "mc" || s.solo_role === "docent"' in body and "el.hidden = true" in body
+    assert "자기 목소리로 읽는다" in body and "textContent" in body and "innerHTML" not in body
+    assert "renderOneRobot(s);" in src.split("function renderOneRobot")[0]   # 스냅샷마다 부른다

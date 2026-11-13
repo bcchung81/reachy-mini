@@ -170,7 +170,8 @@ def test_데이터_속_script_닫는_태그는_이스케이프된다():
     data = B.build_data()
     data["cues"][0]["open"] = "끝</script><b>x</b>"
     html = B.render(data)
-    assert html.count("</script>") == 2, "데이터 블록이 `</script>` 로 일찍 닫히면 페이지가 깨진다"
+    # 데이터·공연 모드 모듈(live_follow.js, 2026-11-13)·본문 — 셋. 데이터 블록이 `</script>` 로 일찍 닫히면 하나 더 생긴다.
+    assert html.count("</script>") == 3, "데이터 블록이 `</script>` 로 일찍 닫히면 페이지가 깨진다"
 
 
 def test_카드가_검증을_못_넘으면_빌더가_멈춘다(tmp_path, monkeypatch):

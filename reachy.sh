@@ -17,6 +17,7 @@
 #   ./reachy.sh check                  기동하지 않고 상태만 확인
 #   ./reachy.sh logs [줄수]            마지막 세션 로그 + **실시간 이어보기** (--no-follow 로 끔)
 #   ./reachy.sh stop                   띄운 것 전부 종료 (감독·대시보드 포함, 고아까지 쓸어낸다)
+#   ./reachy.sh clean-local --sim|--robot [--dry-run]   외부 전용으로 띄우기 전 정리 — 로컬 모델·설정이 다른 서버만 내린다(run-app.sh 가 부른다)
 #   ./reachy.sh warmup                 시연 직전 예열 (LLM 캐시·TTS JIT·STT·모션)
 #   ./reachy.sh bake [--check|--level 일반|--limit N|--force|--prune]   고정 대사를 TTS 캐시에 굽기(4수준 약 38분, 바뀐 문장만 다시)
 #   ./reachy.sh measure aec|latency    실측 — AEC 잔여 에코 / TTFT·첫 절 지연
@@ -26,6 +27,9 @@
 # 이 터미널의 감독 콘솔(또는 대시보드 시작 버튼)에서 `s` 로 시작한다.
 #   콘솔: s 시작 · e 종료(첫 큐로) · n 다음 · p 이전 · a 비상정지 · r 이 큐 다시 · q 끄기 (전체 목록은 ?)
 # `demo` 는 1대 자유 대화라 시나리오가 돌지 않는다.
+#
+# 외부 API 전용: TTS_ENGINE=elevenlabs REACHY_LLM_ENGINE=openai REACHY_STT_ENGINE=openai REACHY_LOCAL_MODELS=off
+#   ./reachy.sh start --robot — 로컬 모델(Gemma·Whisper·Qwen TTS)을 안 띄운다. ./run-app.sh 는 키가 둘 다 있으면 이것으로 띄운다.
 #
 # `start` 는 시연 한 벌이고 나머지는 **부품**이다(1대 개발·실기 운영에 쓴다). `start` 는
 # 무대감독 콘솔이 이 터미널에 뜬다 — q/Ctrl-C 로 끝내면 이 실행이 띄운 것(시뮬: 데몬·앱,
@@ -78,6 +82,17 @@ STT_ENGINE="${REACHY_STT_ENGINE:-local}"
 LLM_INNER_PORT="${REACHY_LLM_INNER_PORT:-8081}"
 STT_INNER_PORT="${REACHY_STT_INNER_PORT:-8091}"
 gateway_on() { [ "$LLM_ENGINE" = "openai" ] || [ "$STT_ENGINE" = "openai" ]; }
+
+# **로컬 모델**(2026-11-13). on(기본, 지금 구성) | off(외부 전용). off 면 이 PC 에 로컬 모델 3개 — LLM(Gemma, llamactl)·
+# STT(Whisper, stt_server)·TTS(Qwen3, CrispASR) — 를 **띄우지 않는다.** 엔진이 전부 외부(REACHY_LLM_ENGINE=openai·
+# REACHY_STT_ENGINE=openai·TTS_ENGINE=elevenlabs)일 때만 된다 — 아니면 계획 단계에서 멈춘다(`engines_ok`).
+# 게이트웨이·TTS 프록시는 로컬 폴백 없이(`--no-local`) 뜨고, 외부가 실패하면 경고 한 줄 + 실패를 돌려준다: 로봇 LLM 은
+# "다시 말해 줄래요" 대사, 감독은 폴백 대사, STT 는 못 들은 것, TTS 는 같은 목소리 안내(구워 둔 것) 한 번 + 무음.
+# 고정 대사는 구운 캐시에서 나가므로 **인터넷이 끊겨도 대본 공연은 돈다**(즉석 답·음성인식만 멈춘다).
+# 왜: 외부 API 로 돌릴 때도 폴백 자리 때문에 Qwen TTS(3.2 GB)·Gemma·Whisper 가 떠서 맥의 메모리·발열을 썼다(2026-11-13 실측).
+# run-app.sh 가 키가 둘 다 있으면 켠다. 이 스위치도 명령 앞에 붙인다(TTS_ENGINE 과 같다).
+LOCAL_MODELS="${REACHY_LOCAL_MODELS:-on}"
+local_off() { [ "$LOCAL_MODELS" = "off" ]; }
 
 c_ok=$'\033[32m'; c_bad=$'\033[31m'; c_warn=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 say_ok()   { echo "${c_ok}OK${c_off}   $1"; }
@@ -228,10 +243,24 @@ status() {
   local gw
   gw="$(curl -s -m 2 http://localhost:8080/health 2>/dev/null)"
   case "$gw" in
-    *'"gateway"'*) echo "     ${c_dim}게이트웨이 앞 — $(printf '%s' "$gw" | grep -o 'llm=[a-z]*,stt=[a-z]*') · 키 $(printf '%s' "$gw" | grep -o '"key": "[^"]*"' | cut -d'"' -f4)${c_off}" ;;
+    *'"gateway"'*) echo "     ${c_dim}게이트웨이 앞 — $(printf '%s' "$gw" | grep -o 'llm=[a-z]*,stt=[a-z]*[a-z=,]*') · 키 $(printf '%s' "$gw" | grep -o '"key": "[^"]*"' | cut -d'"' -f4)${c_off}" ;;
   esac
   up http://localhost:8000/api/state/full      && say_ok "데몬 :8000" || say_bad "데몬 :8000"
-  if [ "$TTS_BACKEND" = "qwen" ]; then
+  # ElevenLabs 프록시면 그렇게 적는다 — "Qwen3 화자 serena" 로 찍으면 어느 목소리로 도는지 화면이 거짓말을 한다.
+  # 캐시 현황은 그 엔진의 폴더로 센다(이 명령은 엔진 스위치 없이도 불린다 — run-app.sh 3번).
+  local th
+  th="$(curl -s -m 2 "http://localhost:$TTS_PORT/health" 2>/dev/null)"
+  if [ "$TTS_BACKEND" = "qwen" ] && printf '%s' "$th" | grep -q '"engine": "elevenlabs"'; then
+    local how="로컬 폴백 있음"
+    printf '%s' "$th" | grep -q '"local": "off"' && how="외부 전용 — 로컬 TTS 없음"
+    if up "http://localhost:$TTS_PORT/health"; then say_ok "TTS  ElevenLabs 캐시 프록시(:$TTS_PORT) · $how"
+    else say_bad "TTS  ElevenLabs 캐시 프록시(:$TTS_PORT) · $how"; fi
+    if [ "$TTS_ENGINE" = "elevenlabs" ]; then
+      tts_cache_status
+    else
+      "$PY" scripts/bake_tts.py --check --cache-dir "$TTS_ASSETS/cache-elevenlabs" --engine elevenlabs 2>&1 | sed 's/^/   /'
+    fi
+  elif [ "$TTS_BACKEND" = "qwen" ]; then
     resolve_tts_voice
     if up "http://localhost:$TTS_PORT/health"; then
       say_ok "TTS  Qwen3(:$TTS_PORT) 화자 $TTS_VOICE"
@@ -427,6 +456,14 @@ bind_probe_addr() {
   if [ "$BIND_HOST" = "0.0.0.0" ]; then lan_ip; else echo "$BIND_HOST"; fi
 }
 
+# 위와 같은 확인을 **조용히** — clean-local 이 "남길까 내릴까" 를 가를 때 쓴다(내리는 것이 답이라 "stop 후 다시" 를 찍으면 틀린다).
+binds_right() {  # port...
+  local addr p
+  [ "$BIND_HOST" = "127.0.0.1" ] && return 0
+  if ! addr="$(bind_probe_addr)" || [ -z "$addr" ]; then return 0; fi
+  for p in "$@"; do up "http://$addr:$p/health" || return 1; done
+}
+
 # 떠 있는 서버(포트들)가 BIND_HOST 로 듣는지. 0 = 듣는다(또는 loopback 바인드라 볼 것이 없다).
 already_up_binds_right() {  # label port...
   local label="$1" addr p; shift
@@ -443,7 +480,7 @@ already_up_binds_right() {  # label port...
 }
 
 start_llm_stt() {
-  llm_stt_engines_ok || return 1
+  engines_ok || return 1
   # 스위치를 켰으면 게이트웨이 구성으로 간다. **꺼져 있으면 아래가 지금까지의 경로 그대로다.**
   if gateway_on; then start_llm_stt_gateway; return $?; fi
   say_step "LLM(:8080) · STT(:8090) — bind $BIND_HOST"
@@ -486,14 +523,38 @@ llm_stt_log_hint() {  # [llm_port stt_port] — 게이트웨이 구성이면 안
 
 # ── LLM·STT 게이트웨이 구성(스위치를 켰을 때만) ─────────────────────
 # 모르는 값을 조용히 local 로 읽으면 운영자는 OpenAI 로 도는 줄 안다 — 멈춘다.
-llm_stt_engines_ok() {
-  local e
+# 외부 전용(REACHY_LOCAL_MODELS=off)인데 local 엔진이 남았으면 그 서비스를 받을 곳이 없다 — 역시 멈춘다.
+engines_ok() {
+  local e bad=""
   for e in "$LLM_ENGINE" "$STT_ENGINE"; do
     case "$e" in
       local|openai) ;;
       *) say_bad "REACHY_LLM_ENGINE / REACHY_STT_ENGINE 은 local 또는 openai 다 (받은 값: '$e')"; return 1 ;;
     esac
   done
+  case "$LOCAL_MODELS" in
+    on|off) ;;
+    *) say_bad "REACHY_LOCAL_MODELS 는 on 또는 off 다 (받은 값: '$LOCAL_MODELS')"; return 1 ;;
+  esac
+  local_off || return 0
+  [ "$LLM_ENGINE" = "openai" ] || bad="$bad REACHY_LLM_ENGINE=openai"
+  [ "$STT_ENGINE" = "openai" ] || bad="$bad REACHY_STT_ENGINE=openai"
+  [ "$TTS_ENGINE" = "elevenlabs" ] || bad="$bad TTS_ENGINE=elevenlabs"
+  if [ -n "$bad" ]; then
+    say_bad "REACHY_LOCAL_MODELS=off(외부 전용)인데 로컬 엔진이 남았다 — 이것도 붙인다:${bad}"
+    return 1
+  fi
+}
+
+# 외부 전용인데 지난 실행의 로컬 모델이 떠 있으면 — 안 쓰지만 메모리(Qwen TTS 만 3.2 GB)를 차지한다. 끄지는 않는다
+# (이 실행이 띄운 것이 아니다), 말하고 끄는 법을 알린다.
+local_models_left_warn() {  # 포트…
+  local p left=""
+  for p in "$@"; do
+    up "http://127.0.0.1:$p/health" && left="$left :$p"
+  done
+  [ -n "$left" ] && say_warn "지난 실행의 로컬 모델이 떠 있다(${left# }) — 외부 전용에서는 안 쓰고 메모리만 차지한다. 끄려면 ./reachy.sh stop 후 다시"
+  return 0
 }
 
 # 스위치를 껐는데 :8080/:8090 에 지난 실행의 게이트웨이가 남아 있으면 요청이 여전히 OpenAI 로 간다 — 겉으로는
@@ -511,17 +572,24 @@ gateway_left_warn() {
 # 게이트웨이 구성: ① 바깥 포트(:8080·:8090)에 누가 떠 있나 → ② 안쪽 로컬 서버(llamactl, loopback) → ③ 게이트웨이(BIND_HOST).
 # 바깥 포트에 게이트웨이가 아닌 것(예전 구성의 로컬 직결)이 있으면 게이트웨이가 그 포트를 못 잡는다 — 멈추고 stop 을 권한다.
 start_llm_stt_gateway() {
-  local p h n_gw=0
-  say_step "LLM(:8080 $LLM_ENGINE) · STT(:8090 $STT_ENGINE) — 게이트웨이 bind $BIND_HOST · 로컬 서버 안쪽 127.0.0.1:${LLM_INNER_PORT}·:$STT_INNER_PORT"
+  local p h n_gw=0 want="llm=$LLM_ENGINE,stt=$STT_ENGINE"
+  if local_off; then
+    want="$want,local=off"
+    say_step "LLM(:8080 $LLM_ENGINE) · STT(:8090 $STT_ENGINE) — 게이트웨이 bind $BIND_HOST · 로컬 모델 안 띄움(외부 전용)"
+  else
+    say_step "LLM(:8080 $LLM_ENGINE) · STT(:8090 $STT_ENGINE) — 게이트웨이 bind $BIND_HOST · 로컬 서버 안쪽 127.0.0.1:${LLM_INNER_PORT}·:$STT_INNER_PORT"
+  fi
   for p in 8080 8090; do
     # `up`(200 만 본다)이 아니라 **응답이 있는가**로 본다 — 안쪽 로컬이 죽은 통과 모드의 게이트웨이는 503 을 주는데,
     # 그것을 "안 떠 있다" 로 읽으면 새 게이트웨이가 포트를 못 잡고 옛 설정의 게이트웨이가 그대로 돈다.
     h="$(curl -s -m 3 "http://localhost:$p/health" 2>/dev/null)"
     [ -n "$h" ] || continue
+    # 닫는 따옴표까지 맞춘다 — `llm=openai,stt=openai` 는 외부 전용의 `…,local=off` 에도 들어 있다(접두사로 맞추면
+    # 로컬 폴백이 있는 게이트웨이와 외부 전용 게이트웨이를 서로 착각해 재사용한다).
     case "$h" in
-      *"llm=$LLM_ENGINE,stt=$STT_ENGINE"*) n_gw=$((n_gw + 1)) ;;
+      *"\"engines\": \"$want\""*) n_gw=$((n_gw + 1)) ;;
       *'"gateway"'*)
-        say_bad "설정이 다른 게이트웨이가 :$p 에 떠 있다($(printf '%s' "$h" | grep -o 'llm=[a-z]*,stt=[a-z]*')) — ./reachy.sh stop 후 다시"
+        say_bad "설정이 다른 게이트웨이가 :$p 에 떠 있다($(printf '%s' "$h" | grep -o 'llm=[a-z]*,stt=[a-z]*[a-z=,]*')) — ./reachy.sh stop 후 다시"
         return 1 ;;
       *)
         say_bad ":$p 에 게이트웨이가 아닌 서버(로컬 직결 — 예전 구성)가 떠 있다 — 게이트웨이가 그 포트를 못 잡는다. ./reachy.sh stop 후 다시"
@@ -530,7 +598,11 @@ start_llm_stt_gateway() {
   done
 
   # ② 안쪽 로컬 서버 — loopback 으로만(로봇은 게이트웨이를 부른다). OpenAI 가 실패하면 여기로 넘어간다.
-  if up "http://127.0.0.1:$LLM_INNER_PORT/health" && up "http://127.0.0.1:$STT_INNER_PORT/health"; then
+  #    외부 전용이면 띄우지 않는다 — 게이트웨이가 실패를 경고 + 502 로 돌려준다.
+  if local_off; then
+    echo "   ${c_dim}로컬 LLM·STT 는 띄우지 않는다(외부 전용) — OpenAI 가 실패하면 경고하고 실패를 돌려준다${c_off}"
+    local_models_left_warn "$LLM_INNER_PORT" "$STT_INNER_PORT"
+  elif up "http://127.0.0.1:$LLM_INNER_PORT/health" && up "http://127.0.0.1:$STT_INNER_PORT/health"; then
     echo "   ${c_dim}안쪽 로컬 서버가 이미 떠 있다 — 건너뛴다${c_off}"
   else
     [ -x "$LLAMACTL" ] || { say_bad "$LLAMACTL 을 찾을 수 없다"; return 1; }
@@ -560,14 +632,23 @@ start_llm_stt_gateway() {
 
 start_gateway() {
   local glog="$LOG_DIR/openai-gateway.log"
-  echo "   게이트웨이 :8080·:8090 → 안쪽 :${LLM_INNER_PORT}·:$STT_INNER_PORT ${c_dim}(LLM $LLM_ENGINE · STT $STT_ENGINE · 로그 $glog)${c_off}"
-  nohup "$PY" -u openai_gateway.py --host "$BIND_HOST" \
-    --llm-port 8080 --llm-local "http://127.0.0.1:$LLM_INNER_PORT" --llm-engine "$LLM_ENGINE" \
-    --stt-port 8090 --stt-local "http://127.0.0.1:$STT_INNER_PORT" --stt-engine "$STT_ENGINE" \
-    > "$glog" 2>&1 &
+  if local_off; then
+    echo "   게이트웨이 :8080·:8090 → OpenAI 만 ${c_dim}(로컬 폴백 없음 · 로그 $glog)${c_off}"
+    nohup "$PY" -u openai_gateway.py --host "$BIND_HOST" --no-local \
+      --llm-port 8080 --llm-engine "$LLM_ENGINE" --stt-port 8090 --stt-engine "$STT_ENGINE" \
+      > "$glog" 2>&1 &
+  else
+    echo "   게이트웨이 :8080·:8090 → 안쪽 :${LLM_INNER_PORT}·:$STT_INNER_PORT ${c_dim}(LLM $LLM_ENGINE · STT $STT_ENGINE · 로그 $glog)${c_off}"
+    nohup "$PY" -u openai_gateway.py --host "$BIND_HOST" \
+      --llm-port 8080 --llm-local "http://127.0.0.1:$LLM_INNER_PORT" --llm-engine "$LLM_ENGINE" \
+      --stt-port 8090 --stt-local "http://127.0.0.1:$STT_INNER_PORT" --stt-engine "$STT_ENGINE" \
+      > "$glog" 2>&1 &
+  fi
   echo $! > "$GATEWAY_PID_FILE"
   if ! wait_for "http://localhost:8080/health" "게이트웨이(LLM)" 20 || ! wait_for "http://localhost:8090/health" "게이트웨이(STT)" 10; then
     say_bad "게이트웨이가 뜨지 않았다 — tail -20 $glog"
+    # 왜 안 떴는지(외부 전용인데 키 없음 등)는 게이트웨이가 마지막 줄에 적고 나간다 — 이 화면에도.
+    tail -3 "$glog" 2>/dev/null | sed 's/^/   /'
     kill_pidfile "$GATEWAY_PID_FILE" "OpenAI 게이트웨이"
     return 1
   fi
@@ -577,6 +658,7 @@ start_gateway() {
 }
 
 start_tts() {
+  if local_off; then start_tts_external; return $?; fi
   if [ "$TTS_BACKEND" = "qwen" ]; then
     resolve_tts_voice
     say_step "TTS 서버(:$TTS_PORT) — Qwen3-TTS, bind $BIND_HOST"
@@ -629,6 +711,36 @@ start_tts() {
   fi
 }
 
+# 외부 전용 TTS — CrispASR 를 안 띄우고 캐시 프록시만(`--no-local`). 구운 고정 대사는 캐시에서, 관람객 답은 ElevenLabs.
+# 물러날 로컬 TTS 가 없다 — 프록시가 못 뜨면 **멈춘다**(1). 목소리 없이 공연할 수 없고, 로봇이 기계음으로 말하는 것을
+# 시연장에서 처음 알게 되면 늦다.
+start_tts_external() {
+  local h
+  say_step "TTS(:$TTS_PORT) — ElevenLabs 캐시 프록시, 로컬 TTS 안 띄움(외부 전용) · bind $BIND_HOST"
+  h="$(curl -s -m 3 "http://localhost:$TTS_PORT/health" 2>/dev/null)"
+  if [ -n "$h" ]; then
+    # 표지 `"local": "off"` 는 tts_cache_proxy.py 의 외부 전용 헬스가 싣는다 — 없으면 로컬을 끼고 뜬 예전 구성이다.
+    if printf '%s' "$h" | grep -q '"local": "off"'; then
+      already_up_binds_right "TTS 캐시 프록시" "$TTS_PORT" || return 1
+      echo "   ${c_dim}이미 떠 있다 — 건너뛴다${c_off}"
+      tts_cache_status
+      local_models_left_warn "$TTS_UPSTREAM_PORT"
+      return 0
+    fi
+    say_bad ":$TTS_PORT 에 로컬 TTS 를 끼고 뜬 서버(예전 구성)가 있다 — 외부 전용으로 못 바꾼다. ./reachy.sh stop 후 다시"
+    return 1
+  fi
+  if ! start_tts_proxy; then
+    say_bad "TTS 캐시 프록시가 뜨지 않았다 — tail -20 $LOG_DIR/tts-proxy.log"
+    tail -3 "$LOG_DIR/tts-proxy.log" 2>/dev/null | sed 's/^/   /'
+    kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"
+    return 1
+  fi
+  tts_cache_status
+  local_models_left_warn "$TTS_UPSTREAM_PORT"
+  return 0
+}
+
 # CrispASR 서버 하나를 띄운다(PID 는 $TTS_PID_FILE). 호스트·포트만 다르다 — 보통은 안쪽
 # loopback, 프록시 폴백 때만 로봇이 부르는 주소.
 start_crispasr() {
@@ -641,6 +753,15 @@ start_crispasr() {
 # 캐시 프록시를 로봇이 부르는 주소에 띄운다. /health 는 안쪽이 살아 있을 때만 200 이라
 # 기다림이 곧 "프록시 + CrispASR 둘 다 선다" 의 확인이다.
 start_tts_proxy() {
+  if local_off; then
+    echo "   캐시 프록시 :$TTS_PORT → ElevenLabs 만 ${c_dim}(로컬 없음 · 캐시 $TTS_CACHE_DIR · 로그 $LOG_DIR/tts-proxy.log)${c_off}"
+    nohup "$PY" -u tts_cache_proxy.py --host "$BIND_HOST" --port "$TTS_PORT" --no-local \
+      --cache-dir "$TTS_CACHE_DIR" --engine "$TTS_ENGINE" \
+      > "$LOG_DIR/tts-proxy.log" 2>&1 &
+    echo $! > "$TTS_PROXY_PID_FILE"
+    wait_for "http://localhost:$TTS_PORT/health" "TTS 캐시 프록시" 20
+    return $?
+  fi
   echo "   캐시 프록시 :$TTS_PORT → 안쪽 :$TTS_UPSTREAM_PORT ${c_dim}(엔진 $TTS_ENGINE · 캐시 $TTS_CACHE_DIR · 로그 $LOG_DIR/tts-proxy.log)${c_off}"
   nohup "$PY" -u tts_cache_proxy.py --host "$BIND_HOST" --port "$TTS_PORT" \
     --upstream "http://127.0.0.1:$TTS_UPSTREAM_PORT" --cache-dir "$TTS_CACHE_DIR" --engine "$TTS_ENGINE" \
@@ -835,8 +956,13 @@ ROBOT_CFG="/home/$ROBOT_USER/.config/reachy-mini-voice-chat/config.json"
 ROBOT_API="http://$ROBOT_HOST:8000"
 
 rssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$ROBOT_USER@$ROBOT_HOST" "$@"; }
-rget() { curl -s -m "${2:-10}" "$ROBOT_API$1"; }
-rpost() { curl -s -m "${2:-30}" -X POST "$ROBOT_API$1"; }
+# **연결은 짧게, 응답은 길게**(2026-11-13). 상한(-m)은 앱 정지처럼 로봇이 일하는 시간을 기다리려는 것인데, 연결 시간
+# 상한이 따로 없어 **꺼진 로봇에도 그 상한을 통째로** 기다렸다 — 두 로봇이 다 꺼진 채 Ctrl-C 하면 정리가 25초 × 2 = 50초
+# 걸리고(그동안 Ctrl-C 는 무시된다) 운영자는 "Ctrl-C 로 안 꺼진다" 로 본다(실측 50.0초). 같은 망의 로봇은 연결이 1초 안에
+# 된다 — ROBOT_CONNECT_S 안에 안 붙으면 안 닿는 것이다.
+ROBOT_CONNECT_S="${REACHY_ROBOT_CONNECT_S:-4}"
+rget() { curl -s --connect-timeout "$ROBOT_CONNECT_S" -m "${2:-10}" "$ROBOT_API$1"; }
+rpost() { curl -s --connect-timeout "$ROBOT_CONNECT_S" -m "${2:-30}" -X POST "$ROBOT_API$1"; }
 
 # 맥의 LAN 주소. 로봇이 이 주소로 추론 3종에 붙는다.
 lan_ip() {
@@ -847,13 +973,55 @@ lan_ip() {
   return 1
 }
 
+# **한 번에 포기하지 않는다**(2026-11-13). 예전에는 핑 한 번(2초)이 빗나가면 "안 잡힌다" 로 건너뛰었다. 로봇 Wi-Fi 는
+# 절전(power_save on — 기본값)이라 한동안 조용하던 뒤의 첫 패킷이 늦거나 빠진다 — 켜져 있던 도슨트가 그 한 번에 빠져
+# 건너뛰어졌고, 감독이 1인 모드로 돌아 **도슨트 대사까지 사회자 목소리로** 나갔다("둘 다 남자 목소리"). 핑 3번·API 3번.
 robot_reachable() {
-  if ! ping -c 1 -W 2000 "$ROBOT_HOST" >/dev/null 2>&1; then
-    say_bad "로봇($ROBOT_HOST)이 안 잡힌다 — 전원·Wi-Fi 를 확인한다"
-    return 1
-  fi
-  up "$ROBOT_API/api/daemon/status" || { say_bad "데몬 API 가 응답하지 않는다"; return 1; }
+  local i
+  for i in 1 2 3; do
+    ping -c 1 -W 2000 "$ROBOT_HOST" >/dev/null 2>&1 && break
+    if [ "$i" = "3" ]; then
+      say_bad "로봇($ROBOT_HOST)이 안 잡힌다(핑 3번 무응답) — 전원·Wi-Fi 를 확인한다"
+      return 1
+    fi
+  done
+  [ "$i" -gt 1 ] && echo "   ${c_dim}핑 ${i}번째에 응답 — 로봇 Wi-Fi 가 절전에서 깨는 중이었다${c_off}"
+  for i in 1 2 3; do
+    up "$ROBOT_API/api/daemon/status" && return 0
+    sleep 1
+  done
+  say_bad "데몬 API 가 응답하지 않는다($ROBOT_HOST)"
+  return 1
+}
+
+# 로봇 Wi-Fi 절전을 끈다 — **기동마다**(재부팅하면 다시 켜진다). 절전이면 첫 패킷이 늦거나 빠져 기동 확인·정리가
+# 빗나가고 공연 중에도 끊겼다 붙었다 했다(2026-11-13 두 로봇 모두 `Power save: on`). 못 끄면 경고만 — 공연은 막지 않는다.
+robot_wifi_awake() {
+  local ps
+  ps="$(rssh "iw dev wlan0 get power_save 2>/dev/null || /sbin/iw dev wlan0 get power_save" 2>/dev/null)"
+  case "$ps" in
+    *": off"*) return 0 ;;
+    *": on"*)
+      if rssh "sudo -n iw dev wlan0 set power_save off || sudo -n /sbin/iw dev wlan0 set power_save off" >/dev/null 2>&1; then
+        say_ok "Wi-Fi 절전 끔 ($ROBOT_HOST) — 켜져 있으면 첫 패킷이 늦거나 빠져 로봇이 안 잡힌 것처럼 보인다"
+      else
+        say_warn "Wi-Fi 절전을 못 껐다 ($ROBOT_HOST) — 공연 중 끊김이 있으면 로봇에서 sudo iw dev wlan0 set power_save off"
+      fi ;;
+    *) say_warn "Wi-Fi 절전 상태를 못 읽었다 ($ROBOT_HOST) — 계속 간다" ;;
+  esac
   return 0
+}
+
+# 데몬을 재시작하고 다시 설 때까지(최대 60초) 기다린다. 앱 관리자가 "정지 중" 에 멈춘 것을 푸는 유일한 길이다(아래).
+robot_restart_daemon() {
+  local i
+  rssh "sudo -n systemctl restart reachy-mini-daemon" >/dev/null 2>&1 || { say_bad "데몬을 재시작하지 못했다($ROBOT_HOST — ssh/sudo)"; return 1; }
+  for i in $(seq 1 12); do
+    sleep 5
+    rget /api/daemon/status | grep -q '"state":"running"' && { say_ok "데몬 재시작 ($ROBOT_HOST, 약 $((i * 5))초)"; return 0; }
+  done
+  say_bad "데몬이 60초 안에 다시 서지 않았다($ROBOT_HOST) — ./reachy.sh robot fix"
+  return 1
 }
 
 # **config 를 매번 맞춘다.** 망이 바뀌면 맥 IP 가 달라지는데, 로봇의 config 는
@@ -1036,6 +1204,7 @@ robot_bringup_one() {  # host role mac_ip   (role 이 비면 1대 모드 — 로
   say_step "로봇 ${REACHY_ROLE:-(역할 없음)} — $ROBOT_HOST"
   robot_reachable || return 1
   robot_backend_ready || return 1
+  robot_wifi_awake
 
   # ── 2. 로봇 config 동기화 ─────────────────────────────────
   say_step "로봇 config 동기화 (맥 $ip)"
@@ -1123,6 +1292,17 @@ robot_start_app() {
     sleep 3
     robot_wake
     resp="$(rpost "/api/apps/start-app/$ROBOT_APP" 40)"
+  fi
+  # **앱 관리자가 "정지 중" 에 멈춘 경우**(2026-11-13 도슨트 실측): 앱 프로세스는 이미 없는데 상태가 `stopping` 에서 안 풀려
+  # 시작도(400) 정지도("No app is currently running") 거절한다 — 이 로봇은 그대로 건너뛰어지고 감독은 1인 모드가 된다.
+  # 데몬을 재시작하면 풀린다(재시작이 로봇을 재우므로 다시 깨우고 띄운다).
+  if ! printf '%s' "$resp" | grep -Eq '"state": ?"(starting|running)"' \
+     && rget /api/apps/current-app-status | grep -Eq '"state": ?"stopping"'; then
+    say_warn "로봇($ROBOT_HOST) 데몬이 앱 '정지 중' 에 멈춰 있다(앱은 이미 없다) — 데몬을 재시작해 푼다"
+    if robot_restart_daemon; then
+      robot_wake
+      resp="$(rpost "/api/apps/start-app/$ROBOT_APP" 40)"
+    fi
   fi
   printf '%s' "$resp" | grep -Eq '"state": ?"(starting|running)"' && return 0
   say_bad "앱을 띄우지 못했다 ($ROBOT_HOST): $(printf '%s' "${resp:-응답 없음}" | head -c 200)"
@@ -1363,11 +1543,16 @@ start_cleanup() {
   done
   if [ -n "$START_PIDS" ] || [ -n "${hosts// /}" ]; then
     say_step "정리 — 이 실행이 띄운 것(과 배역 자리 로봇의 앱)만 내린다"
+    # 기다리는 동안 멈춘 것처럼 보이지 않게 — 정리 중 Ctrl-C 는 받지 않는다(위). 얼마나 걸리는지 말한다.
+    [ -n "${hosts// /}" ] && echo "   ${c_dim}로봇 앱 정지 중 — 안 닿는 로봇은 ${ROBOT_CONNECT_S}초 안에 건너뛴다(정리가 끝나면 저절로 나간다)${c_off}"
   fi
   # stderr 를 버리는 이유: bash 가 TERM 으로 죽인 백그라운드 작업마다 "line N: 1234
   # Terminated: 15 nohup …" 를 찍는다 — 우리가 방금 "내림" 이라고 말한 것의 소음이다.
   start_stop_pids 2>/dev/null
-  for h in $hosts; do robot_stop_app_on "$h"; done
+  # 로봇들은 **동시에** — 한 대씩이면 꺼진 로봇 수만큼 기다림이 쌓인다. 줄마다 한 번에 찍으므로 섞이지 않는다.
+  local stops=""
+  for h in $hosts; do robot_stop_app_on "$h" & stops="$stops $!"; done
+  [ -n "$stops" ] && wait $stops
   ROBOT_APPS_STARTED=""
   START_ROBOT_HOSTS=""
   if [ "$START_INFER_UP" = "1" ]; then
@@ -1390,8 +1575,8 @@ start_infer() {
     say_bad "추론 서버를 쓸 수 없다 — LLM·STT 없이는 시연할 수 없어 멈춘다"
     return 1
   }
-  # start_tts 가 1 을 주는 것은 "떠 있는 TTS 가 원하는 주소로 안 듣는다" 하나뿐이다(자산
-  # 없음·기동 실패는 say 로 물러나고 0). 그 경우는 이유를 이미 찍었다 — 여기서 멈춘다.
+  # start_tts 가 1 을 주는 것은 "떠 있는 TTS 가 원하는 주소로 안 듣는다" 와 외부 전용에서 프록시가 못 뜬 경우다(로컬
+  # 구성의 자산 없음·기동 실패는 say 로 물러나고 0). 그 경우는 이유를 이미 찍었다 — 여기서 멈춘다.
   start_tts || return 1
   STARTED_TTS=0        # 여기부터는 기동이 끝났다 — 서버를 남겨 두는 것이 정상이다
   START_INFER_UP=1
@@ -1614,6 +1799,9 @@ start_robot() {  # bind director_port dashboard_port dashboard_url mc_host docen
     say_bad "두 로봇 모두 못 올렸다 — 감독만 띄운다. 로봇을 살린 뒤 위 명령으로 붙인다"
   fi
 
+  # 감독이 1인 모드 경고에 **주소까지 든** 합류 명령을 찍게 물려준다 — 주소 없는 `REACHY_ROLE=mc ./reachy.sh robot up` 은
+  # 기본 주소(reachy-mini.local = 도슨트 로봇)로 가서 도슨트 config 를 사회자로 덮어쓴다(2026-11-13).
+  export REACHY_MC_HOST="$mc_host" REACHY_DOCENT_HOST="$docent_host"
   start_director 0.0.0.0 "$dir_port" "$dash_url" "target=robot mc=$mc_host docent=$docent_host"
 }
 
@@ -1675,12 +1863,15 @@ run_start() {
   local bind
   if [ "$target" = "sim" ]; then bind=127.0.0.1; else bind="${REACHY_BIND_HOST:-0.0.0.0}"; fi
   # 엔진 오타는 계획 단계에서 멈춘다 — dry-run 이 "된다" 고 찍으면 안 된다(위 같은 로봇 거절과 같은 이유).
-  llm_stt_engines_ok || exit 2
+  engines_ok || exit 2
 
   if [ "$dry" = "1" ]; then
     echo "PLAN infer bind=$bind ports=8080,8090,$TTS_PORT"
     # 게이트웨이는 스위치를 켰을 때만 — 꺼져 있으면 계획이 지금과 같은 4줄이다(tests/test_reachy_start.py 의 계약).
-    if gateway_on; then
+    if local_off; then
+      echo "PLAN gateway llm=$LLM_ENGINE stt=$STT_ENGINE ports=8080,8090 inner=none"
+      echo "PLAN external-only tts=$TTS_ENGINE local-models=none"
+    elif gateway_on; then
       echo "PLAN gateway llm=$LLM_ENGINE stt=$STT_ENGINE ports=8080,8090 inner=127.0.0.1:$LLM_INNER_PORT,$STT_INNER_PORT"
     fi
     if [ "$target" = "sim" ]; then
@@ -1706,6 +1897,137 @@ run_start() {
 }
 
 # ════════════════════════════════════════════════════════════════
+#  clean-local — 외부 전용으로 띄우기 전 정리(run-app.sh 가 부른다, 2026-11-13)
+# ════════════════════════════════════════════════════════════════
+# 외부 전용(REACHY_LOCAL_MODELS=off)으로 바꾼 뒤에도 지난 실행의 로컬 구성이 남아 있으면 `start` 가 "설정이 다른 게이트웨이 —
+# ./reachy.sh stop 후 다시" 로 멈추고, 로컬 모델은 안 쓰이면서 메모리를 쥔다(Qwen TTS 만 3.2 GB). 2026-11-13 에 손으로 네 개
+# (폴백 낀 게이트웨이·Whisper STT·CrispASR·로컬 낀 TTS 프록시)를 골라 내렸다 — 그 일을 여기 둔다.
+#
+# `stop` 을 쓰지 않는 이유: `stop` 은 MCP 서버·시뮬 데몬·감독까지 쓸어낸다(운영자가 다른 일로 쓰는 중일 수 있다).
+# 여기서 내리는 것은 **이 저장소의 포트에 뜬 것만**이다:
+#   :8080·:8090  게이트웨이가 외부 전용(`llm=openai,stt=openai,local=off`)이 아니거나 대상 바인드로 안 들으면 → 게이트웨이를 내린다.
+#                게이트웨이가 아닌 것(로컬 모델 직결, 예전 구성)이면 → llamactl stop(이 포트들만).
+#   :8081·:8091  안쪽 로컬 모델(폴백 자리) → llamactl stop(이 포트들만).
+#   :8098        CrispASR(안쪽) — 그리고 어느 포트든 `crispasr --server` → 내린다.
+#   :8099        TTS 프록시가 외부 전용(`"local": "off"`)이 아니거나 대상 바인드로 안 들으면 → 내린다.
+# 같은 설정의 외부 전용 게이트웨이·프록시는 **남긴다**(`start` 가 재사용한다).
+# 감독(:8777·:8778)이 떠 있으면 공연 중일 수 있다 — 아무것도 안 건드리고 멈춘다(1).
+listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+
+# llamactl 로 그 포트의 LLM·STT 만 내린다. llamactl 이 없거나 pid 파일을 잃었으면 포트를 박은 명령줄로 한 번 더 쓸어낸다
+# (`stop_all` 이 안쪽 포트를 찾는 것과 같은 패턴).
+stop_llm_stt_ports() {  # llm_port stt_port
+  if [ -x "$LLAMACTL" ]; then LLM_PORT="$1" STT_PORT="$2" "$LLAMACTL" stop; fi
+  sweep "llama-server.*--port $1" "로컬 LLM"
+  sweep "stt_server.py.*--port $2" "로컬 STT"
+}
+
+run_clean_local() {
+  local target="" dry=0 a
+  for a in "$@"; do
+    case "$a" in
+      --sim|--robot) target="${a#--}" ;;
+      --dry-run) dry=1 ;;
+      *) say_bad "모르는 인자: $a"; return 2 ;;
+    esac
+  done
+  [ -n "$target" ] || { say_bad "clean-local 은 대상이 필수다 — --sim 또는 --robot(바인드가 달라 남길지가 달라진다)"; return 2; }
+  # 바인드는 `start` 와 같은 규칙 — 시뮬은 loopback, 실기는 LAN(REACHY_BIND_HOST 로 좁힐 수 있다).
+  if [ "$target" = "sim" ]; then BIND_HOST=127.0.0.1; else BIND_HOST="${REACHY_BIND_HOST:-0.0.0.0}"; fi
+  local dir_port="${REACHY_DIRECTOR_PORT:-8777}" dash_port="${REACHY_DASHBOARD_PORT:-8778}"
+
+  say_step "외부 전용 정리 — 로컬 모델과 설정이 다른 서버만 내린다 ${c_dim}(감독·MCP·시뮬 데몬은 안 건드린다)${c_off}"
+  if listening "$dir_port" || listening "$dash_port"; then
+    say_bad "무대감독(:${dir_port}·:$dash_port)이 떠 있다 — 공연 중일 수 있어 아무것도 안 내린다. 감독 창에서 q 로 끝낸 뒤 다시"
+    return 1
+  fi
+
+  # 할 일을 먼저 모은다(한 줄에 하나: 종류|사람이 읽을 이유). 같은 종류는 한 번만.
+  local todo="" keep="" h p n_ext=0 gw_seen=0
+  add() { case "$todo" in *"$1|"*) ;; *) todo="$todo$1|$2"$'\n' ;; esac; }
+
+  # ① 바깥 :8080·:8090
+  for p in 8080 8090; do
+    listening "$p" || continue
+    h="$(curl -s -m 3 "http://localhost:$p/health" 2>/dev/null)"
+    case "$h" in
+      *'"engines": "llm=openai,stt=openai,local=off"'*) n_ext=$((n_ext + 1)) ;;
+      *'"gateway"'*) gw_seen=1; add gateway "OpenAI 게이트웨이(:8080·:8090) — 로컬 폴백을 낀 설정($(printf '%s' "$h" | grep -o 'llm=[a-z]*,stt=[a-z]*[a-z=,]*'))" ;;
+      *) add llm-outer "로컬 LLM·STT 직결(:8080·:8090) — 예전 구성" ;;
+    esac
+  done
+  if [ "$n_ext" -gt 0 ]; then
+    if [ "$n_ext" = "2" ] && binds_right 8080 8090; then
+      keep="${keep}   남긴다: OpenAI 게이트웨이(:8080·:8090) — 같은 설정(외부 전용)"$'\n'
+    elif [ "$n_ext" = "2" ]; then
+      add gateway "OpenAI 게이트웨이(:8080·:8090) — $BIND_HOST 로 안 듣는다(loopback 전용, 로봇에서 안 보인다)"
+    else
+      add gateway "OpenAI 게이트웨이 — 한쪽 포트에만 떠 있다"
+    fi
+  fi
+  # ② 안쪽 로컬 모델(폴백 자리)
+  if listening "$LLM_INNER_PORT" || listening "$STT_INNER_PORT"; then
+    add llm-inner "로컬 LLM·STT(:${LLM_INNER_PORT}·:$STT_INNER_PORT) — 외부 전용에서는 안 쓴다"
+  fi
+  # ③ CrispASR — 안쪽 포트든 예전처럼 :8099 직결이든
+  if listening "$TTS_UPSTREAM_PORT" || pgrep -f "crispasr --server" >/dev/null 2>&1; then
+    add crispasr "로컬 TTS CrispASR(Qwen, 약 3.2 GB) — 외부 전용에서는 안 쓴다"
+  fi
+  # ④ TTS 프록시 :8099
+  if listening "$TTS_PORT"; then
+    h="$(curl -s -m 3 "http://localhost:$TTS_PORT/health" 2>/dev/null)"
+    case "$h" in
+      *'"local": "off"'*)
+        if binds_right "$TTS_PORT"; then keep="${keep}   남긴다: TTS 캐시 프록시(:$TTS_PORT) — 같은 설정(외부 전용)"$'\n'
+        else add proxy "TTS 캐시 프록시(:$TTS_PORT) — $BIND_HOST 로 안 듣는다(loopback 전용)"; fi ;;
+      *'"proxy"'*) add proxy "TTS 캐시 프록시(:$TTS_PORT) — 로컬 TTS 를 낀 설정" ;;
+      *) ;;   # 프록시가 아닌 것(CrispASR 직결)은 ③ 이 내린다
+    esac
+  fi
+
+  printf '%s' "$keep"
+  if [ -z "$todo" ]; then
+    echo "   ${c_dim}내릴 것이 없다${c_off}"
+    return 0
+  fi
+  printf '%s' "$todo" | while IFS='|' read -r _ why; do [ -n "$why" ] && echo "   내린다: $why"; done
+  if [ "$dry" = "1" ]; then
+    echo "   ${c_dim}(점검 — 내리지 않았다)${c_off}"
+    return 0
+  fi
+
+  local kind
+  for kind in gateway llm-outer llm-inner crispasr proxy; do
+    case "$todo" in *"$kind|"*) ;; *) continue ;; esac
+    case "$kind" in
+      gateway)   kill_pidfile "$GATEWAY_PID_FILE" "OpenAI 게이트웨이"; sweep "openai_gateway.py" "OpenAI 게이트웨이" ;;
+      # llamactl 은 포트 단위로 내린다 — 이 저장소의 포트만(다른 일로 띄운 llama-server 는 남는다).
+      llm-outer) stop_llm_stt_ports 8080 8090 ;;
+      llm-inner) stop_llm_stt_ports "$LLM_INNER_PORT" "$STT_INNER_PORT" ;;
+      crispasr)  kill_pidfile "$TTS_PID_FILE" "TTS 서버"; sweep "crispasr --server" "CrispASR" ;;
+      proxy)     kill_pidfile "$TTS_PROXY_PID_FILE" "TTS 캐시 프록시"; sweep "tts_cache_proxy.py" "TTS 캐시 프록시" ;;
+    esac
+  done
+
+  # 내렸다고 믿지 않고 포트로 확인한다 — 남아 있으면 `start` 가 그 자리에서 다시 멈춘다. 그 전에 여기서 말한다.
+  local left="" i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    left=""
+    case "$todo" in *"gateway|"*|*"llm-outer|"*) for p in 8080 8090; do listening "$p" && left="$left :$p"; done ;; esac
+    case "$todo" in *"llm-inner|"*) for p in "$LLM_INNER_PORT" "$STT_INNER_PORT"; do listening "$p" && left="$left :$p"; done ;; esac
+    case "$todo" in *"crispasr|"*) listening "$TTS_UPSTREAM_PORT" && left="$left :$TTS_UPSTREAM_PORT" ;; esac
+    case "$todo" in *"proxy|"*) listening "$TTS_PORT" && left="$left :$TTS_PORT" ;; esac
+    [ -z "$left" ] && break
+    sleep 0.5
+  done
+  if [ -n "$left" ]; then
+    say_bad "내렸는데 아직 듣고 있다(${left# }) — 무엇인지 lsof -nP -iTCP -sTCP:LISTEN 으로 보고 ./reachy.sh stop"
+    return 1
+  fi
+  say_ok "정리했다 — 외부 전용으로 띄울 수 있다"
+}
+
+# ════════════════════════════════════════════════════════════════
 # `source reachy.sh` 로 불리면 함수만 정의하고 돌아간다. 실기·데몬 없이는 못 돌리는
 # 정리(trap)·로봇별 단계를 테스트가 가짜 명령으로 돌려 본다(tests/test_reachy_start.py).
 # 실행(`./reachy.sh …`)에서는 BASH_SOURCE 와 $0 이 같아 그냥 지나간다.
@@ -1724,6 +2046,7 @@ case "$cmd" in
   robot) run_robot "$@" ;;
   check) say_step "상태"; status ;;
   stop)  stop_all; stop_director_dashboard ;;
+  clean-local) run_clean_local "$@"; exit $? ;;
   logs)  show_logs "$@" ;;
   # 측정·예열도 이 진입점 하나로 통한다 — 파이썬 도구는 scripts/ 에 있지만
   # 인터프리터(.venv 강제)·작업 디렉토리·환경을 여기서 보장해 주는 것이 안전하다.

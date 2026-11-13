@@ -23,6 +23,8 @@
   --mc:#0A6F84; --mcbg:#DDF1F5; --doc:#8F5300; --docbg:#FFEFD6; --amber:#B96F00; --muted:#52636F;
 }
 *{box-sizing:border-box}
+/* 공연 모드(2026-11-13) — 도구줄(장·수준·코스·시뮬레이션)을 숨긴다. 장·수준·차례는 공연이 정한다. */
+html[data-live] header.bar{display:none}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);word-break:keep-all;overflow-wrap:anywhere;
   font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
 button,select{font:inherit;color:inherit}
@@ -216,6 +218,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid 
 </div>
 
 <script type="application/json" id="data">__DATA__</script>
+<script>/*__LIVE__*/</script>
 <script>
 (function () {
   'use strict';
@@ -669,6 +672,70 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid 
     setSlide: setSlide, setLevel: setLevel, setCourse: setCourse, play: playSim, next: nextUtter, reset: resetSim,
     chunksOf: chunksOf, state: state
   };
+
+  // ── 공연 따라가기(2026-11-13) ──────────────────────────────────────
+  // 실제 시연은 로봇 2대(사회자·도슨트)가 말하고 이 화면은 소리 없이 따라간다(scripts/handout_live/live_follow.js — 종이 무대·웹툰·
+  // 분해도와 같은 모듈). 감독 대시보드가 준 `/stage/hud` 면 공연 모드가 기본, `?preview` 면 지금처럼 미리보기·시뮬레이션.
+  // 대사가 나가면 그 큐의 장, 감독 수준이 바뀌면 그 수준 카드, 로봇이 말하기 시작한 차례를 강조하고 말풍선에 그 대사를 띄운다.
+  // 왜 이 화면인가: 웹툰(초등·중고등)·분해도(전문가)는 01·02큐 시안뿐이라 그 너머 큐는 화면이 01큐에 멈췄다("시연영상과 무대조정이
+  // 따로 논다"). 종이 무대 안무는 일반 대본·카드 그림에 손으로 맞춘 것이라 다른 수준 대본에서는 멈춘다(02·15큐 예외 — 2026-11-13 실측).
+  // 이 카드 화면은 19큐 × 4수준이 검증돼 있다 — /stage/auto 가 전용 화면에 없는 큐를 이것으로 잇는다(사용자 결정).
+  var LIVE_CPS = 6.5;     // 말풍선 진행 어림(글자/초 — 로봇의 ElevenLabs 캐시 평균, fake_show 의 어림과 같다). 끝 보고가 오면 끝으로 맞춘다.
+  var levelName = function () { var l = LEVELS.filter(function (x) { return x.key === state.lv; })[0]; return l ? l.name : null; };
+  var LF = window.LiveFollow ? window.LiveFollow.create({
+    // 시계는 안 쓴다 — 차례 이름만 맞으면 된다(감독 라벨의 차례 이름이 이 화면의 TURNS 와 같은 체계다: open·docent0·ask1·…·after).
+    cues: CUES.map(function (c) {
+      return { id: c.id, utt: turnsFor(c.n).map(function (t, k) { return { turn: t, role: /^docent/.test(t) ? 'docent' : 'mc', t0: k, t1: k + .5 }; }) };
+    }),
+    level: levelName,
+    onCue: function (i) { if (i >= 0 && i < CUES.length && i !== state.slide) setSlide(i); },
+    onLevel: function (name) { var l = LEVELS.filter(function (x) { return x.name === name; })[0]; if (l && l.key !== state.lv) setLevel(l.key); }
+  }) : null;
+  if (LF && LF.enabled) {
+    document.documentElement.setAttribute('data-live', '1');
+    stopSim();
+    var liveKey = '', liveRun = null;
+    var liveMs = function (t) { return Math.max(900, t.length / LIVE_CPS * 1000); };
+    var textOf = function (turn) {
+      var cue = CUES[state.slide], L = cue.lv[state.lv], m = /^(ask|docent)(\d+)$/.exec(turn || '');
+      if (turn === 'open') return cue.open;
+      if (turn === 'after') return cue.after;
+      return m ? (m[1] === 'ask' ? L.ask[+m[2]] : L.ans[+m[2]]) || '' : '';
+    };
+    (function livePoll() {
+      var sp = LF.speaking(), key = state.slide + '|' + state.lv + '|' + (sp ? sp.role + ':' + sp.turn : '-');
+      if (key !== liveKey) {
+        liveKey = key;
+        if (sp && TURNS.indexOf(sp.turn) >= 0) {
+          var chunks = chunksOf(textOf(sp.turn));
+          if (!chunks.length) chunks = [''];
+          state.turn = sp.turn; applyHighlight();
+          liveRun = { role: sp.role, chunks: chunks, k: 0, t0: performance.now(), dur: liveMs(chunks[0]) };
+          hudShow(sp.role, chunks[0]);
+          runActions(sp.turn, chunks.reduce(function (a, c) { return a + liveMs(c); }, 0));
+        } else if (sp) {
+          // 관람객 질문 흐름(ack·qa·reask) — 생성 답이라 글은 싣지 않는다(검수 전 글). 누가 말하는지만.
+          liveRun = null; hudShow(sp.role, '…');
+        } else if (liveRun) {
+          hudProgress(liveRun.role, liveRun.chunks[liveRun.chunks.length - 1], 1);
+          if (liveRun.chunks.length > 1) hudShow(liveRun.role, liveRun.chunks[liveRun.chunks.length - 1]);
+          setMode(huds[liveRun.role], 'fading');
+          liveRun = null;
+        }
+      }
+      if (liveRun) {
+        var now = performance.now(), p = Math.min(1, (now - liveRun.t0) / liveRun.dur);
+        if (p >= 1 && liveRun.k < liveRun.chunks.length - 1) {
+          liveRun.k++; liveRun.t0 = now; liveRun.dur = liveMs(liveRun.chunks[liveRun.k]);
+          hudShow(liveRun.role, liveRun.chunks[liveRun.k]); p = 0;
+        }
+        hudProgress(liveRun.role, liveRun.chunks[liveRun.k], p);   // 마지막 조각은 끝 보고가 올 때까지 끝에서 기다린다
+      }
+      setTimeout(livePoll, 50);
+    })();
+  }
+  window.hud.live = LF;
+  document.documentElement.setAttribute('data-ready', '1');
 })();
 </script>
 </body>

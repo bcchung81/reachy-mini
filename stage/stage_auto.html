@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>교육자료 화면</title>
+<!-- 교육자료 화면 자동 선택 — 주소 하나(/stage/auto)만 열어 두면 감독의 관람객 수준과 **지금 큐**에 맞는 화면을 띄운다.
+     2026-11-13 ①: 수준마다 주소가 달라 운영자가 고르게 두면 놓쳤다("시연영상이 안 보인다").
+     2026-11-13 ②: 웹툰(초등·중고등)·분해도(전문가)는 01·02큐 시안뿐이라 06큐에서 수준을 바꾸면 화면이 01큐에 "공연 대기" 로
+       멈췄다 — 로봇은 06큐를 말하는데("시연영상과 무대조정이 따로 논다"). 이제 (수준, 큐)로 고른다: 그 수준 전용 화면이 이 큐를
+       가졌으면 그것, 아니면 같은 수준의 종이 무대(19큐 전체). 순서·가진 큐는 대시보드의 /stage/manifest 가 알려 준다.
+     화면을 갈아 끼울 때 빈 화면·첫 발화 놓침이 없게 그 수준이 쓸 화면(많아야 둘)을 **둘 다 띄워 두고** 보이는 것만 바꾼다 — 숨은 화면도
+       같은 소켓에 붙어 공연을 따라가고 있으니 바꾸는 순간 맞는 장면이다. 숨길 때 display:none 이 아니라 visibility 로 —
+       크기가 0 이 되면 그림판(canvas)이 0 크기로 그려진다.
+     ?embed — 조정실 안에 넣을 때: 아래 안내 줄을 숨기고 고른 화면을 부모(조정실)에 postMessage 로 알린다.
+     감독과 같은 오리진에서 줘야 한다(file:// 는 Origin: null 로 /ws/audience 가 거절한다). 외부 리소스 없음, 소켓으로 보내지 않는다. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #10141c; overflow: hidden; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #10141c; visibility: hidden; }
+  iframe.on { visibility: visible; }
+  #note { position: fixed; left: 12px; bottom: 10px; z-index: 2; color: #9aa0aa; font: 12px/1.3 -apple-system, "Apple SD Gothic Neo", sans-serif;
+          background: rgba(16, 20, 28, .7); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+  html[data-embed] #note { display: none; }
+</style>
+</head>
+<body>
+<iframe id="stage-a" title="교육자료 화면" allow="autoplay"></iframe>
+<iframe id="stage-b" title="교육자료 화면(다음)" allow="autoplay"></iframe>
+<div id="note"></div>
+<script>
+(function () {
+  'use strict';
+  var EMBED = new URLSearchParams(location.search).has('embed');
+  if (EMBED) document.documentElement.setAttribute('data-embed', '');
+  var frames = [document.getElementById('stage-a'), document.getElementById('stage-b')];
+  var note = document.getElementById('note');
+  // 대시보드가 안 알려 주면(구버전) 예전처럼 수준만으로 — 일반 화면이 기본.
+  var M = { order: { '초등': ['webtoon'], '중고등': ['webtoon'], '일반': ['paper'], '전문가': ['exploded'] }, default: 'paper',
+            labels: {}, cues: {} };
+  var level = null, cue = null, shown = null, delay = 1;
+
+  function has(name, c) { var l = M.cues[name]; return !!(l && (c == null ? l.length : l.indexOf(c) >= 0)); }
+  function orderOf(lv) { return (M.order[lv] || [M['default']]).filter(function (n) { return M.cues[n] || !Object.keys(M.cues).length; }); }
+
+  // (수준, 큐) → 화면. 큐를 아직 모르면(공연 전) 그 수준 첫 화면. 아무 화면도 그 큐가 없으면 마지막(종이 무대 — 가장 넓다).
+  function pick(lv, c) {
+    var order = orderOf(lv);
+    if (!order.length) return { name: M['default'], why: '그 수준 화면이 없다 — 일반 화면' };
+    for (var i = 0; i < order.length; i++) {
+      if (c == null || has(order[i], c)) {
+        return { name: order[i], why: i ? (label(order[0]) + '에 ' + c + ' 가 아직 없다 — ' + ro(label(order[i])) + ' 이어 보기') : '' };
+      }
+    }
+    return { name: order[order.length - 1], why: '이 큐(' + c + ')를 가진 화면이 없다' };
+  }
+  function label(n) { return M.labels[n] || n; }
+  // 조사 '로/으로' — 받침이 있으면 '으로'(ㄹ 받침은 '로'). "카드 화면로" 로 찍히면 운영자 화면이 어색하다.
+  function ro(w) {
+    var c = w.charCodeAt(w.length - 1) - 0xAC00, j = c >= 0 && c < 11172 ? c % 28 : 0;
+    return w + (j && j !== 8 ? '으로' : '로');
+  }
+
+  function frameFor(name) {
+    for (var i = 0; i < frames.length; i++) if (frames[i].getAttribute('data-page') === name) return frames[i];
+    return null;
+  }
+  function load(f, name) { f.setAttribute('data-page', name); f.src = '/stage/' + name; }
+
+  function apply() {
+    var lv = level, p = pick(lv, cue);
+    // 이 수준이 쓸 화면(많아야 둘)을 다 띄워 둔다 — 이미 그 화면을 가진 틀은 그대로(다시 읽으면 공연을 놓친다).
+    var want = orderOf(lv).slice(0, frames.length);
+    if (want.indexOf(p.name) < 0) want = [p.name];
+    var free = frames.filter(function (f) { return want.indexOf(f.getAttribute('data-page')) < 0; });
+    want.forEach(function (n) { if (!frameFor(n) && free.length) load(free.shift(), n); });
+    frames.forEach(function (f) { f.classList.toggle('on', f.getAttribute('data-page') === p.name); });
+    shown = p.name;
+    document.documentElement.setAttribute('data-screen', p.name);
+    note.textContent = '수준 ' + (lv || '알 수 없음') + (cue ? ' · ' + cue : '') + ' → ' + label(p.name) + (p.why ? ' (' + p.why + ')' : '');
+    window.stageAuto = { level: lv, cue: cue, screen: p.name, label: label(p.name), why: p.why,
+                         loaded: frames.map(function (f) { return f.getAttribute('data-page'); }) };
+    if (EMBED && window.parent !== window) {
+      window.parent.postMessage({ type: 'stage-auto', level: lv, cue: cue, screen: p.name, label: label(p.name), why: p.why }, location.origin);
+    }
+  }
+
+  function onMessage(m) {
+    var snap = m.kind === 'hello' ? m.snapshot : (m.kind === 'snapshot' ? m : null);
+    var lv = level, c = cue;
+    if (snap) {
+      if (snap.level) lv = snap.level;
+      if (snap.cue_id) c = snap.cue_id;
+    }
+    // 대사가 나가는 순간 큐를 안다 — 스냅샷(0.5초마다)을 기다리지 않는다. 관람객 질문 흐름(ack·qa·reask)은 큐를 안 바꾼다.
+    if ((m.kind === 'say' || m.kind === 'speaking_started') && m.cue && !/^(ack|qa|reask)$/.test(m.turn || '')) c = m.cue;
+    if (lv !== level || c !== cue || shown == null) { level = lv; cue = c; apply(); }
+  }
+
+  function open() {
+    var ws;
+    try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/audience'); }
+    catch (e) { setTimeout(open, delay * 1000); return; }
+    ws.onopen = function () { delay = 1; };
+    ws.onmessage = function (ev) { var m; try { m = JSON.parse(ev.data); } catch (e) { return; } onMessage(m); };
+    ws.onclose = function () { if (shown == null) apply(); setTimeout(open, delay * 1000); delay = Math.min(5, delay * 2); };
+  }
+
+  function start() {
+    fetch('/stage/manifest', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (m) { if (m && m.order) M = m; }, function () {})
+      .then(open);
+  }
+  start();
+})();
+</script>
+</body>
+</html>

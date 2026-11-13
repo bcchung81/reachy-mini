@@ -479,7 +479,46 @@ def test_같은_오리진의_모션_화면은_관람객_소켓에_붙는다(moti
         assert json.loads(ws.recv(timeout=3))["kind"] == "hello"
 
 
-def test_실제_모션_화면_목록은_세_수준_화면이다():
+def test_실제_모션_화면_목록은_세_수준_화면과_카드_화면과_자동_선택이다():
     from stage.dashboard import MOTION_PAGES
-    assert set(MOTION_PAGES) == {"paper", "webtoon", "exploded"}
-    assert MOTION_PAGES["paper"].name == "paper-stage.html" and MOTION_PAGES["paper"].exists()
+    assert set(MOTION_PAGES) == {"paper", "webtoon", "exploded", "hud", "auto"}
+    assert all(p.exists() for p in MOTION_PAGES.values())
+
+
+def test_화면_고르는_순서는_전용_화면_다음에_그_수준_카드_화면이다():
+    """웹툰·분해도는 01·02큐 시안뿐 — 06큐에서 수준을 바꾸면 화면이 01큐에 멈췄다(2026-11-13 '시연영상과 무대조정이 따로 논다').
+    빈 큐는 그 수준의 카드 화면(19큐 × 4수준)이 잇는다(사용자 결정). ~~같은 수준 종이 무대~~ — 안무가 일반 대본에 묶여 멈췄다."""
+    from stage.cues import load_cues
+    from stage.dashboard import MOTION_PAGES, STAGE_ORDER, stage_cues
+    from stage.levels import LEVEL_NAMES
+    assert set(STAGE_ORDER) == set(LEVEL_NAMES)
+    assert STAGE_ORDER == {"초등": ("webtoon", "hud"), "중고등": ("webtoon", "hud"), "일반": ("paper", "hud"),
+                           "전문가": ("exploded", "hud")}
+    every = [c.id for c in load_cues()]
+    assert stage_cues(MOTION_PAGES["hud"]) == every                          # 마지막 화면은 모든 큐를 가진다
+    hud = MOTION_PAGES["hud"].read_text(encoding="utf-8")
+    for lv in LEVEL_NAMES:
+        assert f'"name": "{lv}"' in hud, f"카드 화면에 {lv} 수준이 없다"
+    assert "LiveFollow" in hud and "/*__LIVE__*/" not in hud                 # 공연 모드 모듈이 인라인됐다
+    src = MOTION_PAGES["auto"].read_text(encoding="utf-8")
+    assert "fetch('/stage/manifest'" in src
+    for bad in ("innerHTML", "http://", "https://", ".send("):
+        assert bad not in src, bad
+
+
+def test_화면_목록은_화면마다_가진_큐와_고르는_순서를_준다(tmp_path):
+    a, b = tmp_path / "a.html", tmp_path / "b.html"
+    a.write_text('<script>{"cues": [{"id": "01-intro"}, {"id": "02-history"}]}</script>', encoding="utf-8")
+    b.write_text('<script>{"id":"01-intro"} {"id": "03-theory"} {"id": "01-intro"}</script>', encoding="utf-8")
+    warned = []
+    ds = DashboardServer(DashboardHub(), 가짜감독(), page=tmp_path / "x.html", interval=0.05, warn=warned.append,
+                         motion_pages={"webtoon": a, "hud": b, "exploded": tmp_path / "없는.html", "auto": a})
+    with _served(ds) as port:
+        status, ctype, body = _get(port, "/stage/manifest")
+        _get(port, "/stage/manifest")
+    m = json.loads(body)
+    assert status == 200 and ctype.startswith("application/json")
+    assert m["cues"] == {"webtoon": ["01-intro", "02-history"], "hud": ["01-intro", "03-theory"]}   # 없는 파일은 빠진다
+    assert m["order"]["초등"] == ["webtoon", "hud"] and m["default"] == "paper"
+    assert m["labels"]["hud"] == "카드 화면"
+    assert len([w for w in warned if "교육자료 화면 파일이 없다(exploded)" in w]) == 1      # 여러 번 물어도 한 번

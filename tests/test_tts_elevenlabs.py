@@ -196,8 +196,11 @@ def test_오디션_후보는_키가_겹치지_않고_ID가_있다():
 
 # ── 프록시 ElevenLabs 엔진(관람객 답) ───────────────────────────────
 sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
+import io  # noqa: E402
 import logging  # noqa: E402
+import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
+import wave  # noqa: E402
 
 import tts as robot_tts  # noqa: E402
 from tts_cache_proxy import INDEX_NAME, Cache, ElevenLabsLive, ProxyServer, cache_key  # noqa: E402
@@ -278,10 +281,12 @@ def el_stack(tmp_path):
     cdir.mkdir()
     made = []
 
-    def make(on_fail="notice", local_up=True):
+    def make(on_fail="notice", local_up=True, no_local=False):
         live = ElevenLabsLive(key=SECRET, voices={"serena": "MCVOICE", "sohee": "DOCVOICE"},
                               on_fail=on_fail, base=f"http://127.0.0.1:{fake_el.server_port}")
         upstream = f"http://127.0.0.1:{local.server_port}" if local_up else "http://127.0.0.1:9"
+        if no_local:
+            upstream = None                                    # 외부 전용 — 로컬 CrispASR 없음(--no-local)
         proxy = ProxyServer(("127.0.0.1", 0), upstream, Cache(cdir), live)
         threading.Thread(target=proxy.serve_forever, daemon=True).start()
         made.append(proxy)
@@ -483,3 +488,88 @@ def test_EL_어조_지시는_보내지_않고_한_번만_알린다(el_stack, mon
         _robot_speak(url, dict(body, input="두 번째 문장이에요."), monkeypatch)
     assert len([r for r in caplog.records if "어조 지시" in r.getMessage()]) == 1
     assert all("instructions" not in c["body"] for c in _FakeEL.calls)
+
+
+# ── 외부 전용(--no-local, 2026-11-13) — 로컬 CrispASR 를 안 띄운 프록시 ─────
+WAV_BODY = {"input": "준비", "model": "tts", "voice": "serena", "speed": 1.27}    # 로봇 기동 확인(_qwen_synth)의 모양
+
+
+def _post(url, body):
+    req = urllib.request.Request(url + "/v1/audio/speech", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, dict(r.headers), r.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read()
+
+
+def test_외부_전용_헬스는_로컬을_묻지_않고_표지를_싣는다(el_stack):
+    url = el_stack["make"](no_local=True)
+    with urllib.request.urlopen(url + "/health", timeout=5) as r:
+        raw = r.read().decode()
+    d = json.loads(raw)
+    assert d["local"] == "off" and d["engine"] == "elevenlabs" and d["key"] == "설정됨"
+    assert '"local": "off"' in raw                         # reachy.sh 가 이 모양 그대로 grep 한다
+    assert SECRET not in raw and _FakeEL.calls == [] and _Local.calls == []
+
+
+def test_외부_전용도_구운_대사는_캐시에서_관람객_답은_ElevenLabs(el_stack, monkeypatch):
+    (el_stack["dir"] / f"{cache_key(ROBOT_BODY)}.pcm").write_bytes(b"\x07\x00" * 500)
+    url = el_stack["make"](no_local=True)
+    h, _, pcm = _robot_speak(url, ROBOT_BODY, monkeypatch)
+    assert h["X-TTS-Cache"] == "hit" and pcm == b"\x07\x00" * 500 and _FakeEL.calls == []
+    h, _, pcm = _robot_speak(url, dict(ROBOT_BODY, input="즉석 답이에요."), monkeypatch)
+    assert h["X-TTS-Cache"] == "miss" and pcm == el.apply_gain(EL_PCM) and len(_FakeEL.calls) == 1
+    assert _Local.calls == []
+
+
+def test_외부_전용_wav_요청은_ElevenLabs_로_만들어_WAV_로_준다(el_stack, monkeypatch):
+    """로봇의 기동 확인(`session.announce_voice` → `_qwen_synth("준비")`)과 예열은 wav 한 방 요청이다 — 예전에는 로컬
+    CrispASR 로 넘겼다. 외부 전용에서 그대로 두면 502 → 로봇 기동 로그가 "응답 없음 → 유나로 폴백 중" 이라고 거짓말한다."""
+    url = el_stack["make"](no_local=True)
+    code, h, data = _post(url, WAV_BODY)
+    assert code == 200 and h["Content-Type"] == "audio/wav" and h["X-TTS-Engine"] == "elevenlabs"
+    with wave.open(io.BytesIO(data)) as w:
+        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (el.PCM_RATE, 1, 2)
+        assert w.readframes(w.getnframes()) == el.apply_gain(EL_PCM)     # 굽기·관람객 답과 같은 이득
+    assert _FakeEL.calls[0]["path"].startswith("/v1/text-to-speech/MCVOICE/") and _Local.calls == []
+    monkeypatch.setattr(robot_tts, "QWEN_URL", url + "/v1/audio/speech")
+    monkeypatch.setattr(robot_tts, "qwen_voice", lambda: "serena")
+    assert robot_tts._qwen_synth("준비") is not None                    # 로봇이 "목소리: … " 를 바르게 찍는다
+
+
+def test_외부_전용_wav_요청이_실패하면_502_와_경고(el_stack, monkeypatch, caplog):
+    _FakeEL.fail = True
+    url = el_stack["make"](no_local=True)
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        code, _, data = _post(url, WAV_BODY)
+    assert code == 502 and json.loads(data)["error"] == "elevenlabs-failed"
+    assert "ElevenLabs 로 못 만들었다" in caplog.text and SECRET not in caplog.text
+    assert _Local.calls == []
+
+
+def test_외부_전용_다른_경로는_로컬로_넘기지_않고_502(el_stack, caplog):
+    url = el_stack["make"](no_local=True)
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        try:
+            urllib.request.urlopen(url + "/v1/models", timeout=5)
+            code = 200
+        except urllib.error.HTTPError as exc:
+            code, body = exc.code, json.loads(exc.read())
+    assert code == 502 and body["error"] == "no-local" and "외부 전용" in caplog.text
+
+
+@pytest.mark.parametrize("engine,env,why", [
+    ("crispasr", {"ELEVENLABS_API_KEY": SECRET}, "TTS_ENGINE=elevenlabs"),
+    ("elevenlabs", {}, "키가 없다"),
+    ("elevenlabs", {"ELEVENLABS_API_KEY": SECRET, "TTS_EL_ON_FAIL": "local"}, "notice 만"),
+], ids=["로컬_엔진", "키_없음", "실패_정책_local"])
+def test_외부_전용으로_띄울_수_없으면_조용히_물러나지_않고_멈춘다(tmp_path, engine, env, why):
+    import tts_cache_proxy as p
+    env = dict(env, ELEVENLABS_ENV_FILE=str(tmp_path / "없는.env"))     # 저장소 .env 의 진짜 키를 읽지 않게
+    with pytest.raises(SystemExit) as e:
+        p.make_live(engine, env, local=False)
+    assert why in str(e.value) and SECRET not in str(e.value)
+    engine, live = p.make_live("elevenlabs", {"ELEVENLABS_API_KEY": SECRET}, local=False)
+    assert engine == "elevenlabs" and live.on_fail == "notice"

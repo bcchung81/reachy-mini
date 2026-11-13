@@ -36,6 +36,7 @@ from stage.cues import (
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
 from stage.protocol import ROLES
+from stage.research import research_brief
 from stage.retrieval import CueIndex
 # 발화 길이 추정치. 실측(2026-09-11, Qwen3-TTS 1.7B CustomVoice, 배속 1.0):
 #   34자 → 7.04초 (4.8자/초),  57자 → 10.64초 (5.4자/초),  25자 → 4.00초 (6.3자/초)
@@ -89,7 +90,10 @@ GENERATE_GRACE_S = 8.0
 # **비대칭이라 넉넉한 쪽으로 잡는다.** 짧으면 말을 꺼내려던 관람객을 자르는데
 # 그건 회복이 안 된다(사람이 무안해서 다시 입을 열지 않는다). 길면 정적이
 # 흐를 뿐이고 운영자가 콘솔 `n` 으로 즉시 넘긴다.
-QUESTION_WAIT_S = 8.0
+# **8초 → 20초**(2026-11-13 사용자 결정). 큐 사이 질문 창에서 관람객이 질문을 떠올리기 전에 8초로 넘어갔다 — 진행은
+# "다음"·"이어서 진행" 이 주로 맡고, 침묵 자동 진행은 아무도 말이 없을 때 공연이 멈춰 서지 않게 하는 안전판이다.
+# (테스트 하네스는 시각 계산을 8초 기준으로 짰다 — `tests/test_stage_director.py::Harness` 가 8초로 고정한다.)
+QUESTION_WAIT_S = 20.0
 # **운영자가 시연 중에 바꾼다**(2026-09-25, 콘솔·대시보드 `w <초|끄기>`). 단체마다 질문이 나오는
 # 속도가 달라서 8초 고정이 맞지 않았다. 범위를 둔다 — 3초 미만이면 관람객이 입을 떼기 전에 넘어가고
 # (회복이 안 되는 쪽), 60초를 넘으면 정적이 길어진다. `끄기`(None)는 자동 진행을 멈추고 운영자가
@@ -534,6 +538,13 @@ class Director:
             # 창구가 산다 — 안 그러면 앱 재기동/WiFi 순단 뒤 아무도 안 듣는데
             # 경고도 없다(리뷰 A5a). `mic` 지시는 멱등이라 다시 보내도 안전하다.
             self._emit(self._resync_mic(role))
+            # **두 로봇이 다 붙었는데 공연이 안 돌면 시작하는 법을 크게 알린다**(2026-11-13). 공연은 운영자가 `s`
+            # (또는 조정실 [공연 시작])를 눌러야 시작한다 — 일부러 그렇게 뒀다. 그런데 실기 첫 구동에서 운영자가 그걸
+            # 모른 채 1분 기다리다 감독을 껐고, "음성이 안 나온다" 로 보였다(로봇에 say 0건 · TTS 요청 0건 — 로그로 확인).
+            # 도움말은 기동 때 한 번, 로봇이 붙기 **전에** 지나가 묻힌다 — 붙는 순간에 다시 말한다.
+            if set(ROLES) <= self._connected and not self._show_running and self.solo_role is None:
+                self._warn("━━ 두 로봇이 다 붙었다 — 이 창에 s 를 치고 Enter(또는 조정실 [공연 시작])로 공연을 시작한다. "
+                           "시작하기 전에는 로봇이 말하지 않는다 ━━")
 
     def on_disconnect(self, role: str) -> None:
         with self._lock:
@@ -953,6 +964,20 @@ class Director:
                 raise TurnError(
                     f"{self._machine.speaking_role} 가 아직 말하는 중이다 — 먼저 a 로 멈춘다"
                 )
+            # **1인 모드로 시작하면 크게 말한다**(2026-11-13). 한 대가 안 붙은 채 [공연 시작]을 누르면 남은 로봇이
+            # 양쪽 대사를 **자기 목소리로** 읽는다 — 실기에서 도슨트가 핑 한 번에 빠져 "사회자·도슨트 둘 다 남자 목소리" 였다.
+            # 기동 출력의 "건너뛴다" 경고는 운영자가 조정실을 볼 때는 이미 지나가 있다. 막지는 않는다(1인 모드는 설계된 폴백).
+            solo = self.solo_role
+            if solo is not None:
+                gone = "docent" if solo == "mc" else "mc"
+                # 합류 명령은 **주소까지** — 주소가 없으면 `robot up` 이 기본 주소(reachy-mini.local = 도슨트 로봇)로 가서
+                # 그 로봇 config 를 다른 역할로 덮어쓴다. 주소는 `reachy.sh start --robot` 이 물려준다(시뮬이면 없다).
+                host = os.environ.get(f"REACHY_{gone.upper()}_HOST", "").strip()
+                join = (f"REACHY_ROLE={gone} REACHY_ROBOT_HOST={host} ./reachy.sh robot up" if host
+                        else "기동 출력의 합류 명령")
+                self._warn(f"━━ 1인 모드로 시작한다 — {SPEAKER_LABEL[gone]} 로봇이 없어 {SPEAKER_LABEL[solo]} 로봇이 "
+                           f"{SPEAKER_LABEL[gone]} 대사도 자기 목소리로 읽는다. 두 대로 하려면 공연 종료(e) → "
+                           f"{SPEAKER_LABEL[gone]} 로봇을 붙인 뒤({join}) 다시 시작 ━━")
             self._sheet.reset()
             # 새 관람객이다 — 종료 없이 처음 시작하는 경우(기동 직후·단독에서 돌아온 뒤)도 이력을 비운다
             # (`_end_show_locked` 와 같은 이유). "이 큐 다시"(`start`)·모드 전환은 같은 관람객이라 두고 간다.
@@ -2039,17 +2064,23 @@ class Director:
         guard = cue.guard_for(self._level_name)
         if guard:
             parts.append(guard)
+        used_ref = False
         ref = self._reference_level()
-        if ref is None:
-            return parts, False
-        _, ref_brief = cue.brief_for(ref)
-        if not ref_brief or ref_brief == brief:
-            return parts, False
-        parts.append(f"질문에 답하는 데 필요하면 쓸 수 있는 참고 사실(어른 관람객용 자료): {ref_brief.replace('**', '')}")
-        ref_guard = cue.guard_for(ref)
-        if ref_guard:
-            parts.append(ref_guard)
-        return parts, True
+        if ref is not None:
+            _, ref_brief = cue.brief_for(ref)
+            if ref_brief and ref_brief != brief:
+                parts.append(f"질문에 답하는 데 필요하면 쓸 수 있는 참고 사실(어른 관람객용 자료): {ref_brief.replace('**', '')}")
+                ref_guard = cue.guard_for(ref)
+                if ref_guard:
+                    parts.append(ref_guard)
+                used_ref = True
+        # **큐별 조사 자료**(2026-11-13) — 답을 풍부하게 하되 근거 안에서. 브리프 한두 문단만으로는 분량을 늘리면 지어낼 압력이
+        # 생긴다(`data/levels.yaml` 머리말). 검증 등급 A·B 사실과 바로잡은 것·확인 안 된 것을 싣는다(`stage/research.py`).
+        research = research_brief(cue.id)
+        if research:
+            parts.append(f"'{cue.title}' 조사 자료 — 답을 풍부하게 할 때 이 안에서 고른다. 관람객 수준에 맞는 말로 바꿔 말하고, "
+                         f"문서·자료 이름은 말하지 않는다:\n{research}")
+        return parts, used_ref
 
     def _reference_rule(self) -> str:
         return (

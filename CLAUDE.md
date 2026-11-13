@@ -27,6 +27,9 @@ macOS 26.5.2 / Apple Silicon / Python 3.12.13(uv 관리) 기준으로 검증됐�
 ## 명령
 
 ```bash
+./run-app.sh                     # 실행 메뉴(공연 실기·공연 연습 시뮬·상태·끄기) — 엔진은 .env 키로 정한다. 띄운 뒤 감독 창에서 s → Enter 로 공연 시작
+                                 # 키가 둘 다 있으면 외부 API 전용(REACHY_LOCAL_MODELS=off — 로컬 모델을 안 띄운다, §15.13)
+                                 # 띄우기 전에 ./reachy.sh clean-local 로 지난 로컬 구성을 먼저 내린다(감독이 떠 있으면 손대지 않는다)
 ./reachy.sh start --sim          # 시연 전부(추론 3종·시뮬 2대·무대감독+대시보드)
 ./reachy.sh start --robot        # 시연 전부 — 실기 2대(REACHY_MC_HOST / REACHY_DOCENT_HOST, 기본 192.168.0.4 / .5)
 TTS_ENGINE=elevenlabs REACHY_LLM_ENGINE=openai REACHY_STT_ENGINE=openai ./reachy.sh start --robot
@@ -37,8 +40,9 @@ TTS_ENGINE=elevenlabs REACHY_LLM_ENGINE=openai REACHY_STT_ENGINE=openai ./reachy
 ./reachy.sh bake                 # 고정 대사를 TTS 캐시에 굽기(대본을 고친 뒤 — 바뀐 문장만). --check 는 현황만
 TTS_ENGINE=elevenlabs ./reachy.sh bake --retake-readings   # 발음 사전(data/tts_readings.yaml)을 고친 문장만 다시 굽기
 .venv/bin/python scripts/tts_review.py                     # 구운 대사 검수(로컬 STT 로 소리 기준 대조 → 검수 페이지)
-open http://127.0.0.1:8778/stage/paper                     # 교육자료 화면 — 공연 모드(로봇 2대가 말하고 화면은 따라간다, §15.12)
-                                 # /stage/webtoon(초등·중고등) · /stage/exploded(전문가). 로봇 없이: scripts/handout_live/fake_show.py
+open http://127.0.0.1:8778/                                # 조정실 — 시연 화면(교육자료)이 그 안에 있다: 수준을 고르고 [공연 시작](§15.12)
+                                 # 프로젝터는 [프로젝터로 띄우기] = /stage/auto(수준·큐에 맞춰 웹툰·종이 무대·분해도, 없는 큐는 카드 화면 /stage/hud)
+                                 # 로봇 없이: scripts/handout_live/fake_show.py
 .venv/bin/python your.py      # SDK 스크립트 실행 (데몬이 떠 있어야 함)
 curl -s localhost:8000/api/state/full   # 로봇 상태 확인
 open http://localhost:8000/docs         # REST API 문서 (OpenAPI)

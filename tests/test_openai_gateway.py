@@ -609,7 +609,7 @@ def test_multipart_파서는_requests_가_만든_본문을_푼다():
 _SH_ENV = ("REACHY_LLM_ENGINE", "REACHY_STT_ENGINE", "REACHY_LLM_INNER_PORT", "REACHY_STT_INNER_PORT",
            "REACHY_BIND_HOST", "REACHY_DIRECTOR_PORT", "REACHY_DASHBOARD_PORT", "REACHY_DASHBOARD_HOST",
            "REACHY_MC_HOST", "REACHY_DOCENT_HOST", "TTS_QWEN_PORT", "REACHY_PY", "TTS_QWEN_VOICE", "TTS_BACKEND",
-           "STT_PYTHON", "LLM_PORT", "STT_PORT", "LLM_HOST", "STT_HOST")
+           "STT_PYTHON", "LLM_PORT", "STT_PORT", "LLM_HOST", "STT_HOST", "REACHY_LOCAL_MODELS", "TTS_ENGINE")
 
 
 def _sh(script, tmp_path, env_extra=None):
@@ -837,7 +837,9 @@ def test_부르는_말과_멈추는_말을_먼저_싣는다(tmp_path):
     words = og.control_keywords({})
     assert words[:2] == ["사회자", "도슨트"]                         # stage.director.SPEAKER_LABEL
     assert {"미니야", "그만", "잠깐만", "스톱"} <= set(words)          # 로봇 앱 기본 BARGE_IN_WAKE(소스에서 읽는다)
-    assert og.control_keywords({"REACHY_BARGE_IN_WAKE": "리치야, 멈춰"})[2:] == ["리치야", "멈춰"]
+    assert og.control_keywords({"REACHY_BARGE_IN_WAKE": "리치야, 멈춰"})[2:4] == ["리치야", "멈춰"]
+    # 진행어(2026-11-13) — 큐 사이 질문 창에서 "다음"·"이어서 진행" 으로 넘긴다. 짧아서 가장 잘 틀리는 말이다.
+    assert {"다음", "이어서", "진행", "계속"} <= set(words)
 
 
 def test_조사_떼기는_받침_규칙을_지킨다():
@@ -928,3 +930,278 @@ def test_로봇_두_대의_동시_요청이_서로를_막지_않는다(openai_fa
         assert out[n, "llm"] == ["오픈에이아이 답이에요.", "둘째 문장이에요."], out
         assert out[n, "stt"] == "같이 받았다", out
     assert local_fake.posts(og.CHAT_PATH) == [] and local_fake.posts(og.STT_PATH) == []
+
+
+# ── 외부 전용(--no-local · REACHY_LOCAL_MODELS=off, 2026-11-13) ──────────────
+# 사용자 결정: run-app.sh 로 외부 API 를 쓸 때 로컬 모델(Gemma·Whisper·Qwen TTS)을 폴백 자리로도 띄우지 않는다.
+# 넘길 곳이 없으니 실패는 경고 한 줄 + 502 — 로봇·감독은 지금의 실패 경로(대사·못 들음)를 탄다.
+def _get_json(url):
+    r = requests.get(url, timeout=5)
+    return r.status_code, r.json()
+
+
+def test_외부_전용_헬스는_로컬을_묻지_않고_표지를_싣는다(openai_fake, gateway):
+    urls = gateway(cfg_on(openai_fake), None)
+    for svc in ("llm", "stt"):
+        code, d = _get_json(urls[svc] + "/health")
+        assert code == 200 and d["local"] == "off" and d["engines"] == "llm=openai,stt=openai,local=off", d
+        assert KEY not in json.dumps(d)
+    assert openai_fake.posts(og.CHAT_PATH) == []               # 헬스는 외부를 부르지 않는다
+
+
+def test_외부_전용도_정상_경로는_그대로(openai_fake, gateway):
+    urls = gateway(cfg_on(openai_fake), None)
+    assert "".join(LLMClient(base_url=urls["llm"], system_prompt="s").chat_stream("질문"))
+    assert robot_stt.transcribe(wav_audio(2.0), url=urls["stt"] + og.STT_PATH) == "오픈에이아이 전사"
+
+
+def test_외부_전용_LLM_실패는_502_와_경고_한_줄_로봇은_예외로_대사(openai_fake, gateway, logs):
+    openai_fake.push(og.CHAT_PATH, json_ok({"error": {"message": f"boom {KEY}"}}, status=500))
+    urls = gateway(cfg_on(openai_fake), None)
+    with pytest.raises(requests.HTTPError):                     # 로봇 session 이 FALLBACK_LINE 으로 간다
+        list(LLMClient(base_url=urls["llm"], system_prompt="s").chat_stream("질문"))
+    w = logs.warnings()
+    assert len(w) == 1 and "넘길 로컬 LLM 이 없다" in w[0], w
+    assert KEY not in logs.text
+
+
+def test_외부_전용_STT_실패는_로봇이_못_들은_것으로(openai_fake, gateway, logs):
+    openai_fake.push(og.STT_PATH, json_ok({"error": {"message": "down"}}, status=500))
+    urls = gateway(cfg_on(openai_fake), None)
+    assert robot_stt.transcribe(wav_audio(2.0), url=urls["stt"] + og.STT_PATH) == ""
+    w = logs.warnings()
+    assert len(w) == 1 and "넘길 로컬 STT 가 없다" in w[0], w
+
+
+def test_외부_전용_다른_경로는_502(openai_fake, gateway, logs):
+    urls = gateway(cfg_on(openai_fake), None)
+    r = requests.get(urls["llm"] + "/v1/models", timeout=5)
+    assert r.status_code == 502 and r.json()["error"] == "no-local"
+    assert any("외부 전용" in m for m in logs.warnings())
+
+
+def test_외부_전용으로_띄울_수_없는_설정을_가른다():
+    ok = og.Config(key=KEY, llm_engine="openai", stt_engine="openai")
+    assert og.external_only_problems(ok, ["llm", "stt"]) == []
+    p = og.external_only_problems(og.Config(key=KEY, llm_engine="local", stt_engine="openai"), ["llm", "stt"])
+    assert len(p) == 1 and "REACHY_LLM_ENGINE=openai" in p[0]
+    assert og.external_only_problems(og.Config(key=KEY, llm_engine="local", stt_engine="openai"), ["stt"]) == []
+    p = og.external_only_problems(og.Config(key=None, llm_engine="openai", stt_engine="openai"), ["llm"])
+    assert len(p) == 1 and "키가 없다" in p[0]
+
+
+def test_외부_전용인데_local_엔진이면_게이트웨이가_뜨지_않고_이유를_남긴다():
+    env = {k: v for k, v in os.environ.items() if k not in _SH_ENV}
+    r = subprocess.run([sys.executable, str(ROOT / "openai_gateway.py"), "--no-local", "--llm-port", "0",
+                        "--llm-engine", "local"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "외부 전용(--no-local)으로 띄울 수 없다" in r.stderr, r.stderr
+
+
+def test_기동_줄은_외부_전용이면_502_라고_말한다(openai_fake):
+    servers = og.make_servers(cfg_on(openai_fake), "127.0.0.1", llm=(0, None), stt=(0, None))
+    try:
+        lines = og.describe(cfg_on(openai_fake), servers)
+        assert all("실패하면 502(외부 전용" in l for l in lines[:2]) and not any("None" in l for l in lines)
+    finally:
+        for s in servers:
+            s.server_close()
+
+
+_OFF = {"REACHY_LLM_ENGINE": "openai", "REACHY_STT_ENGINE": "openai", "TTS_ENGINE": "elevenlabs",
+        "REACHY_LOCAL_MODELS": "off"}
+
+
+def test_dry_run_외부_전용은_로컬_없음을_계획에_적는다():
+    r, plan = _dry("--robot", env_extra=_OFF)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "PLAN gateway llm=openai stt=openai ports=8080,8090 inner=none" in plan
+    assert "PLAN external-only tts=elevenlabs local-models=none" in plan and len(plan) == 6
+
+
+@pytest.mark.parametrize("drop,need", [("REACHY_LLM_ENGINE", "REACHY_LLM_ENGINE=openai"),
+                                       ("TTS_ENGINE", "TTS_ENGINE=elevenlabs")])
+def test_외부_전용인데_로컬_엔진이_남으면_계획에서_멈춘다(drop, need):
+    env = {k: v for k, v in _OFF.items() if k != drop}
+    r, plan = _dry("--sim", env_extra=env)
+    assert r.returncode == 2 and plan == [] and need in r.stdout, r.stdout
+
+
+def test_로컬_모델_스위치의_모르는_값은_멈춘다():
+    r, plan = _dry("--sim", env_extra=dict(_OFF, REACHY_LOCAL_MODELS="false"))
+    assert r.returncode == 2 and "on 또는 off" in r.stdout
+
+
+def test_외부_전용이면_llamactl_을_안_부르고_게이트웨이는_no_local(tmp_path):
+    r = _sh(_GW_FAKES + r'''
+up()   { return 1; }
+curl() { return 7; }
+BIND_HOST=0.0.0.0
+start_llm_stt; echo "rc=$?"
+wait
+''', tmp_path, dict(_OFF, FAKE_CTL=_fake_ctl(tmp_path)))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert not any(c.startswith("ctl ") for c in calls), calls          # 로컬 LLM·STT 를 안 띄운다
+    gw = [c for c in calls if c.startswith("nohup ")]
+    assert len(gw) == 1 and "--no-local" in gw[0] and "--llm-local" not in gw[0] and "--stt-local" not in gw[0], gw
+    assert not any(":8081" in c or ":8091" in c for c in calls)        # 안쪽 포트를 기다리지 않는다
+
+
+def test_외부_전용은_로컬_폴백이_있는_게이트웨이를_재사용하지_않는다(tmp_path):
+    r = _sh(_GW_FAKES + r'''
+up()   { return 0; }
+curl() { echo '{"gateway": "openai", "engines": "llm=openai,stt=openai"}'; }
+start_llm_stt; echo "rc=$?"
+''', tmp_path, dict(_OFF, FAKE_CTL=_fake_ctl(tmp_path)))
+    assert "rc=1" in r.stdout and "설정이 다른 게이트웨이" in r.stdout, r.stdout + r.stderr
+    r = _sh(_GW_FAKES + r'''
+up()   { return 0; }
+curl() { echo '{"gateway": "openai", "engines": "llm=openai,stt=openai,local=off"}'; }
+already_up_binds_right() { return 0; }
+start_llm_stt; echo "rc=$?"
+''', tmp_path, dict(_OFF, FAKE_CTL=_fake_ctl(tmp_path)))
+    assert "rc=0" in r.stdout and "이미 떠 있다" in r.stdout, r.stdout + r.stderr
+
+
+def test_스위치를_켠_게이트웨이는_외부_전용_게이트웨이를_재사용하지_않는다(tmp_path):
+    r = _sh(_GW_FAKES + r'''
+up()   { return 0; }
+curl() { echo '{"gateway": "openai", "engines": "llm=openai,stt=openai,local=off"}'; }
+start_llm_stt; echo "rc=$?"
+''', tmp_path, {"FAKE_CTL": _fake_ctl(tmp_path), "REACHY_LLM_ENGINE": "openai", "REACHY_STT_ENGINE": "openai"})
+    assert "rc=1" in r.stdout and "설정이 다른 게이트웨이" in r.stdout, r.stdout + r.stderr
+
+
+def test_외부_전용인데_지난_로컬_모델이_떠_있으면_경고한다(tmp_path):
+    r = _sh(_GW_FAKES + r'''
+up()   { case "$1" in http://127.0.0.1:8081/*) return 0 ;; esac; return 1; }
+curl() { return 7; }
+start_llm_stt; echo "rc=$?"
+wait
+''', tmp_path, dict(_OFF, FAKE_CTL=_fake_ctl(tmp_path)))
+    assert "rc=0" in r.stdout and "지난 실행의 로컬 모델이 떠 있다(:8081)" in r.stdout, r.stdout + r.stderr
+    assert not any(c.startswith("ctl ") for c in _calls(tmp_path))     # 경고만 — 끄지 않는다
+
+
+_TTS_FAKES = r'''
+wait_for() { echo "wait $1" >> "$CALLS"; return ${WAIT_RC:-0}; }
+nohup()    { echo "nohup $*" >> "$CALLS"; }
+tts_cache_status() { echo "status" >> "$CALLS"; }
+already_up_binds_right() { return 0; }
+'''
+
+
+def test_외부_전용_TTS_는_CrispASR_없이_프록시만_no_local(tmp_path):
+    r = _sh(_TTS_FAKES + r'''
+up()   { return 1; }
+curl() { return 7; }
+start_tts; echo "rc=$?"
+''', tmp_path, _OFF)
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    procs = [c for c in calls if c.startswith("nohup ")]
+    assert len(procs) == 1 and "tts_cache_proxy.py" in procs[0] and "--no-local" in procs[0], calls
+    assert "--upstream" not in procs[0] and "--engine elevenlabs" in procs[0] and "cache-elevenlabs" in procs[0]
+    assert "status" in calls                                           # 구운 대사 현황 — 끊겨도 돌 수 있는지
+
+
+def test_외부_전용_TTS_프록시가_못_뜨면_로컬로_물러나지_않고_멈춘다(tmp_path):
+    r = _sh(_TTS_FAKES + r'''
+up()   { return 1; }
+curl() { return 7; }
+start_tts; echo "rc=$? backend=$TTS_BACKEND"
+''', tmp_path, dict(_OFF, WAIT_RC="1"))
+    assert "rc=1 backend=qwen" in r.stdout and "TTS 캐시 프록시가 뜨지 않았다" in r.stdout, r.stdout + r.stderr
+    procs = [c for c in _calls(tmp_path) if c.startswith("nohup ")]
+    assert len(procs) == 1 and "tts_cache_proxy.py" in procs[0]        # CrispASR 를 대신 띄우지 않는다
+
+
+def test_외부_전용_TTS_는_로컬을_낀_옛_프록시면_멈추고_같은_것이면_재사용(tmp_path):
+    r = _sh(_TTS_FAKES + r'''
+up()   { return 0; }
+curl() { echo '{"status": "ok", "proxy": "tts-cache", "engine": "elevenlabs", "local": "down(ConnectionRefusedError)"}'; }
+start_tts; echo "rc=$?"
+''', tmp_path, _OFF)
+    assert "rc=1" in r.stdout and "예전 구성" in r.stdout, r.stdout + r.stderr
+    r = _sh(_TTS_FAKES + r'''
+up()   { return 1; }
+curl() { echo '{"status": "ok", "key": "설정됨", "local": "off", "proxy": "tts-cache", "engine": "elevenlabs"}'; }
+start_tts; echo "rc=$?"
+''', tmp_path, _OFF)
+    assert "rc=0" in r.stdout and "이미 떠 있다" in r.stdout, r.stdout + r.stderr
+    assert not any(c.startswith("nohup ") for c in _calls(tmp_path))
+
+
+# ── clean-local — 외부 전용으로 띄우기 전 정리(run-app.sh 가 부른다, 2026-11-13) ──────
+# 2026-11-13 에 손으로 네 개(폴백 낀 게이트웨이·Whisper STT·CrispASR·로컬 낀 프록시)를 골라 내렸다 — 그 일을 박제한다.
+# 가짜: LISTEN 에 적힌 포트가 듣고, 무엇이든 하나 내리면(KILLED 파일) 전부 조용해진다. HEALTH_<포트> 가 그 포트의 헬스다.
+_CLEAN_FAKES = r'''
+listening() { [ -f "$KILLED" ] && return 1; case " $LISTEN " in *" $1 "*) return 0 ;; esac; return 1; }
+curl() { local u; for u in "$@"; do :; done; u="${u#http://localhost:}"; u="${u%%/*}"; eval "printf '%s' \"\${HEALTH_$u:-}\""; }
+pgrep() { return 1; }
+kill_pidfile() { echo "kill $2" >> "$CALLS"; touch "$KILLED"; }
+sweep() { echo "sweep $1" >> "$CALLS"; touch "$KILLED"; }
+bind_probe_addr() { echo 10.0.0.5; }
+up() { [ "${BINDS:-1}" = "1" ]; }
+LLAMACTL="$FAKE_CTL"
+'''
+_GW_OLD = '{"status": "ok", "gateway": "openai", "engines": "llm=openai,stt=openai", "local": "ok"}'
+_GW_EXT = '{"status": "ok", "gateway": "openai", "engines": "llm=openai,stt=openai,local=off", "local": "off"}'
+_PX_OLD = '{"status": "ok", "proxy": "tts-cache", "engine": "elevenlabs", "local": "ok"}'
+_PX_EXT = '{"status": "ok", "key": "설정됨", "local": "off", "proxy": "tts-cache", "engine": "elevenlabs"}'
+
+
+def _clean(tmp_path, args, listen, health=None, extra=None):
+    env = {"FAKE_CTL": _fake_ctl(tmp_path), "KILLED": str(tmp_path / "killed"), "LISTEN": listen}
+    env.update({f"HEALTH_{p}": h for p, h in (health or {}).items()})
+    env.update(extra or {})
+    r = _sh(_CLEAN_FAKES + f'run_clean_local {args}; echo "rc=$?"\n', tmp_path, env)
+    return r.stdout + r.stderr, _calls(tmp_path)
+
+
+def test_정리는_지난_로컬_구성을_골라_내린다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot", "8080 8090 8091 8098 8099",
+                        {8080: _GW_OLD, 8090: _GW_OLD, 8099: _PX_OLD})
+    assert "rc=0" in out and "정리했다" in out, out
+    assert "kill OpenAI 게이트웨이" in calls and "kill TTS 서버" in calls and "kill TTS 캐시 프록시" in calls, calls
+    assert "ctl stop LLM_PORT=8081 STT_PORT=8091 LLM_HOST= STT_HOST=" in calls             # 안쪽 포트만
+    assert not any(c.startswith("ctl stop LLM_PORT=8080") for c in calls)                  # 바깥은 게이트웨이였다
+    assert not any("reachy-mini-mcp" in c or "daemon" in c or "stage" in c for c in calls)  # stop 과 다르다
+    assert "로컬 폴백을 낀 설정(llm=openai,stt=openai)" in out and "3.2 GB" in out
+
+
+def test_정리는_같은_설정의_외부_전용_서버를_남긴다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot", "8080 8090 8099", {8080: _GW_EXT, 8090: _GW_EXT, 8099: _PX_EXT})
+    assert "rc=0" in out and "내릴 것이 없다" in out and calls == [], out
+    assert "남긴다: OpenAI 게이트웨이" in out and "남긴다: TTS 캐시 프록시" in out
+
+
+def test_정리는_loopback_전용_외부_서버를_실기용으로_다시_띄우게_내리고_시뮬이면_남긴다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot", "8080 8090 8099", {8080: _GW_EXT, 8090: _GW_EXT, 8099: _PX_EXT},
+                        {"BINDS": "0"})
+    assert "rc=0" in out and "kill OpenAI 게이트웨이" in calls and "kill TTS 캐시 프록시" in calls, out
+    (tmp_path / "calls.txt").unlink()
+    out, calls = _clean(tmp_path, "--sim", "8080 8090 8099", {8080: _GW_EXT, 8090: _GW_EXT, 8099: _PX_EXT},
+                        {"BINDS": "0"})
+    assert "rc=0" in out and calls == [], out                                              # 시뮬은 loopback 이 맞다
+
+
+def test_정리는_예전_직결_구성이면_바깥_포트의_로컬_모델을_내린다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot", "8080 8090", {8080: '{"status": "ok"}', 8090: '{"status": "ok"}'})
+    assert "rc=0" in out and "ctl stop LLM_PORT=8080 STT_PORT=8090 LLM_HOST= STT_HOST=" in calls, calls
+    assert "예전 구성" in out
+
+
+def test_정리는_감독이_떠_있으면_아무것도_안_내리고_멈춘다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot", "8777 8080 8090 8098", {8080: _GW_OLD, 8090: _GW_OLD})
+    assert "rc=1" in out and "공연 중일 수 있어" in out and calls == [], out
+
+
+def test_정리_점검은_무엇을_내릴지만_말한다(tmp_path):
+    out, calls = _clean(tmp_path, "--robot --dry-run", "8091 8098")
+    assert "rc=0" in out and "내린다: 로컬 LLM·STT(:8081·:8091)" in out and "점검" in out and calls == [], out
+
+
+def test_정리는_대상이_필수다(tmp_path):
+    out, calls = _clean(tmp_path, "", "")
+    assert "rc=2" in out and "대상이 필수다" in out

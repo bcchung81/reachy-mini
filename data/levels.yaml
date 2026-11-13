@@ -5,8 +5,11 @@
 # 고정 대본이 된 뒤로 이 값을 쓰는 생성은 질문 답뿐이었고 — 전문가 수준이면 질문 하나에
 # 65~100초짜리 답을 "최소 5문장 채워서" 만들라는 지시가 됐다. 근거 브리프는 한두 문단인데
 # 분량을 채우라고 하면 근거 밖 내용을 지어낼 압력이 생긴다("지어내지 않는다" 와 정면 충돌).
-# 그래서 모든 수준 2~3문장으로 줄이고 글자 수만 어휘 밀도에 맞춰 수준별로 둔다.
-# 글자 수는 발화 길이로 환산된다(CHARS_PER_SEC = 4.0): 초등 약 13~25초, 전문가 약 23~45초.
+# ~~그래서 모든 수준 2~3문장으로 줄이고 글자 수만 어휘 밀도에 맞춰 수준별로 둔다.~~
+# **2026-11-13 다시 늘렸다**(사용자: "단답형이 아니라 좀 더 풍부하게"). 줄였던 이유는 근거가 브리프 한두 문단뿐이라 분량을
+# 채우라면 지어낼 압력이 생겨서였다(로컬 소형 모델). 이제 답은 OpenAI 가 만들고, 근거에 **큐별 조사 자료**(`data/cues-research`
+# — 검증 등급 A·B 사실·바로잡은 것·확인 안 된 것)를 함께 싣는다(`stage/research.py`). "채우려고 지어내지 않는다" 는 그대로다.
+# 글자 수 → 말하는 시간(로봇 ElevenLabs 약 6.5자/초): 초등 약 14~25초, 일반 약 23~40초, 전문가 약 28~49초.
 #
 # point_* 는 턴(사회자 질문 → 도슨트 설명) 하나의 도슨트 분량이다. **문장 수는
 # 모든 수준이 2~3으로 같다** — 수준은 설명의 난이도만 바꾸고 턴 구조는 안 바꾼다.
@@ -15,10 +18,10 @@
 # (`stage/cues.py::MAX_TURNS`)이면 도슨트 몫이 초등 약 38~60초, 전문가 약 60~98초.
 # 턴 설명은 고정 대본이라 이 값은 **저작 규칙**이다 — 데이터 테스트가 본다.
 초등:
-  min_sentences: 2
-  max_sentences: 3
-  min_chars: 50
-  max_chars: 100
+  min_sentences: 3
+  max_sentences: 4
+  min_chars: 90
+  max_chars: 160
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 50
@@ -30,10 +33,10 @@
   # 이 예외가 없으면 페르소나의 "정식 명칭으로 부른다" 와 이 줄이 부딪힌다.
   sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 중고등:
-  min_sentences: 2
-  max_sentences: 3
-  min_chars: 60
-  max_chars: 120
+  min_sentences: 3
+  max_sentences: 5
+  min_chars: 120
+  max_chars: 220
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 60
@@ -43,10 +46,10 @@
   numbers: "연도만 말한다. 정밀한 수치는 생략한다."
   sources: "기관 이름이나 출처를 말하지 않는다. 단, 체험관을 만든 한국방송통신전파진흥원은 정식 명칭으로 말한다."
 일반:
-  min_sentences: 2
-  max_sentences: 3
-  min_chars: 70
-  max_chars: 140
+  min_sentences: 4
+  max_sentences: 5
+  min_chars: 150
+  max_chars: 260
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 70
@@ -56,10 +59,10 @@
   numbers: "연도와 개략 수치를 말한다."
   sources: "기관 이름까지는 말해도 된다."
 전문가:
-  min_sentences: 2
-  max_sentences: 3
-  min_chars: 90
-  max_chars: 180
+  min_sentences: 4
+  max_sentences: 6
+  min_chars: 180
+  max_chars: 320
   point_min_sentences: 2
   point_max_sentences: 3
   point_min_chars: 80

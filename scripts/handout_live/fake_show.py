@@ -10,7 +10,7 @@
 사용:
     .venv/bin/python scripts/handout_live/fake_show.py [--port 18778] [--cues 01-intro,02-history] [--level 일반]
         [--engine elevenlabs] [--gap 0.05] [--lead 2] [--qa] [--loop]
-    → 브라우저로 http://127.0.0.1:18778/stage/paper (공연 모드가 기본)
+    → 브라우저로 http://127.0.0.1:18778/stage/auto (수준·큐에 맞춰 화면을 고른다) 또는 /stage/paper 등(공연 모드가 기본)
 """
 
 from __future__ import annotations
@@ -155,7 +155,8 @@ def main() -> int:
     srv = serve(ds.handler, args.host, args.port, process_request=ds.process_request)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://{args.host}:{args.port}/stage"
-    say(f"가짜 공연 — {base}/paper(일반) · {base}/webtoon(초등·중고등) · {base}/exploded(전문가) — 수준 {args.level}, 캐시 {cache_dir}")
+    say(f"가짜 공연 — {base}/auto(수준·큐에 맞춰 자동 — 조정실 안 화면과 같다) · {base}/paper(일반) · {base}/webtoon(초등·중고등) · "
+        f"{base}/exploded(전문가) · {base}/hud(카드, 4수준) — 수준 {args.level}, 캐시 {cache_dir}")
     try:
         while True:
             run_show(hub, director, plan, args.turn_gap, args.lead, args.qa)

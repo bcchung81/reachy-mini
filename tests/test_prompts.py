@@ -19,12 +19,12 @@ def test_수준의_분량이_프롬프트에_들어간다():
     `stage/prompts.py::_amount_for` 의 min/max 를 **뒤집어**
     "7~5문장으로, 400~260자 사이로" 라는 말이 안 되는 지시를 내보내도
     잡히지 않았다(전체 리뷰). 전문가 수준의 수치는 리터럴로 박는다
-    (`data/levels.yaml` 전문가 관람객 답: 2~3문장 / 90~180자, 2026-09-24 재정의)."""
+    (`data/levels.yaml` 전문가 관람객 답: ~~2~3문장 / 90~180자, 2026-09-24~~ → 4~6문장 / 180~320자, 2026-11-13 "좀 더 풍부하게")."""
     lv = load_levels()["전문가"]
     p = build_system_prompt("docent", lv)
-    assert "2~3문장으로" in p, p
-    assert "90~180자 사이로" in p, p
-    assert "3~2문장" not in p and "180~90자" not in p, p
+    assert "4~6문장으로" in p, p
+    assert "180~320자 사이로" in p, p
+    assert "6~4문장" not in p and "320~180자" not in p, p
 
 
 def test_공통_규약은_세_역할_모두에_있다():
@@ -185,12 +185,22 @@ def test_도슨트_페르소나는_관람객_질문에_답하는_역할이다():
 def test_단독_사회자는_혼자_답하는_페르소나와_두_갈래_분량을_받는다():
     """단독(2026-09-25)의 사회자는 전시 질문에도 인사에도 답한다. 해설하지 않는 사회자 페르소나(mc)로는
     전시 질문에 답할 수 없고, 도슨트 분량 문구("한 문장짜리 답은 대답이 아니다")를 주면 "안녕하세요" 에도
-    분량을 채우려 든다. 전문가 수치는 리터럴(`data/levels.yaml` 2~3문장 / 90~180자)."""
+    분량을 채우려 든다. 전문가 수치는 리터럴(`data/levels.yaml` 4~6문장 / 180~320자 — 2026-11-13 늘림)."""
     lv = load_levels()["전문가"]
     p = build_system_prompt("solo", lv)
     assert "도슨트 없이 혼자" in p and "도슨트에게 넘기지 않는다" in p
-    assert "2~3문장, 90~180자 사이로 답한다" in p, p
+    assert "4~6문장, 180~320자 사이로 답한다" in p, p
     assert "인사나 가벼운 말에는 한두 문장으로 짧게" in p
     assert "한 문장짜리 답은 대답이 아니다" not in p
     assert "위치·길" in p                                  # 확인할 수 없는 안내를 하지 않는다
     assert p != build_system_prompt("mc", lv) and p != build_system_prompt("docent", lv)
+
+
+
+def test_질문_답은_풍부하게_하되_근거_안에서다():
+    """2026-11-13 "단답형이 아니라 좀 더 풍부하게" — 원리·예·맺음을 주되, 채우려고 지어내지 않고 맺음말을 되풀이하지 않는다."""
+    from stage.levels import load_levels
+    lv = load_levels()
+    assert lv["일반"].min_sentences >= 4 and lv["전문가"].max_sentences >= 6 and lv["초등"].min_sentences >= 3
+    p = build_system_prompt("docent", lv["일반"])
+    assert "왜 그런지" in p and "비유" in p and "되풀이하지 않는다" in p and "지어내지 않는다" in p

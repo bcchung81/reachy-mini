@@ -18,6 +18,7 @@
 import json
 import pathlib
 import queue
+import re
 import threading
 import time
 import urllib.parse
@@ -29,6 +30,7 @@ from websockets.sync.server import serve as _ws_serve
 from stage.console import dispatch as console_dispatch
 from stage.handout import render_handout
 from stage.say_label import parse_say_label
+from stage.ws_quiet import quiet_empty_handshakes
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8778
@@ -47,7 +49,34 @@ MOTION_PAGES = {
     "paper": _DESIGN / "paper-stage.html",        # 일반 — 종이 무대(aimotion 24)
     "webtoon": _DESIGN / "webtoon-stage.html",    # 초등·중고등 — 웹툰 칸(aimotion 157)
     "exploded": _DESIGN / "exploded-stage.html",  # 전문가 — 분해도(aimotion 148)
+    # 수준별 카드 화면(19큐 × 4수준 — 감독 수준을 따라 바꾼다, 2026-11-13) — 웹툰·분해도에 아직 없는 큐를 이어 보여 준다.
+    # ~~종이 무대를 수준별 대본으로 빌드~~ — 종이 무대 안무가 일반 대본·카드 그림에 손으로 맞춰져 있어 다른 수준에서 멈췄다(02·15큐).
+    "hud": _DESIGN / "handout-hud.html",
+    # 수준에 맞는 화면을 골라 띄우고 수준이 바뀌면 갈아 끼우는 껍데기(2026-11-13) — 운영자는 이 주소 하나만 연다.
+    "auto": pathlib.Path(__file__).with_name("stage_auto.html"),
 }
+# `/stage/auto` 가 (수준, 지금 큐)로 화면을 고르는 순서 — 앞이 그 수준 전용 화면, 뒤가 그 수준의 카드 화면(19큐 × 4수준).
+# 전용 화면이 그 큐를 가졌으면 그것, 아니면 다음 것(2026-11-13 사용자 결정: 빈 큐는 그 수준의 카드 화면으로 잇는다).
+# 왜: 웹툰·분해도는 01·02큐 시안뿐이라 06큐에서 수준을 바꾸면 화면이 01큐에 "공연 대기" 로 멈췄다(로봇은 06큐를 말하는데).
+STAGE_ORDER = {
+    "초등": ("webtoon", "hud"),
+    "중고등": ("webtoon", "hud"),
+    "일반": ("paper", "hud"),
+    "전문가": ("exploded", "hud"),
+}
+STAGE_DEFAULT = "paper"              # 모르는 수준 — 감독의 기본 수준(일반) 화면
+STAGE_LABELS = {"paper": "종이 무대", "webtoon": "웹툰", "exploded": "분해도", "hud": "카드 화면"}
+# 빌드된 페이지 데이터의 큐 id(`"id": "06-bands"`). 페이지마다 데이터 모양은 다르지만 큐 id 를 이렇게 적는 것은 같다.
+_CUE_ID = re.compile(r'"id":\s*"(\d\d-[a-z0-9-]+)"')
+
+
+def stage_cues(page: pathlib.Path) -> list[str]:
+    """그 화면이 가진 큐 id(나온 순서, 중복 없이). 파일이 없으면 [] — 고르는 쪽이 다음 화면으로 넘어간다."""
+    try:
+        text = page.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    return list(dict.fromkeys(_CUE_ID.findall(text)))
 AUDIENCE_SNAPSHOT_KEYS = (
     "cue_index", "cue_id", "cue_count", "state", "speaking_role",
     "question_wait_s", "question_wait_total_s", "mode", "show_running", "course_position",
@@ -98,6 +127,8 @@ class DashboardServer:
         self._page = page
         self._audience_page = audience_page
         self._motion_pages = dict(MOTION_PAGES if motion_pages is None else motion_pages)
+        self._manifest_cache: dict[str, tuple[float, list[str]]] = {}   # 화면 이름 → (mtime, 가진 큐)
+        self._manifest_warned = False
         self._interval = interval
         self._warn = warn
         # 큐 id → 포인트 수. 라벨을 풀 때 처음 한 번 감독에게 묻는다(큐시트는 기동 뒤 안 바뀐다).
@@ -121,6 +152,8 @@ class DashboardServer:
             return self._serve_file(connection, self._audience_page, "관람객 보조 화면")
         if path == "/handout":
             return self._serve_handout(connection, split.query)
+        if path == "/stage/manifest":
+            return self._serve_stage_manifest(connection)
         if path.startswith("/stage/"):
             page = self._motion_pages.get(path[len("/stage/"):])
             if page is None:
@@ -147,6 +180,37 @@ class DashboardServer:
             self._warn(f"{what}를 못 읽었다({page}: {exc})")
             return connection.respond(500, "page missing")
         return self._html(connection, 200, body)
+
+    def stage_manifest(self) -> dict:
+        """`/stage/auto` 가 화면을 고를 재료 — 수준별 순서·화면마다 가진 큐·이름. 가진 큐는 **빌드된 페이지에서** 읽는다
+        (웹툰·분해도가 19큐로 늘면 여기를 안 고쳐도 따라온다). 파일이 바뀌면 다시 읽는다(mtime)."""
+        cache = self._manifest_cache
+        cues, missing = {}, []
+        for name, page in self._motion_pages.items():
+            if name == "auto":
+                continue
+            try:
+                mt = page.stat().st_mtime
+            except OSError:
+                missing.append(name)
+                continue
+            if cache.get(name, (None,))[0] != mt:
+                cache[name] = (mt, stage_cues(page))
+            cues[name] = cache[name][1]
+        if missing and not self._manifest_warned:
+            # 한 번만 — 화면이 0.5초마다 묻는 것이 아니라 열 때 묻지만, 여러 창이 열면 같은 줄이 쌓인다.
+            self._manifest_warned = True
+            self._warn(f"교육자료 화면 파일이 없다({', '.join(missing)}) — 그 수준은 다음 화면으로 넘어간다"
+                       " (.venv/bin/python -m scripts.handout_<이름>.build)")
+        return {"order": {lv: list(names) for lv, names in STAGE_ORDER.items()}, "default": STAGE_DEFAULT,
+                "labels": STAGE_LABELS, "cues": cues}
+
+    def _serve_stage_manifest(self, connection):
+        resp = connection.respond(200, json.dumps(self.stage_manifest(), ensure_ascii=False))
+        del resp.headers["Content-Type"]
+        resp.headers["Content-Type"] = "application/json; charset=utf-8"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     def _serve_handout(self, connection, query: str):
         """수준별 교육자료(`stage/handout.py`). 수준은 `?level=`, 없으면 **지금 감독의 수준**이다.
@@ -455,6 +519,7 @@ def start_dashboard(hub, director, host: str = DEFAULT_HOST, port: int = DEFAULT
     """대시보드를 띄운다. **실패해도 감독·콘솔은 그대로 돈다** — 경고하고 None."""
     ds = DashboardServer(hub, director, camera=camera, warn=warn)
     try:
+        quiet_empty_handshakes()   # 브라우저가 미리 열어 둔 빈 연결의 스택을 거른다(stage/ws_quiet.py)
         srv = _ws_serve(ds.handler, host, port, process_request=ds.process_request)
     # `bind()` 는 0~65535 밖의 포트(`REACHY_DASHBOARD_PORT=99999`)에 OSError 가 아니라
     # OverflowError 를 낸다 — OSError 만 잡으면 그 하나로 감독이 기동에서 죽었다(최종
