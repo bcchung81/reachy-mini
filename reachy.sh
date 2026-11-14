@@ -1202,7 +1202,9 @@ robot_bringup_one() {  # host role mac_ip   (role 이 비면 1대 모드 — 로
   local bad=0 p
 
   say_step "로봇 ${REACHY_ROLE:-(역할 없음)} — $ROBOT_HOST"
-  robot_reachable || return 1
+  # 안 잡혀서 실패했는지를 남긴다 — `start_robot` 이 그때만 이름으로 찾아본다(A-6). 백엔드·앱 실패에는 찾지 않는다.
+  ROBOT_LAST_UNREACHABLE=0
+  robot_reachable || { ROBOT_LAST_UNREACHABLE=1; return 1; }
   robot_backend_ready || return 1
   robot_wifi_awake
 
@@ -1320,13 +1322,55 @@ robot_forget_started() {  # host — ROBOT_APPS_STARTED 에서 뺀다(연관 배
 # 로봇별 단계에서 떼어 냈다 — 맥의 추론 3종을 데우는 일이라 로봇이 두 대여도 한 번이면
 # 된다. **앱 기동 전에만** 끝나면 되므로 로봇별 단계 앞에 둔다(예전 `robot up` 은 기상과
 # 앱 기동 사이에 뒀다 — 앞으로 옮기면 기상→앱 사이가 짧아져 그 틈에 절전으로 빠질 여지를 줄인다).
+#
+# **외부 API 사전 점검**(2026-11-14, 계획 show-readiness A-1): 외부 전용에서 예열은 실패를 "건너뜀" 이 아니라 점검 실패로
+# 찍고(키·잔액/한도·인터넷 + 안 되는 것), 그 목록을 `$LOG_DIR/preflight.txt`(`등급<탭>글`)에 남긴다. 여기서 빨간(FAIL)·
+# 호박(WARN) 묶음으로 다시 보이고, 감독 콘솔 직전과 감독 로그 머리에도 남긴다(`start_director`) — 로봇 기동 출력이 길어
+# 예열 줄은 화면 위로 밀린다. **멈추지 않는다**(U1 ① — 대본 공연은 구운 캐시로 돈다). 멈추려면 `REACHY_PREFLIGHT=stop`.
 robot_warmup() {
+  local pf="$LOG_DIR/preflight.txt"
   say_step "예열${REACHY_PROMPT:+ — $REACHY_PROMPT}"
-  "$PY" scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다${c_off}"
+  # 먼저 지운다 — 예열이 import 단계에서 죽으면 지난 실행의 빨간 줄이 이번 것처럼 남는다(예열도 실행마다 새로 쓴다).
+  rm -f "$pf"
+  REACHY_PREFLIGHT_OUT="$pf" "$PY" scripts/warmup.py || echo "   ${c_dim}일부 예열을 건너뛰었다${c_off}"
+  if ! preflight_show; then
+    echo "   ${c_dim}대본 공연은 구운 캐시로 계속된다 — 위 할 일을 하고 다시 띄우면 다시 점검한다${c_off}"
+    if [ "${REACHY_PREFLIGHT:-warn}" = "stop" ]; then
+      say_bad "사전 점검 실패 — REACHY_PREFLIGHT=stop 이라 멈춘다(알리고 계속 가려면 이 스위치를 뺀다)"
+      exit 1
+    fi
+  fi
   # 구운 고정 대사가 얼마나 있는지 — 비어 있으면 해설이 공연마다 실시간 합성으로 나간다.
   # 기동을 막지는 않는다(결정: 굽기는 별도 명령, start 는 알리기만).
   [ "$TTS_BACKEND" = "qwen" ] && tts_cache_status
   return 0
+}
+
+# 사전 점검 목록을 묶어 보인다. 실패(bad)가 하나라도 있으면 1. 목록이 없거나 비면 아무것도 안 찍고 0.
+preflight_show() {
+  local pf="$LOG_DIR/preflight.txt" lvl text bad=0
+  [ -s "$pf" ] || return 0
+  echo
+  echo "   ── 사전 점검 ──"
+  while IFS=$'\t' read -r lvl text; do
+    case "$lvl" in
+      bad)  say_bad "$text"; bad=1 ;;
+      warn) say_warn "$text" ;;
+    esac
+  done < "$pf"
+  [ "$bad" = 0 ]
+}
+
+# 감독 로그 머리용 — 한 항목 한 줄(`./reachy.sh logs` 가 마지막 세션 머리부터 보여 준다).
+preflight_log_lines() {
+  local pf="$LOG_DIR/preflight.txt" lvl text
+  [ -s "$pf" ] || return 0
+  while IFS=$'\t' read -r lvl text; do
+    case "$lvl" in
+      bad)  echo "사전 점검 실패: $text" ;;
+      warn) echo "사전 점검 경고: $text" ;;
+    esac
+  done < "$pf"
 }
 
 # ── bake — 고정 대사를 TTS 캐시에 굽는다 ─────────────────────────
@@ -1549,6 +1593,7 @@ start_cleanup() {
   # stderr 를 버리는 이유: bash 가 TERM 으로 죽인 백그라운드 작업마다 "line N: 1234
   # Terminated: 15 nohup …" 를 찍는다 — 우리가 방금 "내림" 이라고 말한 것의 소음이다.
   start_stop_pids 2>/dev/null
+  keep_awake_stop    # -w 로 저절로 풀리지만, 정리 뒤에도 스크립트가 잠깐 더 산다(로봇 정지 대기) — 먼저 내린다
   # 로봇들은 **동시에** — 한 대씩이면 꺼진 로봇 수만큼 기다림이 쌓인다. 줄마다 한 번에 찍으므로 섞이지 않는다.
   local stops=""
   for h in $hosts; do robot_stop_app_on "$h" & stops="$stops $!"; done
@@ -1558,6 +1603,34 @@ start_cleanup() {
   if [ "$START_INFER_UP" = "1" ]; then
     echo "   ${c_dim}추론 3종(LLM·STT·TTS)은 남겨 둔다 — 다시 start 하면 바로 붙는다. 전부 내리려면 ./reachy.sh stop${c_off}"
   fi
+}
+
+# ── 공연 동안 화면 잠자기 막기(2026-11-14, 계획 show-readiness A-3) ─────────────
+# 맥은 `pmset displaysleep 10` 이고 다른 프로그램이 우연히 막고 있었을 뿐이다(조율자 실측) — 공연 중 조정실·프로젝터 화면이
+# 꺼지면 운영자가 알아채기 전에 관람객이 먼저 본다. 감독은 `tee` 파이프 뒤 포그라운드라 감독 pid 를 따로 잡기 번거롭다 —
+# `-w $$`(이 reachy.sh 자신)로 건다: 감독이 끝나면 스크립트도 끝나므로 수명이 같다. 정리(start_cleanup)가 한 번 더 내린다.
+# macOS 전용 명령은 사다리 안에만(CLAUDE.md) — 없으면(리눅스 PC) 경고만 하고 띄운다. 끄는 스위치 REACHY_KEEP_AWAKE=0.
+KEEP_AWAKE_PID=""
+keep_awake() {
+  case "${REACHY_KEEP_AWAKE:-1}" in
+    0|off|no) echo "   ${c_dim}화면 잠자기 방지를 걸지 않는다(REACHY_KEEP_AWAKE=0)${c_off}"; return 0 ;;
+  esac
+  if command -v caffeinate >/dev/null 2>&1; then
+    # -d 화면 · -i 시스템 유휴 · -s 전원 연결 시 시스템 잠자기. 출력은 버린다(감독 콘솔을 어지럽히지 않게).
+    caffeinate -dis -w $$ >/dev/null 2>&1 &
+    KEEP_AWAKE_PID=$!
+    say_ok "공연 동안 화면·시스템 잠자기를 막는다 ${c_dim}(caffeinate — 이 실행이 끝나면 풀린다)${c_off}"
+  else
+    say_warn "화면 잠자기를 못 막았다(caffeinate 없음) — 공연 PC 의 OS 설정에서 화면 끄기·잠자기를 끈다"
+  fi
+  return 0
+}
+
+keep_awake_stop() {
+  [ -n "$KEEP_AWAKE_PID" ] || return 0
+  kill "$KEEP_AWAKE_PID" 2>/dev/null
+  KEEP_AWAKE_PID=""
+  return 0
 }
 
 start_traps() {
@@ -1628,6 +1701,8 @@ start_open_dashboard() {  # url
 # 시뮬·실기 세션이 섞여 쌓이는데, 머리줄이 같으면 `logs` 를 읽는 사람이 어느 쪽이었는지 모른다.
 start_director() {  # bind port dashboard_url target
   local target="${4:-target=?}"
+  # 예열의 사전 점검 실패·경고를 콘솔 바로 위에 한 번 더(robot_warmup 주석) — 운영자가 마지막으로 보는 자리다.
+  preflight_show || true
   say_step "무대감독 + 대시보드 — 이 터미널이 콘솔이다"
   start_open_dashboard "$3"
   echo "   ${c_ok}로봇이 붙으면 아래에 '붙었다' 가 뜬다. 그 뒤 s(또는 대시보드의 시작)로 시작한다.${c_off}"
@@ -1644,6 +1719,7 @@ start_director() {  # bind port dashboard_url target
     echo "start: $target | 감독 $1:$2 | 대시보드 $3 | TTS_BACKEND=$TTS_BACKEND"
     echo "환경: REACHY_AUDIENCE_LEVEL=${REACHY_AUDIENCE_LEVEL:-기본}" \
          "REACHY_MC_UNIT=${REACHY_MC_UNIT:-없음} REACHY_DOCENT_UNIT=${REACHY_DOCENT_UNIT:-없음}"
+    preflight_log_lines
   } >> "$START_DIRECTOR_LOG"
   REACHY_DIRECTOR_HOST="$1" REACHY_DIRECTOR_PORT="$2" PYTHONUNBUFFERED=1 \
     "$PY" -m stage 2>&1 | ( trap '' INT; exec tee -a "$START_DIRECTOR_LOG" )
@@ -1727,6 +1803,7 @@ start_sim() {  # director_port dashboard_port dashboard_url
   start_sim_app mc     "$START_MC_PORT"     "$mc_out"     "ws://127.0.0.1:$dir_port"
   start_sim_app docent "$START_DOCENT_PORT" "$docent_out" "ws://127.0.0.1:$dir_port"
 
+  keep_awake
   start_director 127.0.0.1 "$dir_port" "$dash_url" "target=sim"
 }
 
@@ -1790,9 +1867,11 @@ start_robot() {  # bind director_port dashboard_port dashboard_url mc_host docen
   # 찍는다 — 예전에는 두 대 다 못 올렸을 때만 찍어서, 한 대만 빠지면 복구 명령을 찾아야 했다(F2).
   # 그렇게 합류한 앱도 `q` 가 멈춘다(START_ROBOT_HOSTS).
   if robot_bringup_one "$mc_host" mc "$ip"; then n_up=$((n_up + 1)); else
+    [ "$ROBOT_LAST_UNREACHABLE" = "1" ] && robot_find_role mc "$mc_host" "$docent_host"
     start_robot_skipped mc "$mc_host" "사회자"
   fi
   if robot_bringup_one "$docent_host" docent "$ip"; then n_up=$((n_up + 1)); else
+    [ "$ROBOT_LAST_UNREACHABLE" = "1" ] && robot_find_role docent "$docent_host" "$mc_host"
     start_robot_skipped docent "$docent_host" "도슨트"
   fi
   if [ "$n_up" = "0" ]; then
@@ -1802,7 +1881,89 @@ start_robot() {  # bind director_port dashboard_port dashboard_url mc_host docen
   # 감독이 1인 모드 경고에 **주소까지 든** 합류 명령을 찍게 물려준다 — 주소 없는 `REACHY_ROLE=mc ./reachy.sh robot up` 은
   # 기본 주소(reachy-mini.local = 도슨트 로봇)로 가서 도슨트 config 를 사회자로 덮어쓴다(2026-11-13).
   export REACHY_MC_HOST="$mc_host" REACHY_DOCENT_HOST="$docent_host"
+  keep_awake
   start_director 0.0.0.0 "$dir_port" "$dash_url" "target=robot mc=$mc_host docent=$docent_host"
+}
+
+# ── 배역 주소가 안 잡힐 때 이름으로 찾아 **알리기만** 한다(2026-11-14, 계획 show-readiness A-6 · 사용자 결정 U4 ①) ──────
+# 기본 주소는 고정 IP(공유기 DHCP 예약 — 사용자 작업)다. 그래도 로봇이 다른 주소를 받았으면 운영자는 "안 잡힌다" 만 보고
+# 1인 모드로 공연했다. mDNS 이름 `reachy-mini.local`·`reachy-mini-2.local` 을 풀어 응답하는 로봇을 찾되:
+#   · **이름으로 배역을 정하지 않는다** — 두 로봇의 hostname 이 같아 `-2` 는 mDNS 가 이름 충돌 때 붙이는 접미사이고 켠
+#     순서로 바뀔 수 있다. 배역은 그 로봇 config 의 REACHY_ROLE(`robot_sync_config` 가 쓴 값 — 로봇 디스크에 있어 로봇을
+#     따라간다)로 확인한다. 못 읽으면 "배역 미확인" 이라고 말한다.
+#   · **자동으로 쓰지 않는다** — 잘못 고르면 사회자·도슨트가 뒤바뀐다. 안내는 항상 두 주소를 다 든 한 줄(§15.14 — 주소 없는
+#     합류 명령은 기본 주소 로봇의 config 를 덮어쓴다).
+ROBOT_FIND_NAMES="${REACHY_ROBOT_FIND_NAMES:-reachy-mini.local reachy-mini-2.local}"
+ROBOT_LAST_UNREACHABLE=0
+
+# 이름 → IPv4 주소들(한 줄에 하나). **플랫폼 중립**(파이썬 getaddrinfo — 맥은 mDNS 를 기본으로 풀고, 리눅스 PC 는 nss-mdns 가
+# 있으면 푼다) + **2초 상한**(못 푸는 이름에 resolver 가 오래 붙잡지 않게 스레드로 끊는다). 못 풀면 아무것도 안 찍고 0.
+robot_resolve() {  # name
+  "$PY" - "$1" <<'PY' 2>/dev/null
+import socket, sys, threading
+found = []
+def go():
+    try:
+        found.extend(sorted({a[4][0] for a in socket.getaddrinfo(sys.argv[1], None, socket.AF_INET)}))
+    except OSError:
+        pass
+t = threading.Thread(target=go, daemon=True)
+t.start()
+t.join(2.0)
+print("\n".join(found))
+PY
+  return 0
+}
+
+robot_api_up() {  # ip — 그 주소에서 로봇 데몬이 응답하나(연결 상한은 rget 과 같다)
+  curl -s --connect-timeout "$ROBOT_CONNECT_S" -m 5 -o /dev/null -w '%{http_code}' "http://$1:8000/api/daemon/status" 2>/dev/null \
+    | grep -q 200
+}
+
+# ip → 그 로봇 config 의 REACHY_ROLE(없거나 못 읽으면 빈 줄). 새 주소는 ssh 호스트 키가 없어 BatchMode 가 거절할 수 있다 —
+# 그때는 빈 줄(= 배역 미확인)이다. 호스트 키 확인을 끄지 않는다(공유기 밖 기계에 키 없이 붙지 않게).
+robot_role_at() {  # ip
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "$ROBOT_USER@$1" "cat '$ROBOT_CFG'" 2>/dev/null \
+    | "$PY" -c 'import json, sys
+try:
+    print((json.load(sys.stdin).get("REACHY_ROLE") or "").strip())
+except Exception:
+    pass' 2>/dev/null
+  return 0
+}
+
+robot_find_role() {  # role 빠진_주소 상대_주소
+  local role="$1" want="$2" other="$3" name ip seen="" found_role found=0
+  local label="사회자" other_role="docent"
+  [ "$role" = "docent" ] && { label="도슨트"; other_role="mc"; }
+  echo "   ${c_dim}$label 로봇을 이름으로 찾아본다(${ROBOT_FIND_NAMES// / · }) — 찾아도 자동으로 쓰지 않는다${c_off}"
+  for name in $ROBOT_FIND_NAMES; do
+    for ip in $(robot_resolve "$name"); do
+      case " $seen " in *" $ip "*) continue ;; esac
+      seen="$seen $ip"
+      [ "$ip" = "$want" ] && continue          # 방금 안 잡힌 그 주소
+      robot_api_up "$ip" || continue
+      found=1
+      found_role="$(robot_role_at "$ip")"
+      if [ "$found_role" = "$role" ]; then
+        if [ "$ip" = "$other" ]; then
+          say_warn "${label} 자리가 아닌 $ip($name)의 로봇 config 배역이 $role 이다 — 두 로봇 주소가 뒤바뀌었을 수 있다(공유기 DHCP 예약을 확인한다)"
+        elif [ "$role" = "mc" ]; then
+          say_warn "$label 로봇이 $want 에 없다 — $ip($name)에서 찾았다(config 배역 $role). 그 주소로 띄우려면:"
+          echo "      REACHY_MC_HOST=$ip REACHY_DOCENT_HOST=$other ./reachy.sh start --robot"
+        else
+          say_warn "$label 로봇이 $want 에 없다 — $ip($name)에서 찾았다(config 배역 $role). 그 주소로 띄우려면:"
+          echo "      REACHY_MC_HOST=$other REACHY_DOCENT_HOST=$ip ./reachy.sh start --robot"
+        fi
+      elif [ "$found_role" = "$other_role" ]; then
+        echo "   $ip($name) 는 config 배역 $found_role — ${label}가 아니다"
+      else
+        say_warn "$ip($name)에 로봇이 있다 — 배역 미확인(config 를 못 읽었다). 이름으로 추측하지 않는다 — 확인: ssh $ROBOT_USER@$ip cat $ROBOT_CFG"
+      fi
+    done
+  done
+  [ "$found" = "1" ] || echo "   이름(${ROBOT_FIND_NAMES// / · })으로도 못 찾았다 — 전원·Wi-Fi 와 공유기 DHCP 예약을 확인한다"
+  return 0
 }
 
 start_robot_log_pointer() {  # role host

@@ -1142,3 +1142,58 @@ def test_질문과_설명_요청은_질문으로_본다(text):
 def test_인사와_감사는_질문이_아니다(text):
     """실측: "감사합니다" 에 "잠깐 생각해 볼게요" 가 붙어 어색했다 — 가벼운 말은 멘트 없이 답한다."""
     assert not cues_mod.looks_like_question(text)
+
+
+# ── 질문 같지 않은 짧은 말에는 사회자가 되묻는다(2026-11-14, 계획 show-readiness A-5 · U3 ②) ──────────
+# 문턱은 손으로 단 정답으로 쟀다(보고 `docs/superpowers/plans/2026-11-14-show-readiness-A.md` A-5 표 — 실제 로그 92건 + 전시
+# 관람객을 가정한 손 표본 55건). 틀려도 싼 쪽 = 애매하면 답한다: 질문을 되물으면 관람객이 한 번 더 말해야 하지만(그 두
+# 번째는 감독이 답한다), 잡담에 답하면 최대 40초 해설이 나간다 — 그래도 **질문을 놓치는 쪽이 더 비싸다**고 보고 짧은
+# 말에만 건다. 아래 두 목록이 측정 표의 대표다(손으로 만든 정답 — 문턱을 바꾸면 이 표가 먼저 깨진다).
+_REPROMPT_YES = [
+    # 추임새·감탄·인사·감사(손 표본) — 질문이 아니다
+    "와 신기하다", "우와", "대박", "그렇구나", "아 그렇구나", "재밌다", "재밌어요", "감사합니다", "고마워요", "멋지다",
+    "오 진짜", "신기해요", "와 대박 신기하다", "알겠어요", "좋아요", "안녕하세요", "로봇 귀엽다", "그렇군요", "잘 들었습니다",
+    "네네", "아하",
+    # 실제 로그(공연 중 마이크에 들린 옆 사람 말·조각)
+    "고맙습니다.", "먹고 싶어요", "편의점", "세로 세로", "잠깐만.", "질문이 있습니다.",
+]
+_REPROMPT_NO = [
+    # 물음표·물음말·요청어(`looks_like_question`)
+    "전파가 뭐예요?", "왜요?", "5G는요?", "마르코니가 누구예요", "모스 부호 알려 주세요", "그거 설명해 주세요",
+    # 평서형 진짜 질문 — 길어서 답한다(U3 ② 가 ③ 을 고르지 않은 이유)
+    "5G 가 몸에 해롭다던데요", "전파는 눈에 안 보이잖아요", "타이타닉 얘기 더 해 주세요",
+    # 짧지만 요청·물음 어미 — 물음표가 빠져도(아이 말·작은 소리) 답한다
+    "더 듣고 싶어요", "다시 말해 주세요", "그거 다시 말해 줘", "가르쳐 주세요", "이해가 안 돼요", "잘 모르겠어요",
+    "라디오는요", "전자레인지는", "오늘 날씨는", "위험하지 않나요", "전파는 빛보다 빠른가요", "일본어로 해봐",
+    "SOS 신호 보내 봐", "휴대폰도 전파 써요?",
+]
+
+
+@pytest.mark.parametrize("text", _REPROMPT_YES)
+def test_짧은_추임새는_되묻고_평서형_긴_말은_질문으로_둔다(text):
+    assert cues_mod.needs_reprompt(text), text
+
+
+@pytest.mark.parametrize("text", _REPROMPT_NO)
+def test_질문이나_요청이면_짧아도_되묻지_않는다(text):
+    assert not cues_mod.needs_reprompt(text), text
+
+
+def test_되묻기_문턱은_한_곳에서_정한다():
+    """길이 문턱은 공백·문장부호를 뺀 글자 수다 — "와 대박 신기하다"(7) 는 되묻고, "와 진짜 신기하네요"(8) 는 답한다."""
+    assert cues_mod.REPROMPT_MAX_CHARS == 7
+    assert cues_mod.needs_reprompt("와 대박 신기하다") and not cues_mod.needs_reprompt("와 진짜 신기하네요")
+
+
+def test_되묻기_대사는_질문을_권하고_다음을_안내한다():
+    """재질문(`QUESTION_PROMPTS`)과 같은 일을 한다 — 관람객 창구를 말로 다시 연다. 같은 데이터 규칙을 지킨다."""
+    from stage.cues import ADVANCE_HINT, QA_REPROMPT_LINES, invites_question
+    from stage.speech_text import written_endings
+
+    assert 1 <= len(QA_REPROMPT_LINES) <= 2
+    for line in QA_REPROMPT_LINES:
+        assert invites_question(line) and line.endswith(ADVANCE_HINT), line
+        assert written_endings(line) == [], line
+        assert "도슨트" not in line, line                 # 도슨트는 답하지 않는다 — 부르면 대답 없는 부름이다
+        for w in _DEIXIS:
+            assert w not in line, f"{line!r} 에 위치 지시어 {w!r}"

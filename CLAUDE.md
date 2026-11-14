@@ -30,6 +30,9 @@ macOS 26.5.2 / Apple Silicon / Python 3.12.13(uv 관리) 기준으로 검증됐�
 ./run-app.sh                     # 실행 메뉴(공연 실기·공연 연습 시뮬·상태·끄기) — 엔진은 .env 키로 정한다. 띄운 뒤 감독 창에서 s → Enter 로 공연 시작
                                  # 키가 둘 다 있으면 외부 API 전용(REACHY_LOCAL_MODELS=off — 로컬 모델을 안 띄운다, §15.13)
                                  # 띄우기 전에 ./reachy.sh clean-local 로 지난 로컬 구성을 먼저 내린다(감독이 떠 있으면 손대지 않는다)
+                                 # 기동 예열이 외부 API 를 실제로 부른다 — 실패면 빨간 FAIL(계속 띄움, REACHY_PREFLIGHT=stop 이면 멈춤) · 크레딧 표시
+                                 # 공연 중 화면 잠자기 방지(REACHY_KEEP_AWAKE=0 으로 끔) · 짧은 비질문엔 사회자가 되묻기(REACHY_QA_REPROMPT=0 으로 끔)
+                                 # 실기 리허설 점검표: docs/rehearsal-checklist.md
 ./reachy.sh start --sim          # 시연 전부(추론 3종·시뮬 2대·무대감독+대시보드)
 ./reachy.sh start --robot        # 시연 전부 — 실기 2대(REACHY_MC_HOST / REACHY_DOCENT_HOST, 기본 192.168.0.4 / .5)
 TTS_ENGINE=elevenlabs REACHY_LLM_ENGINE=openai REACHY_STT_ENGINE=openai ./reachy.sh start --robot

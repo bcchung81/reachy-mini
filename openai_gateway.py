@@ -616,17 +616,43 @@ def limit_keywords(words: list[str], max_count: int = KEYWORDS_MAX) -> tuple[lis
 
 
 # ── OpenAI 연결 ────────────────────────────────────────────────────
-class GatewayError(RuntimeError):
-    """OpenAI 쪽 실패. **메시지에 키가 들어가지 않는다** — 상태 코드와 오류 요약만. `slow` 는 요청을 보낸 뒤 응답이
-    시간 안에 안 온 경우다 — STT 는 이것만 한 번 더 보낸다(연결이 안 되는 것은 다시 해도 같다 — 오프라인이면 시간만 버린다)."""
-
-    def __init__(self, message: str, slow: bool = False) -> None:
-        super().__init__(message)
-        self.slow = slow
-
-
 class ResponseTimeout(TimeoutError):
     """요청은 보냈는데 응답 머리가 시간 안에 안 왔다(연결 시간 초과와 가르려고 따로 둔다)."""
+
+
+# 외부 전용 502 에 싣는 실패 종류(`upstream`). 예열(`scripts/warmup.py`)이 이것으로 "키가 틀렸다 / 잔액·한도 / 인터넷" 을
+# 가른다(계획 2026-11-14 A-1). **종류만** 싣는다 — OpenAI 메시지 글은 401 때 키 조각을 되돌려 주므로(lessons 2026-11-12)
+# 응답에 실으면 예열 화면·로그로 샌다. 원인 글은 게이트웨이 로그에만 남는다(키는 `scrub` 으로 지워서).
+UPSTREAM_KINDS = ("401", "429", "5xx", "4xx", "connect", "timeout", "other")
+
+
+def upstream_kind(status: int | None = None, exc: BaseException | None = None) -> str:
+    """상태 코드나 예외를 `UPSTREAM_KINDS` 하나로. 401·429 만 따로 둔다 — 운영자가 할 일이 다르다(키 확인 / 결제 확인).
+    403 은 "키에 그 모델 권한이 없다" 같은 경우라 4xx 로 묶고 로그를 보게 한다."""
+    if status is not None:
+        if status in (401, 429):
+            return str(status)
+        if 500 <= status < 600:
+            return "5xx"
+        if 400 <= status < 500:
+            return "4xx"
+        return "other"
+    if isinstance(exc, TimeoutError):          # ResponseTimeout·socket.timeout 모두 TimeoutError 다
+        return "timeout"
+    if isinstance(exc, OSError):               # 연결 거부·이름 풀기 실패·TLS·끊김(RemoteDisconnected 도 OSError)
+        return "connect"
+    return "other"
+
+
+class GatewayError(RuntimeError):
+    """OpenAI 쪽 실패. **메시지에 키가 들어가지 않는다** — 상태 코드와 오류 요약만. `slow` 는 요청을 보낸 뒤 응답이
+    시간 안에 안 온 경우다 — STT 는 이것만 한 번 더 보낸다(연결이 안 되는 것은 다시 해도 같다 — 오프라인이면 시간만 버린다).
+    `kind` 는 외부 전용 502 에 실을 실패 종류(`upstream_kind`)."""
+
+    def __init__(self, message: str, slow: bool = False, kind: str = "other") -> None:
+        super().__init__(message)
+        self.slow = slow
+        self.kind = "timeout" if slow else kind
 
 
 def set_timeout(conn: http.client.HTTPConnection, seconds: float) -> None:
@@ -867,19 +893,19 @@ class Handler(BaseHTTPRequestHandler):
             conn, resp = shared.pool.request("POST", CHAT_PATH, json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                              headers, deadline)
         except (OSError, http.client.HTTPException) as exc:
-            self._llm_fallback(raw, body, model, f"{type(exc).__name__}: {exc}")
+            self._llm_fallback(raw, body, model, f"{type(exc).__name__}: {exc}", upstream_kind(exc=exc))
             return
         if resp.status != 200:
             summary = error_summary(resp.read(), cfg.key)
             conn.close()
-            self._llm_fallback(raw, body, model, f"HTTP {resp.status} {summary}")
+            self._llm_fallback(raw, body, model, f"HTTP {resp.status} {summary}", upstream_kind(status=resp.status))
             return
         if not stream:
             try:
                 data = resp.read()
             except (OSError, http.client.HTTPException) as exc:
                 conn.close()
-                self._llm_fallback(raw, body, model, f"{type(exc).__name__}: {exc}")
+                self._llm_fallback(raw, body, model, f"{type(exc).__name__}: {exc}", upstream_kind(exc=exc))
                 return
             shared.pool.release(conn, resp)
             # 받은 바이트 그대로 — 다시 직렬화하지 않는다(모양을 우리가 바꿀 이유가 없다).
@@ -899,11 +925,11 @@ class Handler(BaseHTTPRequestHandler):
             first = read(CHUNK)
         except (OSError, http.client.HTTPException) as exc:
             conn.close()
-            self._llm_fallback(raw, body, model, f"첫 바이트 전에 끊김 {type(exc).__name__}: {exc}")
+            self._llm_fallback(raw, body, model, f"첫 바이트 전에 끊김 {type(exc).__name__}: {exc}", upstream_kind(exc=exc))
             return
         if not first:
             conn.close()
-            self._llm_fallback(raw, body, model, "빈 응답")
+            self._llm_fallback(raw, body, model, "빈 응답", "other")
             return
         ttfb = time.monotonic() - t0
         set_timeout(conn, cfg.llm_timeout_s)       # 여기부터는 바이트 사이 간격의 상한이다
@@ -937,11 +963,12 @@ class Handler(BaseHTTPRequestHandler):
         shared.pool.release(conn, resp)
         log.info("llm openai %s 첫 바이트 %.2fs 전체 %.2fs", model, ttfb, time.monotonic() - t0)
 
-    def _llm_fallback(self, raw: bytes, body: dict, model: str, reason: str) -> None:
-        """실패 정책: 로컬 서버로 **원래 본문**을 넘기고 경고 한 줄(요청마다). 로컬도 없으면 502 — 지금과 같은 오류."""
+    def _llm_fallback(self, raw: bytes, body: dict, model: str, reason: str, kind: str = "other") -> None:
+        """실패 정책: 로컬 서버로 **원래 본문**을 넘기고 경고 한 줄(요청마다). 로컬도 없으면 502 — 지금과 같은 오류.
+        `kind` 는 외부 전용 502 에만 싣는다(로컬로 넘기면 로봇은 정상 답을 받는다 — 실을 자리가 없다)."""
         if self.server.local_host is None:
             self._no_local(f"OpenAI LLM({model}) 실패 — 외부 전용이라 넘길 로컬 LLM 이 없다, 502"
-                           f"(로봇은 '다시 말해 줄래요' 대사, 감독은 폴백 대사로 간다): {reason}")
+                           f"(로봇은 '다시 말해 줄래요' 대사, 감독은 폴백 대사로 간다): {reason}", upstream=kind)
             return
         log.warning("OpenAI LLM(%s) 실패 — 로컬 LLM 으로 넘긴다: %s", model, scrub(reason, self.server.cfg.key))
         self._local("POST", to_local_chat(raw, body), tag="fallback")
@@ -973,7 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
         except GatewayError as exc:
             if self.server.local_host is None:
                 self._no_local(f"OpenAI STT({cfg.stt_model}) 실패 — 외부 전용이라 넘길 로컬 STT 가 없다, 502"
-                               f"(로봇은 못 들은 것으로 친다): {exc}")
+                               f"(로봇은 못 들은 것으로 친다): {exc}", upstream=exc.kind)
                 return
             log.warning("OpenAI STT(%s) 실패 — 로컬 STT 로 넘긴다: %s", cfg.stt_model, scrub(str(exc), cfg.key))
             self._local("POST", raw, tag="fallback")
@@ -1015,7 +1042,7 @@ class Handler(BaseHTTPRequestHandler):
         except ResponseTimeout as exc:
             raise GatewayError(str(exc), slow=True) from None
         except (OSError, http.client.HTTPException) as exc:
-            raise GatewayError(f"{type(exc).__name__}: {exc}") from None
+            raise GatewayError(f"{type(exc).__name__}: {exc}", kind=upstream_kind(exc=exc)) from None
         try:
             set_timeout(conn, max(0.05, deadline - time.monotonic()))
             data = resp.read()
@@ -1024,10 +1051,10 @@ class Handler(BaseHTTPRequestHandler):
             raise GatewayError(f"응답 본문 시간 초과({exc})", slow=True) from None
         except (OSError, http.client.HTTPException) as exc:
             conn.close()
-            raise GatewayError(f"{type(exc).__name__}: {exc}") from None
+            raise GatewayError(f"{type(exc).__name__}: {exc}", kind=upstream_kind(exc=exc)) from None
         if resp.status != 200:
             conn.close()
-            raise GatewayError(f"HTTP {resp.status} {error_summary(data, cfg.key)}")
+            raise GatewayError(f"HTTP {resp.status} {error_summary(data, cfg.key)}", kind=upstream_kind(status=resp.status))
         pool.release(conn, resp)
         try:
             d = json.loads(data.decode("utf-8"))
@@ -1037,11 +1064,19 @@ class Handler(BaseHTTPRequestHandler):
         return (d.get("text") or "").strip(), codes
 
     # ── 로컬 통과 ──────────────────────────────────────────────────
-    def _no_local(self, message: str) -> None:
-        """외부 전용에서 로컬로 넘길 자리 — 경고 한 줄(키는 지운다) + 502. 로봇·감독은 지금의 실패 경로를 탄다."""
+    def _no_local(self, message: str, upstream: str | None = None) -> None:
+        """외부 전용에서 로컬로 넘길 자리 — 경고 한 줄(키는 지운다) + 502. 로봇·감독은 지금의 실패 경로를 탄다.
+
+        `upstream`(OpenAI 를 불렀다가 실패한 경우만): 실패 **종류**를 본문 `upstream`·머리 `X-Reachy-Upstream` 에 싣는다 —
+        예열이 줄마다 "키 / 잔액·한도 / 인터넷" 을 말하게(계획 A-1). OpenAI 를 부르지 않은 502(모르는 경로)에는 싣지 않는다.
+        로봇은 502 본문을 읽지 않으므로(예외로만 받는다) 로봇 재배포가 필요 없다."""
         log.warning("%s", scrub(message, self.server.cfg.key))
-        self._send_json(502, {"error": "no-local", "detail": "외부 전용(--no-local) — 로컬 서버를 띄우지 않았다"},
-                        {"X-Reachy-Gateway": "no-local"})
+        body = {"error": "no-local", "detail": "외부 전용(--no-local) — 로컬 서버를 띄우지 않았다"}
+        headers = {"X-Reachy-Gateway": "no-local"}
+        if upstream:
+            body["upstream"] = upstream
+            headers["X-Reachy-Upstream"] = upstream
+        self._send_json(502, body, headers)
 
     def _local(self, method: str, raw: bytes | None, tag: str) -> None:
         """안쪽 로컬 서버로 넘기고 응답을 **받는 대로** 돌려준다(스트리밍 LLM 이 모아서 나가면 첫 절이 늦는다)."""

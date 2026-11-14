@@ -978,6 +978,69 @@ def test_외부_전용_다른_경로는_502(openai_fake, gateway, logs):
     r = requests.get(urls["llm"] + "/v1/models", timeout=5)
     assert r.status_code == 502 and r.json()["error"] == "no-local"
     assert any("외부 전용" in m for m in logs.warnings())
+    # OpenAI 를 부르지 않은 502 — 실패 종류가 없다(예열이 "OpenAI 키가 틀렸다" 로 오해하지 않게).
+    assert "upstream" not in r.json() and "X-Reachy-Upstream" not in r.headers
+
+
+_LEAK_401 = json_ok({"error": {"code": "invalid_api_key",
+                               "message": f"Incorrect API key provided: {KEY} (sk-test-****{KEY_TAIL})"}}, status=401)
+_LEAK_429 = json_ok({"error": {"code": "insufficient_quota", "message": "You exceeded your current quota"}}, status=429)
+_LEAK_500 = json_ok({"error": {"message": "The server had an error"}}, status=500)
+
+
+@pytest.mark.parametrize("service", ["llm", "stt"])
+@pytest.mark.parametrize("action,kind", [
+    (_LEAK_401, "401"), (_LEAK_429, "429"), (_LEAK_500, "5xx"), ("dead", "connect"), (hang(3.0), "timeout"),
+], ids=["401", "429", "500", "연결_거부", "시간_초과"])
+def test_외부_전용_502_는_실패_종류를_싣고_메시지는_싣지_않는다(openai_fake, gateway, logs, service, action, kind):
+    """예열(`scripts/warmup.py`)이 "키가 틀렸다 / 잔액·한도 / 인터넷" 을 가를 수 있게 **종류만** 싣는다. 메시지 글은 싣지
+    않는다 — OpenAI 401 메시지가 키 조각을 되돌려 주기 때문이다(lessons 2026-11-12). 로봇은 502 본문을 읽지 않으므로 재배포 없음."""
+    if action == "dead":
+        dead = socket.socket()
+        dead.bind(("127.0.0.1", 0))
+        port = dead.getsockname()[1]
+        dead.close()                                   # 아무도 안 듣는 포트 → 연결 거부
+        cfg = og.Config(key=KEY, llm_engine="openai", stt_engine="openai", base=f"http://127.0.0.1:{port}",
+                        llm_timeout_s=0.5, stt_timeout_s=0.5)
+    else:
+        path = og.CHAT_PATH if service == "llm" else og.STT_PATH
+        openai_fake.push(path, action, action)         # STT 는 늦으면 한 번 더 보낸다 — 두 번째도 같은 실패
+        cfg = cfg_on(openai_fake, llm_timeout_s=0.5, stt_timeout_s=0.5)
+    urls = gateway(cfg, None)
+    if service == "llm":
+        r = requests.post(urls["llm"] + og.CHAT_PATH, timeout=10,
+                          json={"model": "local", "stream": True, "messages": [{"role": "user", "content": "안녕"}]})
+    else:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(b"\x00\x10" * 16000)
+        r = requests.post(urls["stt"] + og.STT_PATH, timeout=10, files={"file": ("w.wav", buf.getvalue(), "audio/wav")},
+                          data={"language": "auto"})
+    assert r.status_code == 502
+    d = r.json()
+    assert d["error"] == "no-local" and d["upstream"] == kind, d
+    assert r.headers["X-Reachy-Upstream"] == kind
+    # 본문·머리 어디에도 OpenAI 메시지 글이 없다(키 조각·"quota" 같은 원문). 원인 글은 게이트웨이 로그에만(키는 지워서).
+    wire = r.text + json.dumps(dict(r.headers))
+    for leak in (KEY, KEY_TAIL, "Incorrect API key", "invalid_api_key", "quota", "server had an error"):
+        assert leak not in wire, leak
+    assert KEY not in logs.text and KEY_TAIL not in logs.text
+
+
+@pytest.mark.parametrize("status,kind", [(401, "401"), (403, "4xx"), (429, "429"), (500, "5xx"), (503, "5xx"), (400, "4xx")])
+def test_실패_종류는_상태_코드를_다섯_갈래로_줄인다(status, kind):
+    assert og.upstream_kind(status=status) == kind
+
+
+def test_실패_종류는_예외로도_가른다():
+    assert og.upstream_kind(exc=og.ResponseTimeout("x")) == "timeout"
+    assert og.upstream_kind(exc=TimeoutError("timed out")) == "timeout"
+    assert og.upstream_kind(exc=ConnectionRefusedError(61, "refused")) == "connect"
+    assert og.upstream_kind(exc=socket.gaierror(8, "nodename nor servname")) == "connect"
+    assert og.upstream_kind() == "other"
 
 
 def test_외부_전용으로_띄울_수_없는_설정을_가른다():

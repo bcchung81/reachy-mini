@@ -22,6 +22,7 @@ from stage.cues import (
     QA_ACK_EMOTIONS,
     QA_ACK_LINES,
     QA_ANSWER_EMOTION,
+    QA_REPROMPT_LINES,
     QUESTION_PROMPT_EMOTION,
     QUESTION_PROMPTS,
     SOLO_ACK_EMOTIONS,
@@ -32,6 +33,7 @@ from stage.cues import (
     Point,
     is_advance,
     looks_like_question,
+    needs_reprompt,
     noise_reason,
 )
 from stage.machine import SPEAKING, Command, State, TurnError, TurnMachine, coalesce
@@ -127,6 +129,23 @@ def typical_chars_per_sec(env=None) -> tuple[float, str | None]:
     return TYPICAL_CHARS_PER_SEC["crispasr"], (
         f"TTS_ENGINE={engine!r} 를 모른다 — 반응 시점을 crispasr 말 속도로 어림한다"
         f"({'/'.join(TYPICAL_CHARS_PER_SEC)} 중 하나)")
+
+
+_REPROMPT_OFF = ("0", "off", "no", "false", "끄기")
+_REPROMPT_ON = ("1", "on", "yes", "true", "켜기")
+
+
+def _reprompt_switch(warn, env=None) -> bool:
+    """`REACHY_QA_REPROMPT` — 기본 켜짐(U3 ②, 2026-11-14). 모르는 값은 켜진 채로 경고한다(조용히 넘기지 않는다)."""
+    env = os.environ if env is None else env
+    raw = (env.get("REACHY_QA_REPROMPT") or "").strip().lower()
+    if not raw or raw in _REPROMPT_ON:
+        return True
+    if raw in _REPROMPT_OFF:
+        return False
+    warn(f"REACHY_QA_REPROMPT={raw!r} 를 모른다 — 되묻기를 켠 채로 간다(끄려면 0)")
+    return True
+
 
 # 무대 연출에 필요한 로봇 앱 능력(설계 §12.5). hello 의 `caps` 에 없으면 감독은 그
 # 기능을 보내지 않고 접속 때 한 번 알린다 — 재배포가 반쯤만 된 상태가 로그에 보여야 한다.
@@ -265,6 +284,7 @@ class Director:
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
         courses: dict[str, tuple[str, ...] | None] | None = None,
+        qa_reprompt: bool | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -401,6 +421,14 @@ class Director:
         self._slots: dict[str, dict] = {}
         self._ack_i = 0   # 질문 확인 멘트를 돌아가며 쓰는 커서
         self._q_i = 0     # 재질문(`:reask`) 문장을 돌아가며 쓰는 커서
+        # **되묻기**(2026-11-14, 계획 show-readiness A-5 · U3 ②) — 질문 창의 짧고 질문 같지 않은 말에 도슨트 답 대신 사회자가
+        # 되묻는다(`stage.cues.needs_reprompt`). 스위치 `REACHY_QA_REPROMPT`(기본 켜짐, 0/off 면 예전처럼 무엇이든 답한다).
+        # `stage/__main__.py` 는 E 전에는 고치지 않으므로(계획 §2.2) 감독이 직접 읽는다 — 인자로 주면 그것이 먼저다(테스트).
+        self._qa_reprompt = _reprompt_switch(warn) if qa_reprompt is None else qa_reprompt
+        self._reprompt_i = 0        # 되묻기 문장을 돌아가며 쓰는 커서
+        # 바로 앞 관람객 말을 되물었나 — **연달아 두 번째는 답한다**(관람객이 벽에 대고 말하게 두지 않는다). 답을 하거나
+        # 큐가 바뀌면 지운다(`_answer`·`_begin_cue`).
+        self._reprompted = False
         # 슬롯을 읽고 쓰는 락. "세대 확인 + 결과 반영"을 한 번에 묶어 그 사이에
         # `_spawn_generate` 가 끼어드는 경합을 막는다. 슬롯이 여럿이어도 락은
         # **하나로 둔다** — 쥐는 구간이 딕셔너리 한 칸을 읽고 쓰는 정도라 쪼갤
@@ -672,7 +700,27 @@ class Director:
                 # 관람객이 넘겨 달라고 **말했다** — 마지막 큐라 못 넘기면 알려준다.
                 self._next_locked(quiet_if_last=False)
                 return
+            if self._qa_reprompt and not self._reprompted and needs_reprompt(text):
+                self._reprompt(text)
+                return
             self._answer(text)
+
+    def _reprompt(self, text: str) -> None:
+        """짧고 질문 같지 않은 말 — 도슨트 답 대신 사회자가 질문을 권한다. **`self._lock` 을 쥔 채** 부른다(`on_heard`).
+
+        라벨은 재질문(`<큐>:reask`)·감정은 `QUESTION_PROMPT_EMOTION` 을 **그대로** 쓴다 — 새 라벨이면 `stage/say_label.py`
+        와 화면 넷이 모른다. 그 발화가 끝나면 `on_speaking_ended` 의 마지막 갈래가 침묵 기한을 새로 건다(재질문과 같은 길).
+        경고를 남기는 이유: 판정이 진짜 질문을 놓쳤을 때 운영자·리허설이 로그에서 찾는다(계획 A-5 위험).
+        """
+        cue = self._sheet.current()
+        self._warn(f"질문으로 보지 않고 되묻는다: {text!r} (연달아 한 번 더 말하면 답한다 · 끄기 REACHY_QA_REPROMPT=0)")
+        self._reprompted = True
+        line = QA_REPROMPT_LINES[self._reprompt_i % len(QA_REPROMPT_LINES)]
+        self._reprompt_i += 1
+        # 이력에도 남긴다 — 다음 답 생성이 "관람객이 짧게 반응했고 사회자가 질문을 권했다" 를 본다(재질문과 같은 이유).
+        self._remember(f"관람객: {text}")
+        self._remember(f"사회자: {line}")
+        self._emit(self._speak("mc", f"{cue.id}:reask", line, gaze="audience", emotion=QUESTION_PROMPT_EMOTION))
 
     def on_speaking_started(self, role: str, cue_id: str, seq: int | None) -> None:
         """발화 시작 보고. **데드라인을 여기서 다시 건다.**
@@ -1784,6 +1832,7 @@ class Director:
         # 없어졌다(캐시·사전 생성 스크립트는 함께 지웠다). 사람이 시연 전에 읽어 볼 수
         # 있다는 캐시의 존재 이유는 이제 큐시트 자체가 갖는다.
         mc_text = cue.mc
+        self._reprompted = False      # 새 큐 — 앞 큐의 되묻기를 "연달아" 로 세지 않는다
 
         # **사회자 대사도 이력에 넣는다.** 설계 §5.2 는 이력이 하나이고
         # `사회자:`/`도슨트:`/`관람객:` 접두로 구분한다고 못박는다. 고정 대사도
@@ -2090,6 +2139,7 @@ class Director:
 
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
+        self._reprompted = False      # 답을 했다 — 다음 짧은 말은 다시 되물을 수 있다
         self._remember(f"관람객: {question}")
         # **분량 지시를 여기 박지 않는다.** 분량은 섹션이 아니라 수준의
         # 함수다(설계 §5, Task 3) — 시스템 프롬프트가 `level.min_sentences`

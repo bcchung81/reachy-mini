@@ -198,6 +198,8 @@ def test_오디션_후보는_키가_겹치지_않고_ID가_있다():
 sys.path.insert(0, str(ROOT / "apps/voice_chat/voice_chat"))
 import io  # noqa: E402
 import logging  # noqa: E402
+import socket  # noqa: E402
+import time  # noqa: E402
 import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
 import wave  # noqa: E402
@@ -211,9 +213,12 @@ EL_PCM = bytes(range(256)) * 30          # 7680 바이트 — 홀수 청크로 �
 
 
 class _FakeEL(BaseHTTPRequestHandler):
-    """ElevenLabs 스트리밍 흉내 — 청크 audio/pcm. fail 이면 500."""
+    """ElevenLabs 스트리밍 흉내 — 청크 audio/pcm. fail 이면 `fail_status`(기본 500), hang 이면 그 초만큼 머리 전에 멈춘다."""
     protocol_version = "HTTP/1.1"
     fail = False
+    fail_status = 500
+    hang = 0.0
+    body_hang = 0.0          # 머리·첫 조각을 보낸 뒤 본문 도중에 멈춘다(본문 읽기 시간 초과)
     calls: list = []
 
     def log_message(self, *a):
@@ -223,9 +228,23 @@ class _FakeEL(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         _FakeEL.calls.append({"path": self.path, "key": self.headers.get("xi-api-key"),
                               "body": json.loads(self.rfile.read(n))})
+        if _FakeEL.hang:
+            time.sleep(_FakeEL.hang)
+            self.close_connection = True
+            return
+        if _FakeEL.body_hang:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/pcm")
+            self.send_header("Content-Length", str(len(EL_PCM)))
+            self.end_headers()
+            self.wfile.write(EL_PCM[:100])
+            self.wfile.flush()
+            time.sleep(_FakeEL.body_hang)
+            self.close_connection = True
+            return
         if _FakeEL.fail:
             data = _err("upstream boom")
-            self.send_response(500)
+            self.send_response(_FakeEL.fail_status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -275,15 +294,17 @@ def _up(handler):
 
 @pytest.fixture
 def el_stack(tmp_path):
-    _FakeEL.fail, _FakeEL.calls, _Local.calls = False, [], []
+    _FakeEL.fail, _FakeEL.fail_status, _FakeEL.hang, _FakeEL.calls, _Local.calls = False, 500, 0.0, [], []
+    _FakeEL.body_hang = 0.0
     fake_el, local = _up(_FakeEL), _up(_Local)
     cdir = tmp_path / "cache-elevenlabs"
     cdir.mkdir()
     made = []
 
-    def make(on_fail="notice", local_up=True, no_local=False):
+    def make(on_fail="notice", local_up=True, no_local=False, base=None, open_timeout_s=15.0):
         live = ElevenLabsLive(key=SECRET, voices={"serena": "MCVOICE", "sohee": "DOCVOICE"},
-                              on_fail=on_fail, base=f"http://127.0.0.1:{fake_el.server_port}")
+                              on_fail=on_fail, base=base or f"http://127.0.0.1:{fake_el.server_port}",
+                              open_timeout_s=open_timeout_s)
         upstream = f"http://127.0.0.1:{local.server_port}" if local_up else "http://127.0.0.1:9"
         if no_local:
             upstream = None                                    # 외부 전용 — 로컬 CrispASR 없음(--no-local)
@@ -547,6 +568,44 @@ def test_외부_전용_wav_요청이_실패하면_502_와_경고(el_stack, monke
     assert code == 502 and json.loads(data)["error"] == "elevenlabs-failed"
     assert "ElevenLabs 로 못 만들었다" in caplog.text and SECRET not in caplog.text
     assert _Local.calls == []
+
+
+@pytest.mark.parametrize("how,kind", [
+    (401, "401"), (429, "429"), (500, "5xx"), ("dead", "connect"), ("hang", "timeout"),
+], ids=["401", "429", "500", "연결_거부", "시간_초과"])
+def test_외부_전용_wav_실패는_실패_종류를_싣는다(el_stack, caplog, how, kind):
+    """예열(`scripts/warmup.py` 의 TTS 단계)이 이 wav 요청을 쓴다 — 502 에 실패 **종류**를 실어 예열이 "키 / 한도 / 인터넷" 을
+    가르게 한다(게이트웨이 `upstream` 과 같은 이름·같은 갈래). 로봇은 502 본문을 읽지 않는다(기동 확인이 "응답 없음" 으로 본다)."""
+    if how == "dead":
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        url = el_stack["make"](no_local=True, base=f"http://127.0.0.1:{port}")
+    elif how == "hang":
+        _FakeEL.hang = 1.0
+        url = el_stack["make"](no_local=True, open_timeout_s=0.3)
+    else:
+        _FakeEL.fail, _FakeEL.fail_status = True, how
+        url = el_stack["make"](no_local=True)
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        code, h, data = _post(url, WAV_BODY)
+    d = json.loads(data)
+    assert code == 502 and d["error"] == "elevenlabs-failed" and d["upstream"] == kind, d
+    assert h["X-Reachy-Upstream"] == kind
+    assert SECRET not in data.decode() + json.dumps(h) + caplog.text
+    assert _Local.calls == []
+
+
+def test_외부_전용_wav_본문이_도중에_끊겨도_502_로_답한다(el_stack, caplog):
+    """`tts_elevenlabs.synth` 는 머리를 받은 뒤 본문을 읽다 난 시간 초과를 감싸지 않는다(ElevenLabsError 가 아니다).
+    예전에는 그 예외가 처리기를 죽여 **502 도 없이** 연결이 끊겼고, 예열은 원인 없는 실패만 봤다(2026-11-14 A-1 에서 찾음)."""
+    _FakeEL.body_hang = 1.5
+    url = el_stack["make"](no_local=True, open_timeout_s=0.3)
+    with caplog.at_level(logging.WARNING, logger="tts-proxy"):
+        code, h, data = _post(url, WAV_BODY)
+    assert code == 502 and json.loads(data)["upstream"] == "timeout", data
+    assert h["X-Reachy-Upstream"] == "timeout" and "ElevenLabs 로 못 만들었다(timeout)" in caplog.text
 
 
 def test_외부_전용_다른_경로는_로컬로_넘기지_않고_502(el_stack, caplog):

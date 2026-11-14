@@ -189,6 +189,31 @@ class Stats:
 SILENCE_S = 0.15
 
 
+def upstream_kind(exc: BaseException) -> str:
+    """외부 전용 wav 502 에 싣는 실패 **종류** — `openai_gateway.upstream_kind` 와 같은 이름·같은 갈래다(예열이 두 서버의
+    502 를 한 표로 읽는다, 계획 2026-11-14 A-1). 종류만 싣고 키는 어디에도 싣지 않는다.
+
+    `ElevenLabsError.status == 0` 은 연결 실패와 시간 초과를 같이 담는다(`tts_elevenlabs.open_stream`) — 메시지의
+    "timed out" 으로 가른다. 401 은 키 문제지만 ElevenLabs 는 크레딧이 바닥나도 401 을 줄 수 있어(실측 안 함) 예열은
+    401 줄에 크레딧 줄을 같이 보라고 쓴다."""
+    status = getattr(exc, "status", None) if isinstance(exc, el.ElevenLabsError) else None
+    if status is not None and status != 0:
+        if status in (401, 429):
+            return str(status)
+        if 500 <= status < 600:
+            return "5xx"
+        if 400 <= status < 500:
+            return "4xx"
+        return "other"
+    if status == 0:
+        return "timeout" if "timed out" in str(exc).lower() or "timeout" in str(exc).lower() else "connect"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, OSError):
+        return "connect"
+    return "other"                      # 목소리 매핑 없음(VoiceNotMapped) 등 — 설정 문제, 예열은 로그 경로를 가리킨다
+
+
 @dataclasses.dataclass
 class ElevenLabsLive:
     """캐시에 없는 문장(관람객 답)을 ElevenLabs 로 — 프록시의 실시간 경로 설정."""
@@ -230,12 +255,14 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     # ── 공용 ──────────────────────────────────────────────────────
-    def _send_json(self, status: int, obj: dict) -> None:
+    def _send_json(self, status: int, obj: dict, extra: dict | None = None) -> None:
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Connection", "close")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(data)
         self.close_connection = True
@@ -455,10 +482,14 @@ class Handler(BaseHTTPRequestHandler):
             vid, payload = el.el_request(body, voices=cfg.voices, model=cfg.model, readings=cfg.readings,
                                          language_code=cfg.language_code)
             pcm = el.synth(vid, payload, cfg.key, timeout=cfg.open_timeout_s, base=cfg.base, retries=1)
-        except (el.VoiceNotMapped, el.ElevenLabsError) as exc:
+        except (el.VoiceNotMapped, el.ElevenLabsError, OSError, http.client.HTTPException) as exc:
+            # OSError·HTTPException: `synth` 는 머리를 받은 뒤 본문을 읽다 끊긴 것(시간 초과 포함)을 감싸지 않는다 —
+            # 안 잡으면 처리기가 죽어 502 도 없이 연결이 끊기고, 예열은 원인 없는 "건너뜀" 만 찍는다.
+            kind = upstream_kind(exc)
             self.server.stats.add("el_fail")
-            log.warning("wav 요청(로봇 기동 확인·예열)을 ElevenLabs 로 못 만들었다 — 502: %s", exc)
-            self._send_json(502, {"error": "elevenlabs-failed", "detail": str(exc)})
+            log.warning("wav 요청(로봇 기동 확인·예열)을 ElevenLabs 로 못 만들었다(%s) — 502: %s", kind, exc)
+            self._send_json(502, {"error": "elevenlabs-failed", "upstream": kind, "detail": str(exc)},
+                            {"X-Reachy-Upstream": kind})
             return
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:

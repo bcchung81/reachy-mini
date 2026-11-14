@@ -44,6 +44,8 @@ ask() {  # ask "질문" "기본값" → ANSWER. 입력이 끝나면(파이프가
 }
 
 has_key() {  # 환경변수나 .env 에 **있는지만**
+  # 키가 **맞는지**(만료·잔액·인터넷)는 여기서 보지 않는다 — 기동의 예열이 실제 요청으로 점검해 빨간 줄로 알린다
+  # (`scripts/warmup.py`·`reachy.sh::robot_warmup`, 계획 2026-11-14 A-1). 여기서 외부를 부르면 메뉴가 망을 탄다.
   local k="$1"
   [ -n "${!k:-}" ] && return 0
   grep -Eq "^(export[[:space:]]+)?${k}=.+" "$ENV_FILE" 2>/dev/null

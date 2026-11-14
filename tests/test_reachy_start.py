@@ -237,7 +237,9 @@ rssh() {
 def _source(script, tmp_path, env_extra=None):
     env = {k: v for k, v in os.environ.items() if k not in _SOURCE_ENV}
     env.update({"CALLS": str(tmp_path / "calls.txt"), "WROTE": str(tmp_path / "wrote"),
-                "REACHY_PY": sys.executable})
+                "REACHY_PY": sys.executable,
+                # 감독 앞의 화면 잠자기 방지(A-3)는 진짜 `caffeinate` 를 띄운다 — 그것을 보는 테스트만 켠다.
+                "REACHY_KEEP_AWAKE": "0"})
     env.update(env_extra or {})
     # 로그 경로는 source 할 때 LOG_DIR 에서 한 번 만들어진다 — 파생 경로까지 다시 잡지 않으면
     # 테스트가 저장소의 진짜 .demo-logs 에 쓴다.
@@ -976,3 +978,264 @@ robot_start_app; echo "rc=$?"
     assert "ssh 10.9.8.22 sudo -n systemctl restart reachy-mini-daemon" in calls
     restart = calls.index("ssh 10.9.8.22 sudo -n systemctl restart reachy-mini-daemon")
     assert calls[restart + 1:] == ["wake", "post 10.9.8.22 /api/apps/start-app/voice_chat"]
+
+
+# ── 외부 API 사전 점검(2026-11-14, 계획 show-readiness A-1) ────────────────────
+# 예열(`scripts/warmup.py`)이 점검 결과를 `REACHY_PREFLIGHT_OUT` 파일(`등급\t글`)로 남기면, `robot_warmup` 이 그것을
+# 빨간(FAIL)·호박(WARN) 묶음으로 다시 보이고, 감독 콘솔이 올라오기 직전에 한 번 더, 감독 로그 머리에도 남긴다 —
+# 로봇 기동 출력이 길어 예열 줄이 화면 위로 밀린다. 예열 자체는 가짜 파이썬이 대신한다(외부 API 0).
+_PREFLIGHT_PY = (
+    '#!/bin/sh\n'
+    'case "$*" in\n'
+    '  *warmup.py*)\n'
+    '    echo "warmup OUT=${REACHY_PREFLIGHT_OUT-}" >> "$CALLS"\n'
+    '    [ -n "${FAKE_PREFLIGHT-}" ] && printf "%b" "$FAKE_PREFLIGHT" > "$REACHY_PREFLIGHT_OUT"\n'
+    '    exit "${FAKE_RC:-0}" ;;\n'
+    '  *) echo "감독 출력 줄 $1 $2"; exit 0 ;;\n'
+    'esac\n'
+)
+
+
+def _preflight_py(tmp_path):
+    p = tmp_path / "pf-py"
+    p.write_text(_PREFLIGHT_PY)
+    p.chmod(0o755)
+    return str(p)
+
+
+_PF_BAD = ("bad\\tLLM(OpenAI) 점검 실패 — OpenAI 키가 틀렸거나 만료(401): .env 의 OPENAI_API_KEY 를 확인한다\\n"
+           "warn\\tElevenLabs 크레딧 9,000 남음 — 10,000 아래\\n")
+
+
+def test_외부_전용_예열이_실패하면_빨간_묶음으로_다시_보이고_감독_로그_머리에_남긴다(tmp_path):
+    r = _source(r'''
+start_open_dashboard() { :; }
+TTS_BACKEND=qwen
+tts_cache_status() { :; }
+robot_warmup; echo "rc=$?"
+echo "--- 감독 ---"
+start_director 127.0.0.1 9777 http://127.0.0.1:9778/ target=sim
+''', tmp_path, env_extra={"REACHY_PY": _preflight_py(tmp_path), "FAKE_PREFLIGHT": _PF_BAD, "FAKE_RC": "1",
+                          "REACHY_LOCAL_MODELS": "off"})
+    assert "rc=0" in r.stdout, r.stdout + r.stderr                 # U1 ① — 알리고 계속 간다
+    assert _calls(tmp_path)[0] == f"warmup OUT={tmp_path}/preflight.txt"
+    before, after = r.stdout.split("--- 감독 ---")
+    for part in (before, after):                                   # 예열 직후, 그리고 감독 콘솔 직전에 한 번 더
+        assert "FAIL\x1b[0m LLM(OpenAI) 점검 실패" in part and "OPENAI_API_KEY" in part, part
+        assert "WARN\x1b[0m ElevenLabs 크레딧 9,000 남음" in part, part
+    assert "대본 공연은 구운 캐시로 계속" in before
+    log = (tmp_path / "start-director.log").read_text()
+    head = log.split("════════ 세션 시작")[1]
+    assert "사전 점검 실패: LLM(OpenAI) 점검 실패" in head and "사전 점검 경고: ElevenLabs 크레딧" in head
+    assert head.index("사전 점검 실패") < head.index("감독 출력 줄")
+
+
+def test_점검이_깨끗하면_묶음도_로그_줄도_없다(tmp_path):
+    r = _source(r'''
+start_open_dashboard() { :; }
+TTS_BACKEND=qwen
+tts_cache_status() { :; }
+echo "bad	지난 실행의 줄" > "$LOG_DIR/preflight.txt"
+robot_warmup; echo "rc=$?"
+start_director 127.0.0.1 9777 http://127.0.0.1:9778/ target=sim
+''', tmp_path, env_extra={"REACHY_PY": _preflight_py(tmp_path), "REACHY_LOCAL_MODELS": "off"})
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert "FAIL" not in r.stdout and "사전 점검" not in r.stdout
+    assert "사전 점검" not in (tmp_path / "start-director.log").read_text()    # 지난 실행의 줄을 이번 것처럼 안 보인다
+
+
+def test_사전_점검_stop_이면_실패에서_멈춘다(tmp_path):
+    """U1 은 ①(알리고 계속)으로 정해졌다 — ②(멈춤)는 스위치로만(`REACHY_PREFLIGHT=stop`)."""
+    r = _source(r'''
+TTS_BACKEND=qwen
+tts_cache_status() { :; }
+robot_warmup; echo "rc=$?"
+''', tmp_path, env_extra={"REACHY_PY": _preflight_py(tmp_path), "FAKE_PREFLIGHT": _PF_BAD, "FAKE_RC": "1",
+                          "REACHY_LOCAL_MODELS": "off", "REACHY_PREFLIGHT": "stop"})
+    assert r.returncode == 1 and "rc=" not in r.stdout, r.stdout + r.stderr
+    assert "REACHY_PREFLIGHT=stop" in r.stdout and "멈춘다" in r.stdout
+    # 경고(호박)만 있으면 stop 이어도 멈추지 않는다 — 실패(빨강)가 있을 때만.
+    r = _source(r'''
+TTS_BACKEND=qwen
+tts_cache_status() { :; }
+robot_warmup; echo "rc=$?"
+''', tmp_path, env_extra={"REACHY_PY": _preflight_py(tmp_path), "FAKE_PREFLIGHT": "warn\\t크레딧 9,000\\n",
+                          "REACHY_LOCAL_MODELS": "off", "REACHY_PREFLIGHT": "stop"})
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+
+
+# ── 공연 동안 화면 잠자기 막기(2026-11-14, 계획 show-readiness A-3) ─────────────────
+# 맥은 `pmset displaysleep 10` — 다른 프로그램이 우연히 막고 있었을 뿐이다(조율자 실측). 조정실·프로젝터 화면이 공연 중에
+# 꺼지면 안 된다. `caffeinate -w $$` 는 reachy.sh 가 끝나면 저절로 풀린다(감독이 끝나면 스크립트도 끝난다).
+def _fake_caffeinate(tmp_path):
+    bindir = tmp_path / "cafbin"
+    bindir.mkdir(exist_ok=True)
+    f = bindir / "caffeinate"
+    f.write_text('#!/bin/sh\necho "caffeinate $*" >> "$CALLS"\nexec /bin/sleep 30\n')
+    f.chmod(0o755)
+    return {"PATH": f"{bindir}:{os.environ['PATH']}"}
+
+
+def test_공연_동안_화면_잠자기를_막는다(tmp_path):
+    r = _source(r'''
+keep_awake
+pid="$KEEP_AWAKE_PID"
+# 고정 시간으로 기다리지 않는다 — 전체 묶음과 함께 돌 때 가짜 caffeinate 가 늦게 떠 한 번 빨개졌다. 최대 3초 폴링.
+for i in $(seq 1 30); do [ -s "$CALLS" ] && break; /bin/sleep 0.1; done
+echo "self=$$ pid=$pid alive=$(kill -0 "$pid" 2>/dev/null && echo 1 || echo 0)"
+start_cleanup
+for i in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; /bin/sleep 0.1; done
+echo "after=$(kill -0 "$pid" 2>/dev/null && echo 1 || echo 0)"
+''', tmp_path, env_extra={**_fake_caffeinate(tmp_path), "REACHY_KEEP_AWAKE": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    self_pid = r.stdout.split("self=")[1].split()[0]
+    assert _calls(tmp_path) == [f"caffeinate -dis -w {self_pid}"]       # 이 실행(reachy.sh)이 끝나면 풀린다
+    assert "alive=1" in r.stdout and "after=0" in r.stdout              # 정리가 한 번 더 내린다(-w 가 있어도)
+    assert "잠자기를 막는다" in r.stdout
+
+
+def test_caffeinate_가_없으면_경고만_하고_띄운다(tmp_path):
+    """리눅스 PC 등 — macOS 전용 명령은 사다리 안에만 둔다(CLAUDE.md). 없으면 소리 내서 알리고 계속."""
+    r = _source(r'''
+PATH=/var/empty keep_awake; echo "rc=$? pid=[$KEEP_AWAKE_PID]"
+''', tmp_path, env_extra={"REACHY_KEEP_AWAKE": "1"})
+    assert "rc=0 pid=[]" in r.stdout, r.stdout + r.stderr
+    assert "WARN" in r.stdout and "화면 잠자기를 못 막았다" in r.stdout
+
+
+def test_잠자기_방지는_스위치로_끈다(tmp_path):
+    r = _source(r'''
+keep_awake; echo "rc=$? pid=[$KEEP_AWAKE_PID]"
+''', tmp_path, env_extra={**_fake_caffeinate(tmp_path), "REACHY_KEEP_AWAKE": "0"})
+    assert "rc=0 pid=[]" in r.stdout, r.stdout + r.stderr
+    assert _calls(tmp_path) == [] and "REACHY_KEEP_AWAKE=0" in r.stdout
+
+
+def test_잠자기_방지는_감독_바로_앞에서_건다(tmp_path):
+    """시뮬·실기 둘 다 — 감독 콘솔이 공연 내내 이 터미널을 차지하는 동안 걸려 있어야 한다."""
+    r = _source(_FAKE_ROBOT + r'''
+start_ports_free()     { :; }
+start_llm_stt()        { :; }
+start_tts()            { :; }
+up()                   { return 0; }
+lan_ip()               { echo 10.9.8.10; }
+robot_warmup()         { :; }
+keep_awake()           { echo "keep_awake" >> "$CALLS"; }
+start_director()       { echo "director" >> "$CALLS"; }
+start_robot 0.0.0.0 9777 9778 http://127.0.0.1:9778/ 10.9.8.21 10.9.8.22
+''', tmp_path)
+    calls = [c for c in _calls(tmp_path) if c in ("keep_awake", "director")]
+    assert calls == ["keep_awake", "director"], r.stdout + r.stderr
+    (tmp_path / "calls.txt").unlink()
+    r = _source(r'''
+start_ports_free()  { :; }
+start_infer()       { :; }
+robot_warmup()      { :; }
+start_sim_daemon()  { :; }
+start_sim_app()     { :; }
+keep_awake()        { echo "keep_awake" >> "$CALLS"; }
+start_director()    { echo "director" >> "$CALLS"; }
+TTS_BACKEND=qwen
+start_sim 9777 9778 http://127.0.0.1:9778/
+''', tmp_path, env_extra={"REACHY_DOCENT_AUDIO_OUT": "x"})
+    assert _calls(tmp_path) == ["keep_awake", "director"], r.stdout + r.stderr
+
+
+# ── 로봇 주소가 안 잡힐 때 이름으로 찾아 알리기만(2026-11-14, 계획 show-readiness A-6 · U4 ①) ──────────────
+# 두 로봇의 hostname 이 같아 mDNS 가 둘째에 `-2` 를 붙인다 — 켠 순서로 바뀔 수 있어 **이름으로 배역을 정하지 않는다.**
+# 배역은 그 로봇 config 의 REACHY_ROLE(`robot_sync_config` 가 쓴 값 — 로봇 디스크에 있어 로봇을 따라간다)로 확인하고,
+# 찾은 주소는 **알리기만** 한다(자동으로 쓰면 사회자·도슨트가 뒤바뀔 수 있다). 안내는 항상 두 주소를 다 든 한 줄(§15.14).
+_FIND_FAKES = _FAKE_ROBOT + r'''
+robot_reachable() {
+  [ "$ROBOT_HOST" = 10.9.8.22 ] || { echo "unreachable $ROBOT_HOST" >> "$CALLS"; return 1; }
+  echo "reach $ROBOT_HOST" >> "$CALLS"
+}
+rpost() {
+  echo "post $ROBOT_HOST $1" >> "$CALLS"
+  [ "$ROBOT_HOST" = 10.9.8.22 ] || return 7
+  case "$1" in
+    /api/apps/start-app/*) echo '{"info":{"name":"voice_chat"},"state":"starting","error":null}' ;;
+  esac
+}
+robot_resolve() {
+  echo "resolve $1" >> "$CALLS"
+  case "$1" in
+    reachy-mini.local)   echo 10.9.8.22 ;;
+    reachy-mini-2.local) echo 10.9.8.37 ;;
+  esac
+}
+robot_api_up()  { echo "api $1" >> "$CALLS"; return 0; }
+robot_role_at() { echo "role? $1" >> "$CALLS"; case "$1" in 10.9.8.37) echo "${FOUND_ROLE-mc}" ;; 10.9.8.22) echo docent ;; esac; }
+start_ports_free() { :; }
+start_llm_stt()    { :; }
+start_tts()        { :; }
+up()               { return 0; }
+lan_ip()           { echo 10.9.8.10; }
+robot_warmup()     { :; }
+start_director()   { echo "director $*" >> "$CALLS"; }
+start_robot 0.0.0.0 9777 9778 http://127.0.0.1:9778/ 10.9.8.21 10.9.8.22
+'''
+
+
+def test_배역_주소가_안_잡히면_이름으로_찾아_새_주소를_알린다(tmp_path):
+    r = _source(_FIND_FAKES, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = r.stdout
+    assert "사회자 로봇이 10.9.8.21 에 없다 — 10.9.8.37(reachy-mini-2.local)에서 찾았다(config 배역 mc)" in out, out
+    # 안내는 두 주소를 다 든 한 줄 — 주소 없는 합류 명령은 기본 주소의 config 를 덮어쓴다(§15.14)
+    assert "REACHY_MC_HOST=10.9.8.37 REACHY_DOCENT_HOST=10.9.8.22 ./reachy.sh start --robot" in out
+    assert "10.9.8.22(reachy-mini.local) 는 config 배역 docent — 사회자가 아니다" in out
+    calls = _calls(tmp_path)
+    assert "resolve reachy-mini.local" in calls and "resolve reachy-mini-2.local" in calls
+    # 응답하는 주소만 배역을 묻는다
+    assert calls.index("api 10.9.8.37") < calls.index("role? 10.9.8.37")
+
+
+def test_찾은_주소를_자동으로_쓰지_않는다(tmp_path):
+    r = _source(_FIND_FAKES, tmp_path)
+    calls = _calls(tmp_path)
+    # 감독·정리는 원래 배역 주소 그대로 — 찾은 10.9.8.37 에는 아무것도 보내지 않는다
+    assert "director 0.0.0.0 9777 http://127.0.0.1:9778/ target=robot mc=10.9.8.21 docent=10.9.8.22" in calls, calls
+    assert not any(c.startswith(("post 10.9.8.37", "get 10.9.8.37", "ssh 10.9.8.37", "reach 10.9.8.37")) for c in calls)
+    assert "사회자 로봇(10.9.8.21)을 건너뛴다" in r.stdout                 # 건너뛰기·1인 모드 안내는 그대로
+
+
+def test_배역을_확인_못_하면_추측하지_않는다(tmp_path):
+    """config 를 못 읽으면(새 주소라 ssh 호스트 키가 없을 수 있다) `-2` 라는 이름만 보고 사회자라고 하지 않는다."""
+    r = _source(_FIND_FAKES, tmp_path, env_extra={"FOUND_ROLE": ""})
+    out = r.stdout
+    assert "10.9.8.37(reachy-mini-2.local)에 로봇이 있다 — 배역 미확인" in out, out
+    assert "이름으로 추측하지 않는다" in out
+    assert "REACHY_MC_HOST=10.9.8.37" not in out
+
+
+def test_이름으로도_못_찾으면_그렇게_말한다(tmp_path):
+    r = _source(_FIND_FAKES.replace('    reachy-mini.local)   echo 10.9.8.22 ;;\n    reachy-mini-2.local) echo 10.9.8.37 ;;\n', ''),
+                tmp_path)
+    assert "이름(reachy-mini.local · reachy-mini-2.local)으로도 못 찾았다" in r.stdout, r.stdout
+    assert "DHCP" in r.stdout
+
+
+def test_닿기는_하는데_다른_이유로_못_올리면_찾지_않는다(tmp_path):
+    """주소 찾기는 '안 잡힌다' 일 때만 — 백엔드·앱 실패에 엉뚱한 주소 안내를 덧붙이지 않는다."""
+    script = _FIND_FAKES.replace(
+        'robot_reachable() {\n  [ "$ROBOT_HOST" = 10.9.8.22 ] || { echo "unreachable $ROBOT_HOST" >> "$CALLS"; return 1; }',
+        'robot_backend_ready() { [ "$ROBOT_HOST" = 10.9.8.22 ]; }\nrobot_reachable() {\n  true')
+    r = _source(script, tmp_path)
+    assert "사회자 로봇(10.9.8.21)을 건너뛴다" in r.stdout, r.stdout + r.stderr
+    assert not any(c.startswith("resolve ") for c in _calls(tmp_path))
+
+
+def test_이름_풀기는_플랫폼_중립이고_시간_상한이_있다(tmp_path):
+    """mDNS 이름 풀기는 파이썬 `socket.getaddrinfo` 를 2초 상한 스레드로 — `dns-sd`(맥 전용)·`avahi-resolve`(리눅스)를 박지 않는다."""
+    import time as _t
+    t0 = _t.monotonic()
+    r = _source(r'''
+robot_resolve localhost; echo "rc=$?"
+robot_resolve no-such-host.invalid; echo "rc2=$?"
+''', tmp_path)
+    assert "127.0.0.1" in r.stdout and "rc=0" in r.stdout and "rc2=0" in r.stdout, r.stdout + r.stderr
+    assert _t.monotonic() - t0 < 8
+    src = (ROOT / "reachy.sh").read_text(encoding="utf-8")
+    body = src.split("robot_resolve() {", 1)[1].split("\n}\n", 1)[0]
+    assert "getaddrinfo" in body and "join(2" in body and "dns-sd" not in body

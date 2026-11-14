@@ -80,8 +80,116 @@ def test_고정_대사는_큐시트와_감독_고정_멘트를_모두_덮는다(
             assert all(a in texts for a in t.answers.values())
     assert set(QA_ACK_LINES) <= texts and set(QUESTION_PROMPTS) <= texts
     assert set(SOLO_ACK_LINES) <= texts            # 단독 확인 멘트(2026-09-25)도 캐시 적중이어야 지연이 없다
-    assert all(l.level for l in lines if l.role == "docent")
-    assert all(l.level is None for l in lines if l.role == "mc")
+    # 사과문(2026-11-14 A-2) — 인터넷이 끊기면 LLM 실패 → 사과문 → 캐시 빗나감 → ElevenLabs 실패 → 안내 한 번 뒤 무음.
+    # 구워 두어야 두 번째 질문부터도 사과문이 들린다.
+    from stage.director import QA_FALLBACK, SOLO_FALLBACK
+    assert {QA_FALLBACK, SOLO_FALLBACK} <= texts
+    from stage.cues import QA_REPROMPT_LINES
+    assert set(QA_REPROMPT_LINES) <= texts         # 되묻기(2026-11-14 A-5)도 캐시 적중이어야 인터넷이 끊겨도 들린다
+    # 큐시트의 도슨트 설명은 수준별이다. 사과문은 도슨트가 말해도 수준 공통이라 수준이 없다(None — 수준을 골라 구워도 들어간다).
+    cue_docent = [l for l in lines if l.role == "docent" and l.text != QA_FALLBACK]
+    assert cue_docent and all(l.level for l in cue_docent)
+    assert all(l.level is None for l in lines if l.role == "mc" or l.text == QA_FALLBACK)
+
+
+# ── 감독이 LLM 없이 말하는 고정 문장 전수(2026-11-14 A-2) ─────────────────────────
+# 상수 목록을 손으로 맞추면 다음에 생기는 고정 대사를 또 빠뜨린다(사과문 둘이 그렇게 빠졌다). 그래서 **감독을 실제
+# 큐시트로 돌리고 생성은 일부러 실패시켜** 감독이 내보내는 say 를 전부 모은다 — 생성물이 하나도 없으니 모인 것은 전부
+# 고정 문장이다. 그 say 의 (역할, 문장, 감정)으로 만든 TTS 요청의 캐시 키가 굽기 계획에 있어야 한다 — 감정·역할이
+# 감독과 다르면 같은 문장이라도 키가 빗나간다(계획 A-2 의 걱정).
+def _director_fixed_says():
+    import threading
+    import time as _time
+
+    from stage.cues import CueSheet, load_cues
+    from stage.director import Director
+
+    def boom(role, brief, history):
+        raise RuntimeError("인터넷이 끊겼다(가짜)")
+
+    sent, done, lock = [], set(), threading.Lock()
+
+    def send(role, cmd):
+        with lock:
+            sent.append((role, cmd.type, dict(cmd.fields)))
+
+    t = [0.0]
+    d = Director(CueSheet(load_cues()), generate=boom, send=send, now=lambda: t[0], warn=lambda m: None,
+                 level_name="일반")
+    for role in ("mc", "docent"):                  # 두 대가 다 붙은 공연(1인 모드는 남은 로봇 목소리라 굽지 않는다)
+        d.on_connect(role)
+        d.on_hello(role, None, "1.9.0", caps=["emotion", "react", "gaze"])
+
+    def says():
+        with lock:
+            return [(r, f) for r, ty, f in sent if ty == "say"]
+
+    def pump():
+        """보낸 say 를 차례로 '말이 끝났다' 고 되돌려 준다 — 새 say 가 안 나올 때까지(관람객 차례에서 멈춘다)."""
+        for _ in range(400):
+            todo = [(r, f) for r, f in says() if f["seq"] not in done]
+            if not todo:
+                return
+            r, f = todo[0]
+            done.add(f["seq"])
+            d.on_speaking_ended(r, f["cue_id"], f["seq"])
+        raise AssertionError("감독이 끝없이 말한다")
+
+    def settle(n_before):
+        """단독의 가벼운 말은 답을 스레드에서 낸다 — 새 say 가 올 때까지 잠깐 기다린다."""
+        for _ in range(200):
+            if len(says()) > n_before:
+                return
+            _time.sleep(0.01)
+
+    d.start()
+    pump()                                          # 첫 큐 오프닝 → 해설 → 받아치기 → 관람객 차례
+    d.on_heard("마르코니가 누구예요?")               # 질문 → 확인 멘트 → (생성 실패) 사과문 → 재질문
+    pump()
+    for _ in range(3):                              # 확인 멘트·재질문은 돌아가며 쓴다 — 한 바퀴 다 본다
+        d.on_heard("전파는 어떻게 가요?")
+        pump()
+    # 되묻기(2026-11-14 A-5) — 짧은 추임새 → 되묻기, 연달아 두 번째는 답(사과문), 다시 짧은 말 → 둘째 되묻기 문장
+    for said in ("와 신기하다", "우와", "멋지다"):
+        d.on_heard(said)
+        pump()
+    d.set_mode("solo")
+    for q in ("마르코니가 누구예요?", "전파가 뭐예요?", "왜 그래요?"):   # 단독 — 확인 멘트 → 사과문
+        d.on_heard(q)
+        pump()
+    n = len(says())
+    d.on_heard("감사합니다")                        # 단독의 가벼운 말 — 확인 멘트 없이 사과문
+    settle(n)
+    pump()
+    return [(r, f["text"], f.get("emotion", "")) for r, f in says()]
+
+
+def test_감독이_LLM_없이_말하는_고정_문장은_전부_굽기_목록에_있다():
+    from stage.director import QA_FALLBACK, SOLO_FALLBACK
+
+    from stage.cues import QA_REPROMPT_LINES
+
+    said = _director_fixed_says()
+    texts = {t for _, t, _ in said}
+    # 시나리오가 사과문 두 갈래·되묻기 두 문장을 실제로 지났는지 먼저 본다 — 안 지났으면 아래 대조는 헛통과다.
+    assert QA_FALLBACK in texts and SOLO_FALLBACK in texts, texts
+    assert set(QA_REPROMPT_LINES) <= texts, texts
+    planned = {e["key"] for e in bake.plan(bake.fixed_lines())}
+    missing = []
+    for role, text, emotion in sorted(set(said)):
+        for sentence, body in bake.bodies_for(bake.Line(role, text, "감독", None, emotion)):
+            if cache_key(body) not in planned:
+                missing.append((role, emotion, sentence))
+    assert missing == [], f"굽기 목록에 없는(또는 역할·감정이 다른) 감독 대사: {missing}"
+
+
+def test_사과문은_감독이_보내는_역할과_감정으로_굽는다():
+    from stage.cues import QA_ANSWER_EMOTION
+    from stage.director import QA_FALLBACK, SOLO_FALLBACK
+
+    by_text = {l.text: l for l in bake.fixed_lines()}
+    assert (by_text[QA_FALLBACK].role, by_text[QA_FALLBACK].emotion) == ("docent", QA_ANSWER_EMOTION)
+    assert (by_text[SOLO_FALLBACK].role, by_text[SOLO_FALLBACK].emotion) == ("mc", QA_ANSWER_EMOTION)
 
 
 def test_같은_문장은_한_번만_굽고_쓰이는_곳을_모은다():

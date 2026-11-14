@@ -48,12 +48,15 @@ import tts as robot_tts  # noqa: E402
 from stage.cues import (  # noqa: E402
     QA_ACK_EMOTIONS,
     QA_ACK_LINES,
+    QA_ANSWER_EMOTION,
+    QA_REPROMPT_LINES,
     QUESTION_PROMPT_EMOTION,
     QUESTION_PROMPTS,
     SOLO_ACK_EMOTIONS,
     SOLO_ACK_LINES,
     load_cues,
 )
+from stage.director import QA_FALLBACK, SOLO_FALLBACK  # noqa: E402
 import tts_elevenlabs as el  # noqa: E402
 from tts_cache_proxy import INDEX_NAME, cache_key, default_cache_dir, is_cacheable  # noqa: E402
 
@@ -96,9 +99,20 @@ def fixed_lines(cues=None) -> list[Line]:
         out.append(Line("mc", text, "질문 확인 멘트", None, emo))
     for text in QUESTION_PROMPTS:
         out.append(Line("mc", text, "재질문", None, QUESTION_PROMPT_EMOTION))
+    # 되묻기(2026-11-14, 계획 show-readiness A-5) — 질문 창의 짧은 추임새에 사회자가 질문을 권한다. 감독은 재질문과 같은
+    # 라벨·감정(`QUESTION_PROMPT_EMOTION`)으로 보낸다(`Director._reprompt`). 둘째 문장은 재질문과 같아 캐시를 같이 쓴다.
+    for text in QA_REPROMPT_LINES:
+        out.append(Line("mc", text, "되묻기", None, QUESTION_PROMPT_EMOTION))
     # 단독 모드의 확인 멘트(2026-09-25) — 사회자 목소리. 답은 생성이라 굽지 않는다.
     for text, emo in zip(SOLO_ACK_LINES, SOLO_ACK_EMOTIONS):
         out.append(Line("mc", text, "단독 확인 멘트", None, emo))
+    # 사과문(2026-11-14, 계획 show-readiness A-2) — LLM 이 답을 못 만들면 감독이 대신 읽는 고정 문장. **인터넷이 끊겼을 때
+    # 나가는 말**이라 실시간 합성(ElevenLabs)도 같이 실패한다 — 안 구우면 프록시가 15초 창에 안내를 한 번 내고 그 뒤는 무음이라
+    # 두 번째 질문부터 아무 말도 없다. 역할·감정은 감독이 실제로 보내는 값(`Director._deliver` — 감정은 `QA_ANSWER_EMOTION`,
+    # 질문 답은 도슨트, 단독 답은 사회자가 말한다)과 같아야 캐시 키가 맞는다. 수준 공통이라 수준은 없다(None).
+    # 전수는 테스트가 감독을 돌려 대조한다(`tests/test_bake_tts.py::test_감독이_LLM_없이_말하는_고정_문장은_전부_굽기_목록에_있다`).
+    out.append(Line("docent", QA_FALLBACK, "질문 응답 사과문", None, QA_ANSWER_EMOTION))
+    out.append(Line("mc", SOLO_FALLBACK, "단독 답 사과문", None, QA_ANSWER_EMOTION))
     return out
 
 

@@ -46,7 +46,7 @@ class Harness:
     def __init__(
         self, generate=None, expect_units=None, after=("", ""),
         sheet=None, level_name="일반", docent_min_chars=None,
-        levels=None, on_level_change=None,
+        levels=None, on_level_change=None, qa_reprompt=None,
     ):
         self.sent: list[tuple[str, str, dict]] = []
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
@@ -101,6 +101,11 @@ class Harness:
             kw["level_min_chars"] = levels
         if on_level_change is not None:
             kw["on_level_change"] = on_level_change
+        # 되묻기(A-5) — 안 넘기면 감독이 `REACHY_QA_REPROMPT`(기본 켜짐)를 읽는다. 되묻기를 보는 테스트만 명시한다.
+        # 그래서 이 파일의 자리표시 질문("질문?"·"둘째 질문?")에는 물음표가 붙어 있다 — 물음표·물음말이 없는 짧은 말은
+        # 기본 동작에서 되묻기로 간다(2026-11-14 전에는 "질문" 만으로도 답했다). 생성 경합·회전을 보는 테스트들이다.
+        if qa_reprompt is not None:
+            kw["qa_reprompt"] = qa_reprompt
         self.d = Director(
             sheet,
             generate=_gen,
@@ -263,7 +268,7 @@ def test_질문_응답_생성은_on_heard_를_막지_않는다():
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")
     t0 = time.monotonic()
-    h.d.on_heard("질문")
+    h.d.on_heard("질문?")
     assert time.monotonic() - t0 < 1.0, "on_heard 가 LLM 을 기다렸다"
     assert seen.wait(2.0), "생성 스레드가 돌지 않았다"
     h.d.abort()                      # 락이 자유로워야 즉시 돌아온다
@@ -442,7 +447,7 @@ def test_확인_멘트는_돌아가며_쓴다():
     seen = []
     for _ in range(len(QA_ACK_LINES)):
         h.clear()
-        h.d.on_heard("질문")
+        h.d.on_heard("질문?")
         seen.append(h.says()[0][1])
         h.ended("mc", "c1:ack")
         h.ended("docent", "c1:qa")
@@ -1264,7 +1269,7 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
         return "네."          # 진짜 생성 결과인데 MIN_CHARS(40) 미만
 
     h = Harness(generate=gen)
-    _질문한다(h, "첫 질문")                              # 1세대
+    _질문한다(h, "첫 질문?")                              # 1세대
     ready1, _ = h.d._snapshot_slot("docent")
     assert ready1.wait(2.0), "1세대 생성이 끝나지 않았다"
     with h.d._gen_lock:
@@ -1274,7 +1279,7 @@ def test_새_세대는_이전_세대의_폴백_표시를_물려받지_않는다(
     h.ended("docent", "c1:qa")
     h.ended("mc", "c1:reask")
     h.warnings.clear()
-    h.d.on_heard("둘째 질문")                            # 2세대 — 같은 "docent" 슬롯
+    h.d.on_heard("둘째 질문?")                            # 2세대 — 같은 "docent" 슬롯
 
     # 2세대는 게이트에 걸려 아직 아무것도 못 썼다. `_spawn_generate` 가 띄우면서
     # 표시를 내려놨어야 하는 바로 그 구간이다.
@@ -1599,7 +1604,7 @@ def test_생성을_기다리는_동안에는_침묵_기한이_섹션을_건너�
     assert h.d.state is State.LISTENING
 
     h.clock.t = 1.0
-    h.d.on_heard("질문 있어요")              # 기한 만료 전에 관람객이 묻는다
+    h.d.on_heard("질문 있어요?")              # 기한 만료 전에 관람객이 묻는다
     assert started.wait(2.0), "질문 답 생성이 시작되지 않았다"
 
     done = threading.Event()
@@ -1711,7 +1716,7 @@ def test_다시_묻는_말은_돌아가며_쓴다():
     h.ended("docent", "c1:docent")
     seen = []
     for _ in range(len(QUESTION_PROMPTS)):
-        h.d.on_heard("질문")
+        h.d.on_heard("질문?")
         h.ended("mc", "c1:ack")
         h.clear()
         h.ended("docent", "c1:qa")
@@ -2149,11 +2154,11 @@ def test_수준을_바꾼_뒤의_질문_답은_새_생성기와_새_수준_지�
         sheet=_수준_시트(), level_name="중고등", generate=gen, levels=dict(_수준_하한),
         on_level_change=lambda name: 현재.__setitem__("수준", name),
     )
-    _질문한다(h, "c1 첫 질문")               # 중고등으로 도는 섹션
+    _질문한다(h, "c1 첫 질문?")               # 중고등으로 도는 섹션
     h.d.set_level("초등")
     h.d.abort()
     h.d.start()                            # 같은 섹션(r) — 큐가 바뀌지 않아도 새 수준이어야 한다
-    _질문까지(h, "c1 둘째 질문", cid="c1")
+    _질문까지(h, "c1 둘째 질문?", cid="c1")
     assert [lv for lv, _ in seen] == ["중고등", "초등"], seen
     assert "c1 중고등 해설" in seen[0][1], seen[0]
     assert "c1 초등 해설" in seen[1][1], seen[1]
@@ -3088,7 +3093,7 @@ def test_관람객_질문_지시문에는_마크다운_강조가_없다():
     h.ended("mc", "c1")
     h.ended("docent", "c1:docent")
     h.ended("mc", "c1:after")       # 마이크가 열려야 관람객 발화가 들어간다
-    h.d.on_heard("질문이요")
+    h.d.on_heard("질문이요?")
     brief = h.gen_calls[-1][0]
     assert "**" not in brief, brief
     assert "꼭" in brief
@@ -3728,3 +3733,135 @@ def test_공연_기본_침묵_대기는_20초다():
                                 points=(Turn("", _모든_수준("첫 해설")),))]),
                  generate=lambda *a: "", send=lambda *a: None, warn=lambda m: None)
     assert QUESTION_WAIT_S == 20.0 and d.snapshot()["question_wait_total_s"] == 20.0
+
+
+# ── 질문 같지 않은 짧은 말에는 사회자가 되묻는다(2026-11-14, 계획 show-readiness A-5 · U3 ②) ──────────────
+def _관람객_차례(h):
+    """첫 큐를 시작해 관람객 차례(LISTENING)까지 민다 — 질문은 넣지 않는다."""
+    h.d.start()
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    assert h.d.state is State.LISTENING
+
+
+def _say_fields(h):
+    return [f for _, t, f in h.sent if t == "say"]
+
+
+def test_질문_같지_않은_짧은_말에는_사회자가_되묻고_도슨트는_답하지_않는다():
+    from stage.cues import QA_REPROMPT_LINES, QUESTION_PROMPT_EMOTION
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.clear()
+    h.warnings.clear()
+    h.d.on_heard("와 신기하다")
+    assert h.says() == [("mc", QA_REPROMPT_LINES[0])]
+    assert h.gen_calls == []                                   # LLM 을 부르지 않는다 — 도슨트 답이 없다
+    assert any("질문으로 보지 않고 되묻는다: '와 신기하다'" in w for w in h.warnings), h.warnings
+    # 이력에도 남긴다 — 다음 답 생성이 "관람객이 짧게 반응했고 사회자가 질문을 권했다" 를 본다
+    assert h.d.history[-2:] == [{"role": "user", "content": "관람객: 와 신기하다"},
+                                {"role": "assistant", "content": f"사회자: {QA_REPROMPT_LINES[0]}"}]
+    # 되묻기가 끝나면 다시 관람객 차례 — 마이크가 열리고 침묵 기한이 새로 걸린다(재질문과 같은 길)
+    h.clear()
+    h.ended("mc", "c1:reask")
+    assert h.d.state is State.LISTENING and h.mics() == [("mc", True)]
+    assert h.d.snapshot()["question_wait_s"] is not None
+    h.clock.t += 8.1
+    h.d.tick()
+    assert h.says() == [("mc", "사회자 둘째 대사")]                # 그래도 말이 없으면 침묵 자동 진행
+
+
+def test_되묻기는_기존_재질문_라벨을_쓴다():
+    """새 라벨이면 `stage/say_label.py` 와 화면 넷(`live_follow.js` 인라인)이 모른다 — 재질문 라벨·감정을 그대로."""
+    from stage.cues import QUESTION_PROMPT_EMOTION
+    from stage.say_label import QA_TURNS, parse_say_label
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.clear()
+    h.d.on_heard("우와")
+    f = _say_fields(h)[0]
+    assert (f["cue_id"], f["emotion"]) == ("c1:reask", QUESTION_PROMPT_EMOTION)
+    ref = parse_say_label(f["cue_id"], lambda cid: 1)
+    assert ref is not None and ref.turn == "reask" and "reask" in QA_TURNS
+
+
+def test_연달아_두_번째는_답한다():
+    """관람객이 벽에 대고 말하게 두지 않는다 — 되물은 뒤 또 짧은 말이 오면 답한다(확인 멘트 + 도슨트 답)."""
+    from stage.cues import QA_ACK_LINES
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.d.on_heard("와 신기하다")
+    h.ended("mc", "c1:reask")
+    h.clear()
+    h.d.on_heard("대박")
+    assert h.says() == [("mc", QA_ACK_LINES[0])]
+    assert len(h.gen_calls) == 1 and "대박" in h.gen_calls[0][0]
+
+
+def test_답한_뒤나_새_큐에서는_다시_되묻는다():
+    """'연달아' 는 되묻기 바로 뒤만이다 — 답을 한 번 했거나 큐가 바뀌면 처음부터 센다."""
+    from stage.cues import QA_REPROMPT_LINES
+    h = Harness(generate=lambda r, b, hist: "도슨트 답이에요. 둘째 문장이에요.", qa_reprompt=True)
+    _관람객_차례(h)
+    h.d.on_heard("와 신기하다")                                  # 되묻기(1)
+    h.ended("mc", "c1:reask")
+    h.d.on_heard("대박")                                        # 연달아 → 답
+    h.ended("mc", "c1:ack")
+    h.ended("docent", "c1:qa")
+    h.ended("mc", "c1:reask")
+    h.clear()
+    h.d.on_heard("우와")                                        # 답 뒤 — 다시 되묻는다
+    assert h.says() == [("mc", QA_REPROMPT_LINES[1])]            # 되묻기 대사는 돌아가며 쓴다
+    h.ended("mc", "c1:reask")
+    h.d.on_heard("다음")                                        # 다음 큐
+    h.ended("mc", "c2")
+    h.ended("docent", "c2:docent")
+    h.clear()
+    h.d.on_heard("멋지다")                                      # 새 큐 — 앞 큐의 되묻기를 세지 않는다
+    assert h.says() == [("mc", QA_REPROMPT_LINES[0])]
+
+
+def test_질문이면_짧아도_바로_답한다():
+    from stage.cues import QA_ACK_LINES
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.clear()
+    h.d.on_heard("왜요?")
+    assert h.says() == [("mc", QA_ACK_LINES[0])] and len(h.gen_calls) == 1
+
+
+@pytest.mark.parametrize("how", ["인자", "환경변수"])
+def test_스위치를_끄면_무엇이든_답한다(how, monkeypatch):
+    from stage.cues import QA_ACK_LINES
+    if how == "인자":
+        h = Harness(qa_reprompt=False)
+    else:
+        monkeypatch.setenv("REACHY_QA_REPROMPT", "0")
+        h = Harness()
+    _관람객_차례(h)
+    h.clear()
+    h.d.on_heard("와 신기하다")
+    assert h.says() == [("mc", QA_ACK_LINES[0])] and len(h.gen_calls) == 1
+
+
+def test_되묻기_스위치는_기본_켜짐이다(monkeypatch):
+    """U3 ②(2026-11-14 사용자 결정) — 기본이 켜짐. 모르는 값은 켜진 채로 경고한다(조용히 넘기지 않는다)."""
+    from stage.cues import QA_REPROMPT_LINES
+    monkeypatch.delenv("REACHY_QA_REPROMPT", raising=False)
+    h = Harness()
+    _관람객_차례(h)
+    h.clear()
+    h.d.on_heard("와 신기하다")
+    assert h.says() == [("mc", QA_REPROMPT_LINES[0])]
+    monkeypatch.setenv("REACHY_QA_REPROMPT", "가끔")
+    h = Harness()
+    assert any("REACHY_QA_REPROMPT" in w and "가끔" in w for w in h.warnings), h.warnings
+
+
+def test_단독_모드는_되묻지_않는다():
+    """단독은 사회자가 직접 받는 대화다 — 인사·감사에도 짧게 답하는 것이 맞다(2026-09-25 실측). 되묻기는 팟캐스트만."""
+    h = Harness(generate=lambda r, b, hist: "반가워요.", qa_reprompt=True)
+    _단독(h)
+    h.clear()
+    h.d.on_heard("안녕하세요")
+    assert h.gen_roles == ["solo"]
