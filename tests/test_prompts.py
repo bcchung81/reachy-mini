@@ -204,3 +204,13 @@ def test_질문_답은_풍부하게_하되_근거_안에서다():
     assert lv["일반"].min_sentences >= 4 and lv["전문가"].max_sentences >= 6 and lv["초등"].min_sentences >= 3
     p = build_system_prompt("docent", lv["일반"])
     assert "왜 그런지" in p and "비유" in p and "되풀이하지 않는다" in p and "지어내지 않는다" in p
+
+
+def test_언제나_한국어로_말하고_관계없는_질문은_짧게_돌린다():
+    """2026-11-14 시뮬 한 바퀴: 일본어로 말해 달라는 요청에 일본어 네 문장, 강아지 간식 질문에 전파 이야기 4~5문장."""
+    from stage.levels import load_levels
+    lv = load_levels()["일반"]
+    for role in ("docent", "mc", "solo"):
+        assert "언제나 한국어로 말한다" in build_system_prompt(role, lv), role
+    p = build_system_prompt("docent", lv)
+    assert "관계없는 질문" in p and "한두 문장으로 정중히" in p and "분량을 채우지 않는다" in p

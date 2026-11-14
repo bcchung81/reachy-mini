@@ -1206,6 +1206,7 @@ kill_pidfile() { echo "kill $2" >> "$CALLS"; touch "$KILLED"; }
 sweep() { echo "sweep $1" >> "$CALLS"; touch "$KILLED"; }
 bind_probe_addr() { echo 10.0.0.5; }
 up() { [ "${BINDS:-1}" = "1" ]; }
+server_started_at() { [ -n "${STARTED_AT:-}" ] && echo "$STARTED_AT"; return 0; }   # 비면 '모름'(옛 코드로 안 본다)
 LLAMACTL="$FAKE_CTL"
 '''
 _GW_OLD = '{"status": "ok", "gateway": "openai", "engines": "llm=openai,stt=openai", "local": "ok"}'
@@ -1268,3 +1269,17 @@ def test_정리_점검은_무엇을_내릴지만_말한다(tmp_path):
 def test_정리는_대상이_필수다(tmp_path):
     out, calls = _clean(tmp_path, "", "")
     assert "rc=2" in out and "대상이 필수다" in out
+
+
+
+def test_정리는_뜬_뒤에_코드가_바뀐_외부_전용_서버를_내려_새로_띄우게_한다(tmp_path):
+    """2026-11-14 시뮬 한 바퀴: 같은 설정이라 남긴 TTS 프록시가 어제 뜬 것이라 오늘 고친 코드 없이 돌았다. 뜬 시각 < 코드 수정 시각이면 내린다."""
+    out, calls = _clean(tmp_path, "--sim", "8080 8090 8099", {8080: _GW_EXT, 8090: _GW_EXT, 8099: _PX_EXT},
+                        {"STARTED_AT": "1"})                       # 1970 년에 떴다 — 코드는 그 뒤에 바뀌었다
+    assert "rc=0" in out and "kill OpenAI 게이트웨이" in calls and "kill TTS 캐시 프록시" in calls, out
+    assert out.count("뜬 뒤에 코드") == 2
+    (tmp_path / "calls.txt").unlink()
+    (tmp_path / "killed").unlink()                                 # 가짜 '내렸다' 표시를 지운다(다음 실행은 다시 듣는다)
+    out, calls = _clean(tmp_path, "--sim", "8080 8090 8099", {8080: _GW_EXT, 8090: _GW_EXT, 8099: _PX_EXT},
+                        {"STARTED_AT": "4102444800"})              # 2100 년에 떴다 — 코드보다 새것
+    assert "rc=0" in out and calls == [] and "남긴다: TTS 캐시 프록시" in out, out

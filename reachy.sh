@@ -2075,6 +2075,31 @@ run_start() {
 # 감독(:8777·:8778)이 떠 있으면 공연 중일 수 있다 — 아무것도 안 건드리고 멈춘다(1).
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
+# 그 포트에 듣는 프로세스가 언제 떴나(epoch 초). 모르면 빈 값 — 부르는 쪽은 "모름" 을 "옛 코드 아님" 으로 읽는다(괜히 내리지 않는다).
+# 따로 둔 이유: 시험이 이것만 가짜로 바꾼다(진짜 lsof·ps 는 이 맥에 떠 있는 것에 따라 결과가 바뀐다).
+server_started_at() {  # port
+  local pid lstart
+  pid="$(lsof -tnP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1)"
+  [ -n "$pid" ] || return 0
+  lstart="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//')"
+  [ -n "$lstart" ] || return 0
+  date -j -f "%a %b %d %T %Y" "$lstart" +%s 2>/dev/null || date -d "$lstart" +%s 2>/dev/null
+}
+
+# **뜬 뒤에 코드가 바뀐 서버**(2026-11-14 시뮬 한 바퀴에서 찾음): 같은 설정이라 남겼더니 어제 뜬 TTS 프록시가 오늘 고친 코드
+# (실패 종류를 싣는 502 등) 없이 돌고 있었다. 설정 표지만으로는 코드 버전을 모른다 — 프로세스가 뜬 시각과 그 코드 파일들의 수정
+# 시각을 견준다. 옛 코드면 남기지 않고 내린다(`start` 가 새 코드로 다시 띄운다).
+stale_code() {  # port 파일…
+  local port="$1" started f m; shift
+  started="$(server_started_at "$port")"
+  [ -n "$started" ] || return 1
+  for f in "$@"; do
+    m="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null)"
+    [ -n "$m" ] && [ "$m" -gt "$started" ] && return 0
+  done
+  return 1
+}
+
 # llamactl 로 그 포트의 LLM·STT 만 내린다. llamactl 이 없거나 pid 파일을 잃었으면 포트를 박은 명령줄로 한 번 더 쓸어낸다
 # (`stop_all` 이 안쪽 포트를 찾는 것과 같은 패턴).
 stop_llm_stt_ports() {  # llm_port stt_port
@@ -2118,7 +2143,9 @@ run_clean_local() {
     esac
   done
   if [ "$n_ext" -gt 0 ]; then
-    if [ "$n_ext" = "2" ] && binds_right 8080 8090; then
+    if [ "$n_ext" = "2" ] && stale_code 8080 openai_gateway.py stage/cues.py data/cues.yaml; then
+      add gateway "OpenAI 게이트웨이(:8080·:8090) — 뜬 뒤에 코드·대본이 바뀌었다(새 코드로 다시 띄운다)"
+    elif [ "$n_ext" = "2" ] && binds_right 8080 8090; then
       keep="${keep}   남긴다: OpenAI 게이트웨이(:8080·:8090) — 같은 설정(외부 전용)"$'\n'
     elif [ "$n_ext" = "2" ]; then
       add gateway "OpenAI 게이트웨이(:8080·:8090) — $BIND_HOST 로 안 듣는다(loopback 전용, 로봇에서 안 보인다)"
@@ -2139,7 +2166,9 @@ run_clean_local() {
     h="$(curl -s -m 3 "http://localhost:$TTS_PORT/health" 2>/dev/null)"
     case "$h" in
       *'"local": "off"'*)
-        if binds_right "$TTS_PORT"; then keep="${keep}   남긴다: TTS 캐시 프록시(:$TTS_PORT) — 같은 설정(외부 전용)"$'\n'
+        if stale_code "$TTS_PORT" tts_cache_proxy.py tts_elevenlabs.py data/tts_readings.yaml; then
+          add proxy "TTS 캐시 프록시(:$TTS_PORT) — 뜬 뒤에 코드가 바뀌었다(새 코드로 다시 띄운다)"
+        elif binds_right "$TTS_PORT"; then keep="${keep}   남긴다: TTS 캐시 프록시(:$TTS_PORT) — 같은 설정(외부 전용)"$'\n'
         else add proxy "TTS 캐시 프록시(:$TTS_PORT) — $BIND_HOST 로 안 듣는다(loopback 전용)"; fi ;;
       *'"proxy"'*) add proxy "TTS 캐시 프록시(:$TTS_PORT) — 로컬 TTS 를 낀 설정" ;;
       *) ;;   # 프록시가 아닌 것(CrispASR 직결)은 ③ 이 내린다

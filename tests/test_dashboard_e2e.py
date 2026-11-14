@@ -149,8 +149,9 @@ def test_대시보드의_수준_버튼이_진짜_감독에서_바로_적용된�
 
 def test_대시보드의_공연_토글이_진짜_감독의_show_running_을_오간다():
     """제어판 [공연 시작] ↔ [공연 종료] 의 페이지 계약(2026-09-25) — 명령 `s`/`e`, `snapshot.show_running`,
-    그리고 종료 경고 한 줄. 로봇은 붙이지 않는다 — say 는 "아직 붙지 않았다" 로 버려지지만 공연 상태는
-    그대로 오간다(페이지가 읽는 것은 그 상태다)."""
+    그리고 종료 경고 한 줄. ~~로봇은 붙이지 않는다~~ — 2026-11-14 부터 로봇이 하나도 안 붙었으면 `s` 를 거절한다(붙기 전 [공연 시작]이
+    첫 대사를 버리고 공연을 멈춰 세웠다). 그래서 감독에 등록만 한다(웹소켓 로봇은 없다 — say 는 "아직 붙지 않았다" 로 버려지지만 공연 상태는
+    그대로 오간다, 페이지가 읽는 것은 그 상태다)."""
     hub = DashboardHub()
     warn = tee(lambda m: None, lambda m: hub.publish("warn", text=m))
     server = StageServer(
@@ -172,6 +173,11 @@ def test_대시보드의_공연_토글이_진짜_감독의_show_running_을_오�
         hello = json.loads(page.recv(timeout=3))
         assert hello["snapshot"]["show_running"] is False
 
+        page.send(json.dumps({"cmd": "s"}))                     # 로봇이 하나도 없다 — 거절
+        time.sleep(0.3)
+        assert server.director.snapshot()["show_running"] is False
+        for role in ("mc", "docent"):
+            server.director.on_connect(role)
         page.send(json.dumps({"cmd": "s"}))
         snap = _recv_until(page, lambda m: m["kind"] == "snapshot" and m["show_running"] is True)
         assert snap["cue_id"] == "c1"

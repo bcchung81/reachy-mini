@@ -48,6 +48,13 @@ class Harness:
             warn=self.warnings.append,
             **director_kw,
         )
+        # 두 로봇이 붙은 채로 시작한다(2026-11-14) — 콘솔 `s` 는 로봇이 하나도 안 붙었으면 거절한다(실기·시뮬에서 붙기 전 [공연 시작]이
+        # 첫 대사를 버리고 공연을 멈춰 세웠다). 이 파일의 시험들은 연결이 아니라 콘솔 동작을 본다 — 붙이며 나온 지시·경고는 지운다.
+        for role in ("mc", "docent"):
+            self.d.on_connect(role)
+        self.sent.clear()
+        self.all_sent.clear()
+        self.warnings.clear()
 
     def seq_of(self, cue_id):
         return [f["seq"] for _, t, f in self.all_sent if t == "say" and f["cue_id"] == cue_id][-1]
@@ -483,3 +490,26 @@ def test_w_는_침묵_대기_시간을_바꾸고_진행을_멈추지_않는다()
     console.dispatch(h.d, "w 15", out=h.out.append)
     assert h.d.snapshot()["question_wait_total_s"] == 15
     assert not any(t == "abort" for _, t, _ in h.sent)   # 말하던 것을 끊지 않는다
+
+
+def test_로봇이_하나도_안_붙었으면_공연_시작을_거절한다():
+    """2026-11-14 시뮬 한 바퀴: 붙기 전에 [공연 시작] → 첫 대사가 버려지고 공연이 멈춰 섰다. 한 대라도 붙으면 시작한다(1인 모드)."""
+    from stage.console import dispatch
+
+    class D:
+        def __init__(self, connected):
+            self.connected, self.started = connected, 0
+
+        def snapshot(self):
+            return {"connected": self.connected}
+
+        def start_show(self):
+            self.started += 1
+
+    out = []
+    d = D([])
+    dispatch(d, "s", out.append)
+    assert d.started == 0 and any("하나도 안 붙었다" in m for m in out)
+    d = D(["mc"])
+    dispatch(d, "s", out.append)
+    assert d.started == 1

@@ -88,6 +88,16 @@ def dispatch(director: Director, cmd: str, out, camera=None) -> None:
     if cmd == "s":
         # [공연 시작] — 첫 큐부터(2026-09-25). ~~지금 커서의 큐를 시작~~ 은 `r` 이 한다. 먼저 멈추지
         # 않는다: 진행 중이면 감독이 경고만 하고 아무것도 안 건드린다("시작됐나? 한 번 더").
+        #
+        # **로봇이 하나도 안 붙었으면 시작하지 않는다**(2026-11-14 시뮬 한 바퀴). 붙기 전에 [공연 시작]을 누르니 첫 대사가
+        # "아직 붙지 않았다 — say 를 버린다" 로 사라지고, 오지 않을 발화 끝 보고를 기다리며 공연이 멈춰 섰다(운영자가 [다음]으로 풀었다).
+        # 한 대라도 붙었으면 시작한다 — 1인 모드는 설계된 폴백이고 감독이 크게 알린다. 감독 안(`start_show`)이 아니라 여기서 막는 이유:
+        # 운영자 명령만의 규칙이다(감독 시험 다수가 로봇 없이 공연 흐름을 돌린다).
+        snap = getattr(director, "snapshot", None)
+        connected = (snap() or {}).get("connected") if callable(snap) else None
+        if connected is not None and not connected:
+            out("  거절됨: 로봇이 아직 하나도 안 붙었다 — 공연을 시작하지 않았다. '[…] 붙었다' 가 뜬 뒤 다시 시작한다")
+            return
         director.start_show()
     elif cmd == "e":
         # [공연 종료] — 멈추고 첫 큐로 되감는다. 멈추는 일은 감독이 락 안에서 한다(`end_show`).

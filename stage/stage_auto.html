@@ -20,7 +20,10 @@
   iframe.on { visibility: visible; }
   #note { position: fixed; left: 12px; bottom: 10px; z-index: 2; color: #9aa0aa; font: 12px/1.3 -apple-system, "Apple SD Gothic Neo", sans-serif;
           background: rgba(16, 20, 28, .7); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
-  html[data-embed] #note { display: none; }
+  /* 안내 줄은 기본으로 숨긴다(2026-11-14 시뮬 한 바퀴) — 프로젝터 창(관람객이 보는 화면)에 "분해도에 06-bands 가 아직 없다 — 카드 화면으로
+     이어 보기" 같은 운영자용 글이 떴다. 운영자는 조정실 시연 화면 머리 줄에서 같은 말을 본다(embed → postMessage). 점검할 때만 ?note. */
+  #note { display: none; }
+  html[data-note] #note { display: block; }
 </style>
 </head>
 <body>
@@ -32,6 +35,7 @@
   'use strict';
   var EMBED = new URLSearchParams(location.search).has('embed');
   if (EMBED) document.documentElement.setAttribute('data-embed', '');
+  if (new URLSearchParams(location.search).has('note')) document.documentElement.setAttribute('data-note', '');
   var frames = [document.getElementById('stage-a'), document.getElementById('stage-b')];
   var note = document.getElementById('note');
   // 대시보드가 안 알려 주면(구버전) 예전처럼 수준만으로 — 일반 화면이 기본.

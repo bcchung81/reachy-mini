@@ -522,3 +522,12 @@ def test_화면_목록은_화면마다_가진_큐와_고르는_순서를_준다(
     assert m["order"]["초등"] == ["webtoon", "hud"] and m["default"] == "paper"
     assert m["labels"]["hud"] == "카드 화면"
     assert len([w for w in warned if "교육자료 화면 파일이 없다(exploded)" in w]) == 1      # 여러 번 물어도 한 번
+
+
+def test_프로젝터_화면에는_운영자용_안내_줄을_보이지_않는다():
+    """2026-11-14 시뮬 한 바퀴: /stage/auto(프로젝터 창)에 "분해도에 06-bands 가 아직 없다 — 카드 화면으로 이어 보기" 가 관람객에게 보였다.
+    안내는 기본 숨김 — 운영자는 조정실 시연 화면 머리 줄에서 본다(embed → postMessage). 점검할 때만 ?note."""
+    from stage.dashboard import MOTION_PAGES
+    src = MOTION_PAGES["auto"].read_text(encoding="utf-8")
+    assert "#note { display: none; }" in src and "html[data-note] #note { display: block; }" in src
+    assert "has('note')" in src
