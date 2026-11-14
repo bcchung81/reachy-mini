@@ -133,6 +133,42 @@ def test_콘티의_그림_이름은_장면에_모두_있다():
     assert used - arts == set() and used_brk - brks == set()
 
 
+def _highlight():
+    courses = yaml.safe_load((ROOT / "data" / "courses.yaml").read_text())["courses"]
+    return next(c["cues"] for c in courses if c["name"] == "하이라이트")
+
+
+def test_콘티의_큐는_하이라이트_코스_안에서_큐시트_순서다():
+    # 이번 확장 범위는 하이라이트 코스(U7 ①, 2026-11-14 사용자 결정)다. 콘티 순서가 곧 화면의 큐 목록 순서이고
+    # 공연 모드는 큐 id 로 찾지만 미리보기의 '다음 장' 은 이 순서를 따른다 — 큐시트(이야기) 순서와 같아야 한다
+    board = yaml.safe_load((WT / "storyboard.yaml").read_text())
+    hl = _highlight()
+    assert set(board) <= set(hl), sorted(set(board) - set(hl))
+    assert list(board) == [c for c in hl if c in board]
+    for cid, by_level in board.items():
+        assert set(by_level) == {name for _, name in B.LEVELS}, cid               # 한 HTML 이 초등·중고등을 함께 담는다
+
+
+def test_하이라이트_코스의_모든_큐가_두_수준으로_있다():
+    # 하이라이트 코스(U7 ①)가 웹툰 전용 화면으로 끝까지 간다 — `/stage/auto` 는 빌드된 페이지의 큐 목록으로 고르므로(§15.12)
+    # 콘티에서 큐가 빠지면 그 큐만 카드 화면으로 떨어진다. 코스와 콘티가 같아야 한다(순서까지).
+    board = yaml.safe_load((WT / "storyboard.yaml").read_text())
+    assert list(board) == _highlight()
+
+
+def test_카드마다_그_포인트를_말하는_칸이_콘티에_있다():
+    # 카드 i 를 도슨트 i턴 시작에 묶으면 틀린다(docs/lessons.md — 턴 번호 ≠ 포인트 번호). 엔진은 콘티에 card/item 이 없으면
+    # 도슨트 i턴으로 물러나므로, 모든 카드가 콘티의 어느 칸(card 또는 item)에 묶여 있는지 큐·수준마다 확인한다
+    data, board = B.load_hud(), yaml.safe_load((WT / "storyboard.yaml").read_text())
+    cues = {c["id"]: c for c in data["cues"]}
+    for cid, by_level in board.items():
+        for lkey, lname in B.LEVELS:
+            n = len(cues[cid]["lv"][lkey]["items"])
+            refs = {p[k] for p in by_level[lname] for k in ("card", "item") if k in p}
+            assert set(range(n)) <= refs, (cid, lname, n, sorted(refs))
+            assert refs <= set(range(n)), (cid, lname, "없는 카드 번호")
+
+
 def test_틀과_장면은_외부_리소스를_부르지_않는다():
     # 전시장은 오프라인이다. 주석의 출처 링크 말고는 http 주소를 불러오지 않는다(글꼴도 시스템 글꼴)
     names = [WT / "template.html", WT / "scenes.js"] + ([OUT] if OUT.exists() else [])
@@ -147,6 +183,56 @@ def test_글자는_캔버스에_그리지_않고_그림은_t_의_식이다():
         src = (WT / name).read_text()
         assert "innerHTML" not in src and "fillText" not in src and "strokeText" not in src, name
         assert "Math.random" not in src and "Date.now" not in src and "new Date" not in src, name
+
+
+def test_장면_코드에_줄_가운데_주석이_뒤_코드를_삼키지_않는다():
+    # scenes.js 는 한 줄에 여러 문장을 쓴다. 그 가운데에 `// 설명` 을 끼우면 뒤의 문장들이 통째로 주석이 된다 — 괄호 짝이 우연히
+    # 맞으면 문법 검사도 통과하고, `c.save()` 만 남고 `c.restore()` 가 주석이 되면 자르기(clip)가 다음 그림까지 남아 화면이 조용히 깨진다
+    # (웹툰 14 차에 싣던 전화 칸에서 실제로 났다 — docs/lessons.md). 주석 뒤에 그리기 호출·대입이 남은 줄이 없어야 한다.
+    bad = []
+    for i, line in enumerate((WT / "scenes.js").read_text().splitlines(), 1):
+        k = line.find("//")
+        if k < 0 or line[max(0, k - 6):k].endswith(("http:", "https:")):
+            continue
+        if re.search(r"\b(c|g)\.\w+\(|\b(rr|fs|circ|poly|inkS|sine|band2|flow|span)\(|;\s*\w+\s*=", line[k + 2:]):
+            bad.append((i, line.strip()[:120]))
+    assert bad == []
+
+
+@pytest.mark.skipif(not (os.path.exists(CHROME) and OUT.exists()), reason="Chrome 또는 생성물 없음")
+def test_모든_장면은_save_restore_짝이_맞고_순서를_바꿔_그려도_같다(tmp_path):
+    # 그림은 시각 t 의 순수 함수여야 한다(되감기·공연 모드의 도약). 빌드된 진짜 페이지를 iframe 으로 열어 두 수준 × 모든 큐를
+    # 여러 시각(칸 깨기 비행 포함)에 차례로 · 거꾸로 그려 캔버스 해시를 비교하고, 그릴 때마다 save/restore 짝을 센다.
+    # 짝이 어긋나면 남은 clip·변환이 다음 그림을 망친다 — 위 '줄 가운데 주석' 이 그 원인이었다(초등 14 에서만 순서에 따라 달랐다).
+    probe = tmp_path / "det.html"
+    probe.write_text("""<!doctype html><meta charset="utf-8"><body>
+<iframe id="f" style="width:1600px;height:948px" src="%s?lv=%%EC%%B4%%88%%EB%%93%%B1&cue=01&t=0"></iframe>
+<script>
+const f = document.getElementById('f');
+f.onload = () => setTimeout(() => {
+  const w = f.contentWindow, W = w.webtoon, cv = w.document.getElementById('cv'), g = cv.getContext('2d'), L = JSON.parse(w.document.getElementById('data').textContent).levels;
+  let n = 0; const sv = g.save.bind(g), rs = g.restore.bind(g); g.save = () => { n++; sv(); }; g.restore = () => { n--; rs(); };
+  const hash = () => { const d = g.getImageData(0, 0, cv.width, cv.height).data; let h = 2166136261 >>> 0; for (let i = 0; i < d.length; i += 7) { h ^= d[i]; h = Math.imul(h, 16777619) >>> 0; } return h; };
+  const res = { unbalanced: [], nondet: [], scenes: 0 };
+  L.forEach((lv, li) => lv.cues.forEach((cue, ci) => {
+    const sc = W.getScene(li, ci), ts = []; res.scenes++;
+    for (let k = 0; k < 16; k++) ts.push(+(cue.dur * k / 16).toFixed(2));
+    if (sc.brk) for (let k = 0; k <= 4; k++) ts.push(+(sc.brk.T0 - 0.3 + (sc.brk.T1 - sc.brk.T0 + 0.6) * k / 4).toFixed(3));
+    const A = {};
+    for (const t of ts) { n = 0; W.draw(sc, t); if (n) res.unbalanced.push(lv.name + ' ' + cue.id + ' t=' + t); A[t] = hash(); }
+    for (const t of ts.slice().reverse()) { W.draw(sc, t); if (A[t] !== hash()) res.nondet.push(lv.name + ' ' + cue.id + ' t=' + t); }
+  }));
+  document.body.setAttribute('data-det', JSON.stringify(res));
+}, 1500);
+</script>""" % OUT.as_uri())
+    out = subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--allow-file-access-from-files", f"--user-data-dir={tmp_path / 'profile'}",
+                          "--virtual-time-budget=120000", "--dump-dom", probe.as_uri()], capture_output=True, text=True, timeout=240).stdout
+    import html
+    res = json.loads(html.unescape(re.search(r'data-det="([^"]*)"', out).group(1)))
+    board = yaml.safe_load((WT / "storyboard.yaml").read_text())
+    assert res["scenes"] == len(board) * len(B.LEVELS)
+    assert res["unbalanced"] == [], res["unbalanced"][:10]
+    assert res["nondet"] == [], res["nondet"][:10]
 
 
 def test_공연_모드는_시계_함수_하나로_따라가고_오디오를_만들지_않는다():
@@ -169,6 +255,10 @@ def test_생성물_check_경고와_배치_문제가_없다():
     get = lambda k: json.loads(html.unescape(re.search(k + r'="([^"]*)"', body).group(1)))   # noqa: E731
     assert get("data-warn") == []
     assert get("data-issues") == []
+    # `?check=1` 이 콘티의 **모든** 큐 × 두 수준을 실제로 지었는지(새 큐를 넣고 빌드를 빠뜨리면 여기서 걸린다)
+    board = yaml.safe_load((WT / "storyboard.yaml").read_text())
+    built = {(g["lv"], g["cue"]) for g in get("data-gaps")}
+    assert built == {(name, cid) for cid in board for _, name in B.LEVELS}
 
 
 # ── 공연 모드 통합 — 진짜 대시보드 서버가 준 웹툰(`/stage/webtoon`)이 감독 이벤트를 따라가는가 ─────────────────────

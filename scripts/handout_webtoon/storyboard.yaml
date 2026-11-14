@@ -59,3 +59,177 @@
     - {u: docent2, n: 1, kind: slant, art: send, brk: morse}
     - {kind: silent, art: receive}
     - {u: after, n: 3, kind: free, art: finale, v: 1}
+
+# 03 — 보이지 않는 물결 → 주파수(얼마나 빠르게 출렁이나) → 파장(물결 하나의 길이) → 빠를수록 짧다.
+# 칸 깨기 = 기울어진 칸의 '짧은 물결'(빠르게 출렁이는 쪽) 한 묶음이 칸을 뚫고 나가 침묵 칸의 비교 자 위, 긴 물결 아래에 눕는다.
+"03-theory":
+  초등:
+    - {u: open, n: 2, kind: wide, art: lab}
+    - {u: docent0, n: 1, kind: normal, art: ghost, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: pond, item: 0}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 3}
+    - {u: docent1, n: 1, kind: normal, art: bob, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: fastslow}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 4}
+    - {u: docent2, n: 1, kind: normal, art: ruler, item: 2}
+    - {u: docent2, n: 1, kind: slant, art: squeeze, brk: packet}
+    - {kind: silent, art: compare}
+    - {u: after, n: 3, kind: free, art: finale, v: 2}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: lab}
+    - {u: docent0, n: 1, kind: normal, art: emwave, item: 0, card: 0}
+    - {u: docent0, n: 2, kind: normal, art: vacuum}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 3}
+    - {u: docent1, n: 1, kind: normal, art: bob, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: hertz}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 4}
+    - {u: docent2, n: 1, kind: normal, art: ruler, item: 2}
+    - {u: docent2, n: 2, kind: slant, art: squeeze, brk: packet}
+    - {kind: silent, art: compare}
+    - {u: after, n: 3, kind: free, art: finale, v: 2}
+
+# 04 — 체험존 → 손으로 치는 모스 부호 → 글자마다 약속·자주 쓰는 글자일수록 짧게 → 헤르츠 실험(불꽃)과 라이덴 병.
+# 칸 깨기 = 불꽃 틈에서 나온 전파 한 덩이가 칸을 뚫고 나가 침묵 칸의 떨어진 고리(받는 쪽) 앞에 멈춘다.
+"04-morse":
+  초등:
+    - {u: open, n: 2, kind: wide, art: zone}
+    - {u: docent0, n: 1, kind: normal, art: tap, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: dotdash}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 5}
+    - {u: docent1, n: 1, kind: normal, art: codebook, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: frequent}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 6}
+    - {u: docent2, n: 2, kind: slant, art: hertzlab, item: 2, brk: sparkwave}
+    - {kind: silent, art: ring}
+    - {u: after, n: 3, kind: free, art: finale, v: 3}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: zone}
+    - {u: docent0, n: 1, kind: normal, art: three, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: tap}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 5}
+    - {u: docent1, n: 1, kind: normal, art: frequent, item: 1}
+    - {u: docent1, n: 2, kind: normal, art: factpair}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 6}
+    - {u: docent2, n: 2, kind: slant, art: hertzlab, item: 2, brk: sparkwave}
+    - {kind: silent, art: ring}
+    - {u: after, n: 3, kind: free, art: finale, v: 3}
+
+# 07 — 여객선 → 밤바다의 구조 신호 → (침몰 뒤) 구명정을 건지는 배 → 밤낮 듣기 → 자동 장치.
+# 칸 깨기 = 물에 뜬 자동 장치의 구조 신호가 칸을 뚫고 나가 침묵 칸 이웃 배의 돛대 끝에 닿는다(가까운 배가 듣는다).
+"07-maritime":
+  초등:
+    - {u: open, n: 2, kind: wide, art: sea}
+    - {u: docent0, n: 1, kind: normal, art: sos, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: rescue}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 7}
+    - {u: docent1, n: 1, kind: normal, art: watch, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: nearby}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 8}
+    - {u: docent2, n: 1, kind: normal, art: device, item: 2}
+    - {u: docent2, n: 1, kind: slant, art: beacon, brk: call}
+    - {kind: silent, art: rescueship}
+    - {u: after, n: 3, kind: free, art: finale, v: 4}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: sea}
+    - {u: docent0, n: 1, kind: normal, art: sos, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: rescue}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 7}
+    - {u: docent1, n: 1, kind: normal, art: watch, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: rulebook}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 8}
+    - {u: docent2, n: 1, kind: normal, art: device, item: 2}
+    - {u: docent2, n: 1, kind: slant, art: beacon, brk: call}
+    - {kind: silent, art: rescueship}
+    - {u: after, n: 3, kind: free, art: finale, v: 4}
+
+# 14 — 전화기 넷(선반) → 차에 싣던 전화 · 자동차보다 비쌌다(저울) → 작아진 전화 · 세대마다 늘어난 것 → 5세대.
+# 칸 깨기 = 5세대 기지국에서 영상 한 장이 칸을 뚫고 나가 침묵 칸의 손 안 스마트폰 화면에 들어간다.
+"14-mobile":
+  초등:
+    - {u: open, n: 2, kind: wide, art: phones}
+    - {u: docent0, n: 1, kind: normal, art: carphone, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: scale}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 9}
+    - {u: docent1, n: 1, kind: normal, art: shrink, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: gens}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 10}
+    - {u: docent2, n: 2, kind: slant, art: many5g, item: 2, brk: video}
+    - {kind: silent, art: phone}
+    - {u: after, n: 3, kind: free, art: finale, v: 5}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: phones}
+    - {u: docent0, n: 1, kind: normal, art: carphone, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: scale}
+    - {u: ask1, n: 2, kind: band, art: ask, v: 9}
+    - {u: docent1, n: 2, kind: normal, art: gens, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: years}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 10}
+    - {u: docent2, n: 2, kind: slant, art: many5g, item: 2, brk: video}
+    - {kind: silent, art: phone}
+    - {u: after, n: 3, kind: free, art: finale, v: 5}
+
+# 17 — 붉은 행성의 탐사차 → 조종기로 움직여 보기 · 달려 보기 → 멀면 말이 늦게 닿는다 → 가까운 달 → 지구 관제실.
+# 칸 깨기 = 관제실 창밖 접시 안테나의 명령이 칸을 뚫고 나가 침묵 칸 달 위 탐사차(바퀴 여덟)의 안테나 끝에 닿는다.
+"17-rover":
+  초등:
+    - {u: open, n: 2, kind: wide, art: planet}
+    - {u: docent0, n: 1, kind: normal, art: remote, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: drive}
+    - {u: ask1, n: 1, kind: band, art: ask, v: 11}
+    - {u: docent1, n: 1, kind: normal, art: delay, item: 1}
+    - {u: docent1, n: 1, kind: normal, art: careful}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 12}
+    - {u: docent2, n: 1, kind: normal, art: moonmars, item: 2}
+    - {u: docent2, n: 1, kind: slant, art: control, brk: command}
+    - {kind: silent, art: moonrover}
+    - {u: after, n: 3, kind: free, art: finale, v: 6}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: planet}
+    - {u: docent0, n: 1, kind: normal, art: remote, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: drive}
+    - {u: ask1, n: 1, kind: band, art: ask, v: 11}
+    - {u: docent1, n: 1, kind: normal, art: delay}
+    - {u: docent1, n: 1, kind: normal, art: moonmars, item: 1}
+    - {u: ask2, n: 1, kind: band, art: ask, v: 12}
+    - {u: docent2, n: 1, kind: normal, art: moonnear}
+    - {u: docent2, n: 2, kind: slant, art: control, item: 2, brk: command}
+    - {kind: silent, art: moonrover}
+    - {u: after, n: 3, kind: free, art: finale, v: 6}
+
+# 18 — 실험 도구 탁자 → 손만 움직여 연주하는 악기(테레민) → 가까이·멀리(초등) / 1920년 센서 연구(중고등) → 마법이 아니다 / 안테나가 아니다
+#      → 보이지 않는 전기의 힘·축전기. 칸 깨기 = 막대 끝의 음표가 칸을 뚫고 나가 침묵 칸 오선지의 높은 자리에 선다(손이 가까이 = 높은 소리).
+"18-science":
+  초등:
+    - {u: open, n: 2, kind: wide, art: labtable}
+    - {u: docent0, n: 1, kind: normal, art: theremin, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: pitch}
+    - {u: ask1, n: 1, kind: band, art: ask, v: 13}
+    - {u: docent1, n: 1, kind: normal, art: magic}
+    - {u: docent1, n: 1, kind: slant, art: field, item: 1, brk: note}
+    - {kind: silent, art: staff}
+    - {u: after, n: 3, kind: free, art: finale, v: 7}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: labtable}
+    - {u: docent0, n: 1, kind: normal, art: theremin, item: 0, card: 0}
+    - {u: docent0, n: 1, kind: normal, art: sensor}
+    - {u: ask1, n: 1, kind: band, art: ask, v: 13}
+    - {u: docent1, n: 1, kind: normal, art: notantenna, card: 1}
+    - {u: docent1, n: 1, kind: slant, art: field, item: 1, brk: note}
+    - {kind: silent, art: staff}
+    - {u: after, n: 3, kind: free, art: finale, v: 7}
+
+# 19 — 저녁의 전파체험관(01 의 hall, v 1) → 고맙습니다(두 로봇이 인사) → 사람이 찾아낸 전파가 통신·방송·이동통신(·관리)으로.
+# 칸 깨기 = 01 의 전파 띠(BRK.ribbon)가 물결 끝에서 칸을 뚫고 나가 침묵 칸 관람객 머리 위에 머문다(첫 큐와 끝 큐가 같은 물체로 닫힌다).
+"19-closing":
+  초등:
+    - {u: open, n: 2, kind: wide, art: hall, v: 1}
+    - {u: docent0, n: 1, kind: normal, art: bow}
+    - {u: docent0, n: 1, kind: slant, art: found, card: 0, brk: ribbon}
+    - {kind: silent, art: crowd}
+    - {u: after, n: 4, kind: free, art: finale, v: 8}
+  중고등:
+    - {u: open, n: 2, kind: wide, art: hall, v: 1}
+    - {u: docent0, n: 1, kind: normal, art: bow}
+    - {u: docent0, n: 2, kind: slant, art: found, card: 0, brk: ribbon}
+    - {kind: silent, art: crowd}
+    - {u: after, n: 4, kind: free, art: finale, v: 8}
