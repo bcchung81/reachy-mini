@@ -299,6 +299,13 @@
   .cue-row.now.ready { background: #1C222B; border-color: #9AA3AE; }
   .cue-row.now.ready .cue-title, .cue-row.now.ready .cue-tag { color: #C9CFD6; }
   .cue-row.selected { outline: 2px solid #4CC3D9; outline-offset: 1px; }
+  /* 조정실 소켓이 끊긴 동안(body.stale — setConn) — 스냅샷이 멈춰 데크의 'ON AIR' 와 지금 칩의 빨강이 마지막 상태로 남는다. 빨강을 회색으로
+     흐려 "지금 방송 중" 으로 읽히지 않게 한다(2026-11-14, 2차 보고 4-3). **색으로** 흐린다 — opacity 는 글 대비까지 깎아 안 읽힌다.
+     지금 칩은 점선 테두리로 "모르는 상태" 를 로봇 알약('모름', 점선)과 같은 말로 보인다. 다시 붙으면 클래스가 빠져 스냅샷의 색으로 돌아온다. */
+  body.stale .now-tag { background: #1C222B; color: #9AA3AE; }
+  body.stale .cue-row.now { background: #1C222B; border-color: #6B7684; border-style: dashed; }
+  body.stale .cue-row.now .cue-title { color: #C9CFD6; }
+  body.stale .cue-row.now .cue-tag { color: #9AA3AE; }
 
   .goto-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -697,6 +704,9 @@ function setConn(state) {
   // 끊긴 동안(재접속 중 포함) 로봇 상태를 모른다 — 마지막 스냅샷의 '말하는 중' 을 두면 빨간 '연결 끊김' 옆에서 거짓말을 한다.
   // 다시 붙으면 hello·스냅샷의 renderRobots 가 되돌린다.
   if (state !== "connected") markRobotsUnknown();
+  // 같은 이유로 데크의 상태 낱말('ON AIR · 사회자')과 런다운 지금 칩의 빨강도 마지막 상태로 남는다 — 알약만 '모름' 이면 화면이
+  // 반은 모른다, 반은 방송 중이라고 한다. 끊긴 동안 body.stale 로 그 빨강을 회색으로 흐린다(CSS). 글은 그대로 둔다(마지막 상태).
+  document.body.classList.toggle("stale", state !== "connected");
 }
 
 function connect() {

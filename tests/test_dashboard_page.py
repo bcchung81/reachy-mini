@@ -658,6 +658,23 @@ def test_로봇_알약은_스냅샷으로_그리고_조정실_소켓이_끊기�
         assert f'<span id="robot-{role}" class="robot unknown"><i aria-hidden="true"></i>{name} <b>모름</b></span>' in src
 
 
+def test_조정실_소켓이_끊긴_동안_데크_상태_낱말과_지금_칩의_빨강을_흐리게_한다():
+    """끊긴 동안은 스냅샷이 멈춰 데크의 'ON AIR · 사회자'(빨강)와 런다운 지금 칩의 빨강이 마지막 상태로 남는다 — 로봇 알약만 '모름' 이면
+    같은 화면이 반은 모른다고 하고 반은 방송 중이라고 한다(2026-11-14 2차 보고 4-3, 조율자 결정: 흐리게 한다). 끊긴 동안 body 에 `stale` 을
+    걸고, 두 곳의 빨강을 회색으로 바꾼다. **색으로** 흐린다 — 투명도로 흐리면 글 대비까지 깎여 안 읽힌다(디자인 점검의 대비 기준).
+    다시 붙으면(setConn("connected")) 풀리고 스냅샷이 그린 색이 돌아온다."""
+    src = _src()
+    conn = _media_block(src, "function setConn(state)")
+    assert 'document.body.classList.toggle("stale", state !== "connected");' in conn
+    tag = _css_rule(src, "body.stale .now-tag")
+    chip = _css_rule(src, "body.stale .cue-row.now")
+    title = _css_rule(src, "body.stale .cue-row.now .cue-title")
+    for rule in (tag, chip, title):
+        assert "#E5484D" not in rule and "#3A1D21" not in rule and "#FF8A8E" not in rule and "#FFD0D2" not in rule, rule
+        assert "opacity" not in rule, rule
+    assert "background:" in tag and "background:" in chip and "border-color:" in chip
+
+
 def test_데크의_다음은_코스_밖을_건너뛴_큐다():
     """'다음' 은 [다음](n) 이 실제로 밟을 큐 — 감독은 코스 밖 큐를 건너뛴다. 런다운의 그 칩에도 같은 표시(upnext)."""
     src = _src()
@@ -862,13 +879,29 @@ def test_헤드리스_세로_태블릿에서_머리가_줄바꿈되어_연결_�
     assert browser["errors"] == []
 
 
+_RED = """(function () {
+  var t = getComputedStyle(document.getElementById('now-tag')), c = document.querySelector('#rundown .cue-row.now');
+  var cs = getComputedStyle(c), title = getComputedStyle(c.querySelector('.cue-title'));
+  return [t.backgroundColor, cs.backgroundColor, cs.borderTopColor, title.color, document.body.classList.contains('stale')];
+})()"""
+_RED_VALUES = {"rgb(229, 72, 77)", "rgb(58, 29, 33)", "rgb(255, 208, 210)"}   # #E5484D(ON AIR)·#3A1D21(지금 칩 바탕)·#FFD0D2(지금 칩 이름)
+
+
 def test_헤드리스_조정실_소켓이_끊기면_로봇_알약은_모름이고_다시_붙으면_돌아온다(browser):
+    """끊긴 동안: 로봇 알약 '모름', 데크 상태 낱말과 지금 칩의 빨강은 회색(마지막 'ON AIR' 가 방송 중으로 읽히지 않게). 다시 붙으면 다 돌아온다."""
     js, wait = browser["js"], browser["wait"]
     browser["open_at"](1440, 900)
     assert "말하는 중" in js("document.getElementById('robot-mc').textContent")
+    before = js(_RED)
+    assert before[0] == "rgb(229, 72, 77)" and before[1] == "rgb(58, 29, 33)" and before[4] is False, before   # 기준: 지금은 빨강
     js("ws.close()")
     wait("document.getElementById('robot-mc').textContent.indexOf('모름') >= 0 && "
          "document.getElementById('robot-docent').textContent.indexOf('모름') >= 0", 3)
     assert "disconnected" in js("document.getElementById('conn').className")
+    stale = js(_RED)
+    assert stale[4] is True and not (set(stale[:4]) & _RED_VALUES), stale
+    assert "ON AIR" in js("document.getElementById('now-tag').textContent")   # 글은 그대로(마지막 상태) — 색만 흐린다
     wait("document.getElementById('robot-mc').textContent.indexOf('말하는 중') >= 0", 8)   # 2초 뒤 다시 붙고 스냅샷이 되돌린다
+    after = js(_RED)
+    assert after[0] == "rgb(229, 72, 77)" and after[1] == "rgb(58, 29, 33)" and after[4] is False, after
     assert browser["errors"] == []
