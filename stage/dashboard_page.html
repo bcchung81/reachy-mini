@@ -1,6 +1,10 @@
 <!doctype html>
 <!--
   무대감독 조정실 — 시안 B(docs/design/dashboard-B.dc.html)를 오프라인 한 장으로.
+  2026-11-14 배치를 **가 안(핵심만 + '고급' 서랍)** 으로 바꿨다(계획서 docs/superpowers/plans/2026-11-14-show-readiness.md §4, U5 사용자 결정,
+  시안 docs/design/control-room-A.html). 기본 화면 = 머리(수준·코스·로봇 2대·연결) / 시연 화면 + 진행 데크(지금·다음 큐, 공연
+  시작·종료, 이전·다음, 떨어뜨린 즉시 중단) / 런다운 번호 칩 / '고급' 줄. 운영 모드·이 큐 다시·침묵 대기·카메라·대기모드·이벤트 로그·
+  링크는 '고급' 서랍 — 서랍 안이어도 id 는 전부 DOM 에 있다(감독 소켓 렌더는 그대로).
 
   시연장은 인터넷이 없다: 이 파일은 외부 폰트·스크립트·이미지를 하나도 부르지
   않는다(정적 테스트가 확인한다). 서버 문자열(관람객 STT, 경고, 대사)은 전부
@@ -16,7 +20,8 @@
 <title>무대감독 조정실</title>
 <style>
   /* 폰트는 시스템 스택뿐이다 — 하나도 내려받지 않는다. */
-  :root { color-scheme: dark; }
+  /* --deck-w = 오른쪽 진행 데크 폭. 떠오른 '고급' 서랍의 폭 계산(서랍은 시연 화면 칸에 맞춘다)과 테스트가 같은 값을 읽는다. */
+  :root { color-scheme: dark; --deck-w: 300px; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -38,8 +43,9 @@
      `disabled` 하나로 클릭도 막히고(브라우저 기본) 눈에도 "지금 못 누른다"가 보여야
      한다 — 안 그러면 운영자가 왜 안 먹히는지 화면만 봐서는 모른다. */
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .mono, .cue-label, .cue-topic, .cue-num, .cue-tag, .log-time, .log-text,
-  kbd, .cam-label, .mic, .auto-head span {
+  /* ~~.cue-label, .cue-topic~~ 은 뺐다(2026-11-14) — 진행 데크에서 두 줄로 읽는 큐 이름·주제라 시스템 글꼴이 낫다. */
+  .mono, .cue-num, .cue-tag, .log-time, .log-text,
+  kbd, .cam-label, .mic, .auto-head span, .now-tag {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
@@ -55,15 +61,23 @@
   }
   header .left { display: flex; align-items: center; gap: 16px; min-width: 0; }
   header .right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: #9AA3AE; flex: 0 0 auto; }
-  .app-title { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+  /* 줄어들 수 있게(min-width:0 + 말줄임) — 1024px 에서 단독 불가 안내(#mode-note)가 뜨면 머리 왼쪽이 오른쪽 묶음(수준·로봇·연결)을
+     밀어낼 만큼 길어진다. 경고는 오른쪽 묶음이 들고 있으므로 제목이 먼저 줄어든다. */
+  .app-title { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+               flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* 헤더 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 약 500px 로 늘어나면, flex item
      기본 최소폭(nowrap 텍스트는 줄어들지 않는다)에 걸려 이 라벨이 "관람객 수준" 캡션
      위로 겹쳤다(1024px 실측, 수준 리뷰 Minor 2). min-width:0 으로 줄어들 수 있게 하고
      넘치면 말줄임한다 — white-space:nowrap 은 그대로 둔다(말줄임은 한 줄 전제). */
-  .cue-label { font-size: 13px; color: #9AA3AE; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 2026-11-14: 큐 이름은 머리에서 진행 데크로 내려왔다 — 두 줄까지, 넘치면 말줄임(같은 세 속성). 머리에는 공연을 바꾸는
+     손잡이와 경고만 남는다. */
+  .cue-label {
+    font-size: 16px; font-weight: 800; color: #FFFFFF; line-height: 1.35; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
   .cue-topic {
-    font-size: 12px; color: #6B7684; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; max-width: 320px;
+    font-size: 12px; line-height: 1.45; color: #9AA3AE; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
   /* 운영 모드 토글(팟캐스트/단독) — 제목 바로 옆(헤더 왼쪽)에 둔다. 전환이 발화를
      멈추는 무거운 조작이라 오른쪽의 관람객 수준 버튼(가벼운 조작, 말을 끊지 않고 다음 발화부터)과
@@ -77,7 +91,8 @@
     border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; line-height: 1.3;
   }
   .mode-btn.applied { background: #4CC3D9; border-color: #4CC3D9; color: #05070A; }
-  .mode-note { font-size: 11px; color: #F0A64A; white-space: nowrap; flex: 0 0 auto; }
+  /* 단독 불가 안내는 경고성이라 서랍에 넣지 않고 머리에 남긴다(모드 토글은 '고급' 서랍 — 2026-11-14). 좁으면 말줄임(전문은 title). */
+  .mode-note { font-size: 11px; color: #F0A64A; white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .mode-note[hidden] { display: none; }
 
   .level-group { display: flex; align-items: center; gap: 6px; }
@@ -98,6 +113,30 @@
     border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; text-decoration: none;
   }
   .hdr-link:hover { color: #E8EAED; border-color: #4CC3D9; }
+  /* 로봇 알약(2026-11-14) — 카메라 칸(탤리)이 '고급' 서랍에 접히면 로봇이 붙었는지가 안 보인다. 그래서 머리에 둔다.
+     상태: 연결(초록 점) · 말하는 중(빨강, ON AIR 와 같은 색) · 끊김(빨간 점선 — 안 붙은 채 공연하면 1인 모드로 돈다, lessons
+     2026-11-13) · 거부됨·대기모드(호박) · 모름(조정실 소켓이 끊겨 로봇 상태를 모른다 — 마지막 '말하는 중' 을 두면 거짓말이다). */
+  .robots { display: flex; gap: 6px; flex: 0 0 auto; }
+  .robot {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap;
+    padding: 3px 10px 3px 8px; border-radius: 999px; border: 1px solid #3A4350; background: #1C222B; color: #C9CFD6;
+  }
+  .robot i { width: 8px; height: 8px; border-radius: 50%; background: #6B7684; flex: 0 0 auto; }
+  .robot b { font-weight: 600; color: #9AA3AE; }
+  .robot.standby i { background: #3FB950; }
+  .robot.onair { border-color: #E5484D; background: #3A1D21; color: #fff; }
+  .robot.onair i { background: #E5484D; }
+  .robot.onair b { color: #FF8A8E; }
+  .robot.offline { border: 1px dashed #E5484D; color: #FF8A8E; background: #1E1214; }
+  .robot.offline i { background: transparent; border: 1.5px solid #E5484D; }
+  .robot.offline b { color: #FF8A8E; }
+  .robot.rejected, .robot.paused { border: 1px dashed #F0A64A; color: #F5C98A; }
+  .robot.rejected i, .robot.paused i { background: #F0A64A; }
+  .robot.rejected b, .robot.paused b { color: #F5C98A; }
+  /* '모름' 은 흐리게 보이되 읽혀야 한다 — #6B7684 는 머리 바탕(#0D1014)에서 4.1:1 로 본문 기준(4.5:1)에 못 미쳤다(디자인 점검). */
+  .robot.unknown { border-style: dotted; color: #9AA3AE; background: transparent; }
+  .robot.unknown i { background: #3A4350; }
+  .robot.unknown b { color: #9AA3AE; }
 
   .conn {
     font-size: 12px; font-weight: 600; color: #fff; background: #3A4350;
@@ -121,14 +160,13 @@
                       font-weight: 800; border-bottom: 1px solid #6B4318; }
   .one-robot-banner[hidden] { display: none; }
 
-  /* 예전에는 `.monitors` 가 최상단 폭 전체를 쓰는 독립 줄이었다(자체 좌우 padding).
-     지금은 `.right-col` 안에 있어 그 부모(`.stage-grid`)의 padding 을 그대로 쓴다 —
-     여기서 또 주면 이중으로 좁아진다. */
-  .monitors { flex: 0 0 auto; display: flex; gap: 24px; flex-wrap: wrap; }
-  /* min-width 를 420→300 으로 낮췄다 — 왼쪽 열(300px 고정)이 새로 생겨, 태블릿
-     가로(1024px, 페이지 여백 48 + 두 열 사이 간격 24 뺀 나머지)에서도 두 카메라가
-     한 줄에 남으려면 이만큼 줄여야 한다(§1024px 테스트가 계산을 고정한다). */
-  .monitor-col { flex: 1 1 360px; min-width: 300px; display: flex; flex-direction: column; }
+  /* 카메라 두 칸 — 2026-11-14 부터 '고급' 서랍 안(서랍 폭 전부를 쓰는 한 줄). ~~`.right-col` 안, gap 24~~.
+     ~~`flex: 1 1 360px; min-width: 300px`~~ — 1024×768 에서 두 칸이 두 줄로 내려앉고 페이지가 193px 스크롤됐다: 줄바꿈은
+     **flex-basis(360)** 로 정해지는데(360+24+360 > 652) 테스트는 min-width(300)만 더해 통과했다. basis 를 300 으로 두고, 테스트가
+     basis 를 읽는다(가장 좁은 떠오른 서랍 = 1024px 의 안쪽 폭에 두 basis + 간격이 들어가야 한다). 더 좁으면(세로 태블릿 아래)
+     줄바꿈으로 쌓인다. */
+  .monitors { flex: 0 0 auto; display: flex; gap: 12px; flex-wrap: wrap; min-width: 0; }
+  .monitor-col { flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; }
   .cam {
     /* 창 높이에 비례(최대 320px). 고정 320px 이면 720px 창에서 모니터만 460px 을 먹어
        하단(런다운·제어·로그)이 창 밖으로 밀리고 페이지 스크롤이 생겼다 — 운영자 화면은
@@ -188,53 +226,79 @@
     border: 1px solid #3A4350; background: #1C222B; color: #8FDCEA;
   }
 
-  /* 2단 그리드 — 남은 높이(헤더·단독 배너 아래)를 다 쓴다. 런다운·로그는 안쪽에서
-     스크롤하므로 여기에 하한을 두지 않는다(예전 260px·320px 하한이 720px 창에서 페이지
-     스크롤을 만들었다). 좁은 창(아래 미디어쿼리)에서만 세로로 쌓이고 페이지가 스크롤된다. */
-  .stage-grid { flex: 1 1 auto; min-height: 200px; padding: 16px 24px 20px; display: flex; gap: 24px; }
-  /* 왼쪽 열 — 런다운(위) + 진행 제어(아래), 세로 전체. 폭을 **고정**한다(flex-grow 0) —
-     오른쪽 카메라·로그가 창이 넓어질 때 그 여유를 갖게 하려는 것이다(사용자 요청: 로그를
-     가로로 넓게). 300px 은 옛 rundown-panel/control-panel 기본 폭(280~300)과 같다. */
-  .left-col { flex: 0 0 300px; min-width: 260px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
-  /* 오른쪽 열 — 카메라 두 대(위, 내용 높이만큼) + 로그(아래, 남는 높이 전부). */
-  .right-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  /* ~~2단 그리드(.stage-grid = 왼쪽 열 런다운+제어 300px 고정 / 오른쪽 열 시연 화면·카메라·로그)~~ — 2026-11-14 가 안으로 바꿨다.
+     가운데(.core) = 시연 화면 칸(남는 폭 전부) + 진행 데크(--deck-w 고정). 남은 높이(머리·띠·런다운 띠·'고급' 줄을 뺀 것)를
+     다 쓰고, 하한이 없다(옛 260/320px 하한이 720px 창에서 페이지 스크롤을 만들었다). 좁은 창에서만 세로로 쌓인다. */
+  .core { flex: 1 1 auto; min-height: 0; display: flex; gap: 16px; padding: 16px 24px 0; }
+  .core .stage-panel { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  /* 진행 데크 — 위에서부터 지금 큐(이름·다음·주제) / [공연 시작·종료] / [이전] [다음] / 자동 진행 / 맨 아래 [즉시 중단].
+     창이 낮거나 띠가 떠 높이가 모자라면 **지금 큐 블록만 줄어든다**(맨 끝의 주제가 먼저 잘림) — 단추는 안 줄어들어 [즉시 중단] 이
+     창 밖으로 밀리지 않는다. */
+  .deck { flex: 0 0 var(--deck-w); min-width: 0; gap: 10px; }
+  .now { flex: 0 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 4px;
+         padding-bottom: 10px; border-bottom: 1px solid #242B35; min-width: 0; }
+  .now-head { display: flex; justify-content: space-between; align-items: center; }
+  .now-cap { font-size: 11px; font-weight: 700; color: #9AA3AE; letter-spacing: 0.08em; flex: 0 0 auto; }
+  /* 지금 상태 한 낱말 — READY(시작 전) · ON AIR · 사회자/도슨트(말하는 중, 빨강) · 질문 대기(마이크 열림) · 단독. */
+  .now-tag { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; background: #242B35; color: #C9CFD6; white-space: nowrap; }
+  .now-tag.onair { background: #E5484D; color: #fff; }
+  .now-tag.listen { background: #10262B; color: #8FDCEA; }
+  .next-line { display: flex; gap: 8px; align-items: baseline; min-width: 0; font-size: 13px; color: #C9CFD6; }
+  #cue-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .deck > .ctrl-btn, .step-row, .deck > .auto { flex: 0 0 auto; }
+  .deck .ctrl-btn { width: 100%; }
+  .deck #btn-show { height: clamp(46px, 7vh, 64px); }
+  /* [다음] 이 가장 크다(가장 자주 누른다) — [이전] 과 1 : 1.6. */
+  .step-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px; }
+  .step-row .ctrl-btn { height: clamp(56px, 11vh, 104px); font-size: 18px; }
+  /* 즉시 중단은 데크 맨 아래로 떨어뜨린다 — [다음] 을 누르려다 손이 미끄러져 닿는 자리가 아니게. */
+  .deck #btn-abort { margin-top: auto; height: clamp(54px, 8vh, 72px); }
   .panel {
     background: #151A21; border: 1px solid #242B35; border-radius: 6px; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 8px; min-height: 0;
   }
-  /* 런다운은 왼쪽 열의 남는 세로 공간을 다 먹는다(안쪽 스크롤) — 제어판은 내용 높이만큼만. */
-  .rundown-panel { flex: 1 1 auto; min-height: 0; }
-  .control-panel { flex: 0 0 auto; }
-  /* 로그는 오른쪽 열 폭 **전부**(카메라 두 대 + 사이 간격) — 예전 280px 고정 폭보다
-     훨씬 넓다(사용자 요청). 남는 세로 공간도 다 먹는다. */
+  /* ~~.rundown-panel(왼쪽 열 남는 높이, 안쪽 스크롤) · .control-panel~~ — 2026-11-14 런다운 띠·진행 데크로 바뀌었다. */
+  /* 로그 — '고급' 서랍 안, 서랍의 남는 칸을 다 먹는다(안쪽 스크롤). */
   .log-panel { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
   .panel-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
   .panel-title { font-weight: 700; color: #E8EAED; }
 
-  /* `contain: size` — 목록의 **내용 길이가 패널 높이를 밀어 올리지 않게** 한다. 이것이 없으면
-     19행(약 620px)이 하단 줄 높이를 정해, 같은 줄의 이벤트 로그까지 그만큼 늘어나 창을 넘친다.
-     크기를 내용에서 떼면 목록은 패널이 준 높이만 차지하고 나머지는 안쪽에서 스크롤된다. */
-  .rundown-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; contain: size; display: flex; flex-direction: column; gap: 2px; }
-  .cue-row {
-    height: 30px; flex: 0 0 30px; display: flex; align-items: center; gap: 12px; padding: 0 10px;
-    border: none; border-radius: 4px; background: transparent; color: #C9CFD6; font-size: 13px; text-align: left;
+  /* 런다운 띠(2026-11-14) — 번호 칩 격자. **스크롤하지 않고 다 보인다**: 넓으면 한 줄, 1280px 아래 두 줄(칸 수는 buildRundown 이
+     큐 수로 --cue-cols / --cue-cols-narrow 에 준다). ~~19행 목록 + `contain: size` 안쪽 스크롤~~ — 목록이 스크롤되면 지금 큐가
+     아래로 숨었다(그래서 큐가 바뀔 때마다 scrollIntoView 로 당겼다). 칩은 다 보여 당길 일이 없다. */
+  .strip { flex: 0 0 auto; margin: 12px 24px 0; padding: 10px 12px 12px; gap: 8px; }
+  .strip .panel-head { align-items: center; gap: 12px; min-height: 26px; }
+  .strip-hint { margin-left: auto; color: #9AA3AE; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rundown-list {
+    flex: 0 0 auto; display: grid; gap: 4px; grid-template-columns: repeat(var(--cue-cols, 19), minmax(0, 1fr));
   }
-  .cue-row .cue-num { width: 20px; color: #9AA3AE; flex: 0 0 auto; }
-  .cue-row .cue-title { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cue-row .cue-tag { font-size: 11px; color: #6B7684; flex: 0 0 auto; }
-  .cue-row.done { color: #6B7684; }
-  /* 코스 밖 큐(2026-09-25) — 흐리게. 누르면 이동은 된다(운영자의 직접 이동). */
-  .cue-row.skip { color: #4A5260; }
-  .cue-row.skip .cue-tag { color: #4A5260; }
-  .cue-row.now { background: #3A1D21; color: #FFFFFF; font-weight: 700; }
-  .cue-row.now .cue-tag { color: #FF8A8E; }
-  /* 시작 전(idle)의 지금 큐는 READY — ON AIR 빨강을 켜지 않는다(P3). 두 클래스
-     자리(.now.ready)라 위 규칙보다 구체적이어서 이긴다. */
-  .cue-row.now.ready .cue-tag { color: #9AA3AE; }
-  /* .cue-row.todo 는 일부러 규칙이 없다 — 시안 B 목업도 미래 큐를 기본 .cue-row 색 그대로 두고
-     "NEXT" 태그만 달았다(강조는 지금 큐 하나뿐이어야 런다운에서 눈이 한 곳에만 간다). */
-  .cue-row.selected { outline: 1px solid #4CC3D9; outline-offset: -1px; }
+  .cue-row {
+    position: relative; height: 46px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start;
+    justify-content: center; gap: 1px; padding: 4px 7px; border: 1px solid #2A313C; border-radius: 5px;
+    background: #1A2028; color: #C9CFD6; text-align: left;
+  }
+  .cue-row .cue-num { font-size: 14px; font-weight: 800; color: #E8EAED; }
+  /* 칩 이름은 짧은 이름(' — ' 앞)만 — 전체 이름은 툴팁(title)과 누른 뒤의 이동 확인 바. */
+  .cue-row .cue-title { font-size: 10.5px; color: #9AA3AE; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 상태 낱말(DONE·NEXT·제외·READY·ON AIR)은 색으로 대신 보인다 — 글은 DOM 에 그대로 있다. 지금 큐에만 작게 다는데, **칩이 넉넉한
+     폭에서만**: 1280 한 줄(칩 약 60px)·세로 태블릿(약 67px)에서는 'ON AIR' 가 번호 '03' 을 덮었다(2026-11-14 캡처). 두 줄이 되는
+     901~1279px(칩 79px 넘음)과 한 줄이어도 1480px 넘는 창(칩 70px 넘음)에서만 단다 — 아래 두 media 블록. */
+  .cue-row .cue-tag { display: none; }
+  .cue-row.now .cue-tag { position: absolute; top: 5px; right: 6px; font-size: 9px; color: #FF8A8E; }
+  .cue-row.done { background: transparent; border-color: #1F252E; }
+  .cue-row.done .cue-num, .cue-row.done .cue-title { color: #4A5260; }
+  /* 코스 밖 큐(2026-09-25) — 흐린 점선. 누르면 이동은 된다(운영자의 직접 이동). */
+  .cue-row.skip { background: transparent; border-style: dashed; border-color: #262C35; }
+  .cue-row.skip .cue-num, .cue-row.skip .cue-title { color: #3F4652; }
+  /* 바로 다음에 밟을 큐(데크의 '다음') — 청록 테두리. 미래 큐 전체(.todo)는 일부러 강조하지 않는다(눈이 한 곳에만 가게). */
+  .cue-row.upnext { border-color: #4CC3D9; }
+  .cue-row.now { background: #3A1D21; border-color: #E5484D; }
+  .cue-row.now .cue-title { color: #FFD0D2; }
+  /* 시작 전(idle)·단독의 지금 큐는 READY — ON AIR 빨강을 켜지 않는다(P3). 두 클래스 자리라 위 규칙보다 구체적이어서 이긴다. */
+  .cue-row.now.ready { background: #1C222B; border-color: #9AA3AE; }
+  .cue-row.now.ready .cue-title, .cue-row.now.ready .cue-tag { color: #C9CFD6; }
+  .cue-row.selected { outline: 2px solid #4CC3D9; outline-offset: 1px; }
 
   .goto-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -246,8 +310,11 @@
   .goto-actions button { border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; }
   #goto-confirm { background: #4CC3D9; color: #05070A; font-weight: 700; }
   #goto-cancel { background: #242B35; color: #C9CFD6; }
+  /* 이동 확인 바는 런다운 띠의 머리 줄 오른쪽에 뜬다 — 칩 아래에 펼치면 띠 높이가 바뀌어 시연 화면이 출렁였다. 뜨는 동안 안내 글은 접는다. */
+  .strip .goto-bar { margin-left: auto; padding: 3px 4px 3px 10px; min-width: 0; }
+  .strip .goto-bar:not([hidden]) ~ .strip-hint { display: none; }
 
-  .control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  /* ~~.control-grid(3칸 격자 — 이전·다시·다음 / 공연·즉시 중단 2칸)~~ — 2026-11-14 진행 데크로 바뀌었다. */
   .ctrl-btn {
     /* 창 높이에 비례(48~76px) — 낮은 창에서도 제어 패널이 하단 줄 안에 들어오게. */
     height: clamp(48px, 8vh, 76px); border-radius: 6px; border: 1px solid #3A4350; background: #1C222B; color: #E8EAED;
@@ -257,7 +324,10 @@
   .ctrl-btn kbd { font-size: 11px; color: #9AA3AE; }
   .ctrl-btn.primary { border-color: #4CC3D9; background: #10262B; }
   .ctrl-btn.primary kbd { color: #8FDCEA; }
-  .ctrl-btn.abort { grid-column: span 2; border: none; background: #E5484D; color: #fff; font-size: 18px; font-weight: 900; }
+  /* ~~grid-column: span 2~~ — 격자가 없어졌다. 좁은 폭의 4칸 데크에서 span 2 가 남으면 혼자 한 줄로 밀렸다(시안 캡처). */
+  .ctrl-btn.abort { border: none; background: #E5484D; color: #fff; font-size: 18px; font-weight: 900; }
+  /* 서랍 안의 작은 단추(이 큐 다시). */
+  .ctrl-btn.small { height: 40px; width: 100%; flex-direction: row; gap: 8px; font-size: 14px; }
   /* 교육자료 화면 열기(2026-11-13) — 실기 구동에서 교육자료(시연영상)를 아무도 안 열어 안 보였다. 조정실에서 바로 연다. */
   /* 머리의 "교육자료 ↗"(관람객 폰용 카드 /handout)와 다른 것이다 — 이것은 공연을 따라가는 모션 화면(/stage/…)이라 '시연 영상' 이라 부른다. */
   /* 시연 화면(2026-11-13) — 조정실 안에서 프로젝터와 같은 화면을 본다. 화면은 1280×720 으로 그려 패널 크기에 맞춰 줄인다
@@ -268,7 +338,8 @@
   .stage-screen.fallback { color: #F0A64A; }
   .stage-pop { flex: 0 0 auto; padding: 5px 12px; border-radius: 6px; border: 1px solid #F5A524; background: #2A2110;
                color: #FFD58A; font-size: 13px; font-weight: 800; cursor: pointer; }
-  .stage-view { position: relative; height: clamp(170px, 44vh, 560px); background: #05070A; border-radius: 6px; overflow: hidden; }
+  /* ~~height: clamp(170px, 44vh, 560px)~~ — 가운데 칸의 남는 높이를 다 쓴다(틀 맞춤 fit 이 ResizeObserver 로 따라온다). */
+  .stage-view { position: relative; flex: 1 1 auto; min-height: 160px; background: #05070A; border-radius: 6px; overflow: hidden; }
   .stage-view iframe { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; border: 0; transform-origin: 0 0; }
   .ctrl-btn.abort kbd { color: #FFE1E2; }
   /* 공연 시작 ↔ 공연 종료 토글(2026-09-25). 시작은 초록 테두리, 진행 중(종료 버튼)은 주황 테두리 —
@@ -278,7 +349,8 @@
   .ctrl-btn.show.running { border-color: #F0A64A; background: #2A2113; }
   .ctrl-btn.show.running kbd { color: #F5C98A; }
 
-  .auto { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  /* ~~margin-top: auto~~(옛 제어판 바닥에 붙였다) — 진행 데크에서는 [다음] 바로 아래, 맨 바닥은 [즉시 중단] 몫이다. */
+  .auto { display: flex; flex-direction: column; gap: 8px; }
   .auto-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
   .auto-track { height: 6px; border-radius: 3px; background: #242B35; }
   #auto-bar { width: 0%; height: 6px; border-radius: 3px; background: #F0A64A; transition: width 0.3s linear; }
@@ -297,6 +369,57 @@
   .log-text { color: #C9CFD6; overflow-wrap: anywhere; }
   .log-line.warn .log-text { color: #F0A64A; }
 
+  /* '고급' 서랍(2026-11-14) — 공연 중에는 거의 안 만지는 것: 운영 모드 · 이 큐 다시 · 침묵 대기 · 링크 / 이벤트 로그 / 카메라 두 대.
+     늘 접힌 채 시작한다(펼침을 기억하지 않는다 — 다시 열면 늘 기본 화면). 접힌 동안 경고가 쌓이면 요약 줄에 개수와 마지막 경고. */
+  .advanced { flex: 0 0 auto; margin: 12px 24px 16px; }
+  .advanced > summary {
+    list-style: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid #242B35; border-radius: 6px; background: #12161C; color: #9AA3AE; font-size: 12px;
+  }
+  .advanced > summary::-webkit-details-marker { display: none; }
+  .advanced[open] > summary { border-color: #3A4350; color: #C9CFD6; }
+  .adv-title { font-weight: 800; color: #E8EAED; font-size: 13px; flex: 0 0 auto; }
+  .adv-list { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .adv-alert {
+    flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 2px 10px; border-radius: 999px; background: #3A2410; border: 1px solid #F0A64A; color: #FFD58A; font-weight: 700;
+  }
+  .adv-alert[hidden] { display: none; }
+  .adv-chev { flex: 0 0 auto; color: #9AA3AE; }
+  .advanced[open] .adv-chev { transform: rotate(180deg); }
+  /* 서랍 안 — 위: 설정 | 로그, 아래: 카메라 두 대(서랍 폭 전부). ~~세 칸(설정·카메라·로그)~~ 이면 1024px 에서 카메라가 100px
+     남짓으로 눌려 라벨과 탤리가 겹쳤다(시안 캡처). */
+  .adv-body { display: grid; grid-template-columns: 236px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 16px; margin-top: 10px; }
+  .adv-body .adv-ctrl { grid-column: 1; grid-row: 1; gap: 12px; overflow-y: auto; }
+  .adv-body .log-panel { grid-column: 2; grid-row: 1; }
+  .adv-body .monitors { grid-column: 1 / -1; grid-row: 2; }
+  .adv-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .adv-cap { font-size: 12px; color: #9AA3AE; min-width: 60px; }
+  /* 236px 칸에서 '침묵 대기'·'끄기' 가 글자 단위로 쪼개졌다(시안 캡처) — 낱말은 안 쪼개고 줄째로 넘긴다. */
+  .adv-ctrl .wait-set { flex-wrap: wrap; row-gap: 6px; }
+  .adv-ctrl .wait-label, .adv-ctrl .wait-btn { white-space: nowrap; }
+  /* 넓은 화면: 펼치면 **시연 화면 칸 위에 꼭 맞게** 떠오른다(자리는 placeAdvanced 가 그 칸의 사각형으로 준다) — 진행 데크
+     (다음·즉시 중단)와 런다운 띠는 가리지 않는다. 흐름 안에서 펼치면 그만큼 데크가 눌려 1024×768 에서 [즉시 중단] 이 창 밖으로
+     밀렸고(계산), 화면 아래쪽에 붙여 띄우면 런다운 띠를 반쯤 가렸다(시안 캡처). Esc 로 닫는다. */
+  @media (min-width: 901px) {
+    .advanced[open] > .adv-body {
+      position: fixed; left: var(--adv-l, 24px); top: var(--adv-t, 72px); width: var(--adv-w, 60vw); height: var(--adv-h, 60vh);
+      z-index: 20; margin: 0; padding: 14px; background: #0D1014; border: 1px solid #3A4350; border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    }
+  }
+
+  /* 1280px 아래(태블릿 가로 1024 포함) — 데크를 조금 좁히고 런다운 칩을 두 줄로(한 줄 19칸이면 칩이 50px 로 숫자만 남는다). */
+  @media (max-width: 1279px) {
+    :root { --deck-w: 272px; }
+    .rundown-list { grid-template-columns: repeat(var(--cue-cols-narrow, 10), minmax(0, 1fr)); }
+  }
+  @media (min-width: 901px) and (max-width: 1279px) { .cue-row.now .cue-tag { display: block; } }
+  @media (min-width: 1480px) { .cue-row.now .cue-tag { display: block; } }
+  /* 서랍 안 카메라 칸은 짧다(15vh — 720px 창이면 108px). 장식 아이콘(svg, aria-hidden)까지 세로로 쌓으면 자리 표시 글이 아래
+     [카메라 끄기]·[대기모드] 와 겹쳤다(2026-11-14 캡처 — 옛 화면도 같은 높이라 같았다). 아이콘을 빼면 글이 가운데에 남는다. */
+  .adv-body .cam > svg { display: none; }
+
   /* 1280px 아래(태블릿 접속, 오프라인 테스트 절차 참고)에서는 `.cue-label` 이
      min-width:0 으로 줄어들어도 오른쪽 묶음(수준 버튼+연결 배지)이 자리를
      다 못 내준다(1024px 실측). "관람객 수준" 캡션은 정보용 텍스트라 좁은 폭에서
@@ -305,37 +428,45 @@
      하므로 여기서 숨기지 않는다. */
   @media (max-width: 1180px) {
     .level-caption { display: none; }
-    /* 설정 때 한 번 여는 편의 링크라 좁은 폭에서 먼저 접는다 — 주소는 운영 문서에 있다. */
-    .hdr-link { display: none; }
+    /* ~~.hdr-link { display: none }~~ — 2026-11-14 링크 둘은 머리에서 '고급' 서랍으로 옮겼다(서랍 안에서는 늘 보인다). */
   }
 
-  /* 900px 보다 좁으면(세로 태블릿·휴대폰 가로 등) 왼쪽 열(300 고정) + 오른쪽 열(카메라
-     최소 폭 2×300+24)이 한 줄에 안 들어간다. 그때 옆으로 우겨넣으면 카메라·로그가 몇 px
-     로 찌그러지므로, 두 열을 세로로 쌓고 각 패널에 쓸 만한 높이를 준 뒤 넘치는 만큼은
-     페이지 스크롤로 넘긴다(body 는 이미 overflow-y: auto — 옛 955px 분기와 같은 이유). */
+  /* 900px 보다 좁으면(세로 태블릿) 시연 화면 + 데크(--deck-w)를 옆으로 둘 수 없다 — 위에서 아래로 쌓고 넘치는 만큼은 페이지
+     스크롤로 넘긴다(body 는 이미 overflow-y: auto). ~~.stage-grid 를 column, .panel 최소 260px~~(옛 2단 배치).
+     - 머리: 56px 고정 + overflow:hidden 이면 768px 에서 오른쪽 끝 연결 배지가 잘렸다(시안 캡처, 옛 조정실도) → 두 줄로 접는다.
+     - 시연 화면: 남는 높이가 없어 flex 로 두면 160px 로 눌린다 → 폭에 맞춘 16:9.
+     - 데크: 한 줄 단추 넷(공연·이전·다음·즉시 중단), 지금 큐는 그 위, 자동 진행은 아래.
+     - 서랍: 흐름 안에서 펼친다(떠오르면 데크를 덮는다). 로그는 contain:size 라 높이를 정해 줘야 0 으로 납작해지지 않는다. */
   @media (max-width: 900px) {
-    .stage-grid { flex-direction: column; flex: 0 0 auto; }
-    .left-col, .right-col { flex: 0 0 auto; width: 100%; }
-    .panel { min-height: 260px; }
+    header { flex: 0 0 auto; min-height: 56px; flex-wrap: wrap; padding: 8px 16px; row-gap: 8px; }
+    header .left, header .right { flex-wrap: wrap; row-gap: 6px; }
+    .core { flex-direction: column; flex: 0 0 auto; padding: 12px 16px 0; }
+    .core .stage-view { flex: none; height: auto; aspect-ratio: 16 / 9; }
+    .deck { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .deck .now { grid-column: 1 / -1; }
+    .step-row { display: contents; }
+    .deck .auto { grid-column: 1 / -1; order: 9; }
+    .deck #btn-abort { margin-top: 0; order: 5; }
+    .deck #btn-show, .step-row .ctrl-btn, .deck #btn-abort { height: 60px; font-size: 15px; }
+    .strip, .advanced { margin-left: 16px; margin-right: 16px; }
+    .adv-body { grid-template-columns: 1fr; grid-template-rows: none; }
+    .adv-body .adv-ctrl, .adv-body .log-panel, .adv-body .monitors { grid-column: 1; grid-row: auto; }
+    .adv-body .log-panel { height: 260px; }
+    .adv-list { display: none; }
   }
 </style>
 </head>
 <body>
 
+<!-- 머리 — 공연을 바꾸는 손잡이와 경고만: 수준·코스·로봇 2대·연결(2026-11-14 가 안). 큐 이름은 진행 데크로, 모드 토글·링크는 '고급' 서랍으로. -->
 <header>
   <div class="left">
     <span class="app-title">무대감독 · 조정실</span>
-    <!-- 버튼 2개는 JS 가 hello.modes 로 짓는다(계약 순서: podcast, solo — 재접속마다
-         비우고 다시 짓는다, buildLevelControl 과 같은 이유). modes 가 없으면(구버전
-         서버) 이 컨테이너 자체를 숨긴다 — 던지지 않는다(계약: never throw). -->
-    <span id="mode" class="mode-group" hidden></span>
     <!-- 단독을 못 켜는 이유 안내 — 사회자가 안 붙었으면 "단독: 사회자 로봇 연결 후", 붙었는데
          대기모드면 "단독: 사회자 대기모드 해제 후". snapshot.solo_available 이 거짓이고
          지금 모드가 solo 가 아닐 때만 채워진다. ~~"로봇 앱 업데이트 후"~~ — 2026-09-25 단독을 감독이
          맡으면서 앱 기능이 필요 없어졌다. -->
     <span id="mode-note" class="mode-note" hidden></span>
-    <span id="cue-label" class="cue-label">CUE — / —</span>
-    <span id="cue-topic" class="cue-topic"></span>
   </div>
   <div class="right">
     <!-- 코스(2026-09-25) — 버튼은 JS 가 hello.courses 로 짓는다(courses.yaml 순서). 없으면(구버전 서버) 숨긴다.
@@ -351,11 +482,12 @@
            평문으로 넣는다 — 두 경우 다 id="level" 은 그대로 있다(정적 테스트가 요구). -->
       <span id="level">—</span>
     </span>
-    <!-- 관람객 보조 화면·수준별 교육자료(2026-09-25) — 새 탭. 교육자료 주소의 수준은 renderLevelState 가
-         지금 수준으로 맞춘다. 보조 화면은 운영 노트북의 두 번째 모니터(HDMI)에 띄우는 것이 기본이다
-         (망에 열면 이 조정실도 같이 열린다 — docs/two-robot-offline-test.md). -->
-    <a id="link-audience" class="hdr-link" href="/audience" target="_blank" rel="noopener">관람객 화면 ↗</a>
-    <a id="link-handout" class="hdr-link" href="/handout" target="_blank" rel="noopener">교육자료 ↗</a>
+    <!-- 로봇 2대(2026-11-14) — 카메라 칸(탤리)이 서랍에 접히므로 로봇이 붙었는지는 여기서 본다. renderRobots 가 스냅샷마다 그리고,
+         조정실 소켓이 끊기면 markRobotsUnknown 이 '모름' 으로 바꾼다. 처음에도 '모름'(hello 전에 '끊김' 이면 기동마다 거짓 경보). -->
+    <span class="robots" aria-label="로봇 연결">
+      <span id="robot-mc" class="robot unknown"><i aria-hidden="true"></i>사회자 <b>모름</b></span>
+      <span id="robot-docent" class="robot unknown"><i aria-hidden="true"></i>도슨트 <b>모름</b></span>
+    </span>
     <span id="conn" class="conn">연결 중…</span>
   </div>
 </header>
@@ -365,72 +497,107 @@
 <div id="solo-banner" class="solo-banner" hidden>단독 모드 — 사회자 로봇이 관람객 질문에 답합니다</div>
 <div id="one-robot-banner" class="one-robot-banner" hidden></div>
 
-<!-- 2단 그리드 — 왼쪽은 런다운(위)·진행 제어(아래)로 세로 전체를 쓰고, 오른쪽은 카메라
-     두 대(위) 아래로 이벤트 로그가 가로 폭 전부를 쓴다. 예전에는 넷이 한 줄(.lower)에
-     늘어서 있었는데, 이벤트 로그가 320px 안팎으로 좁아 긴 줄이 자주 접혔다(사용자 요청:
-     런다운 좌측 상단·제어 좌측 하단·로그는 가로로 넓게). -->
-<div class="stage-grid">
-  <div class="left-col">
-    <section class="panel rundown-panel" aria-label="런다운">
-      <div class="panel-head">
-        <span class="panel-title">런다운</span>
-        <span id="rundown-summary">0개 중 0개 끝남</span>
-      </div>
-      <div id="rundown" class="rundown-list"></div>
-      <div id="goto-bar" class="goto-bar" hidden>
-        <span id="goto-text"></span>
-        <div class="goto-actions">
-          <button type="button" id="goto-confirm">이 큐로 이동</button>
-          <button type="button" id="goto-cancel">취소</button>
-        </div>
-      </div>
-    </section>
+<!-- 가운데 — 시연 화면(가장 큼) + 진행 데크. ~~2단 그리드(왼쪽 런다운·제어 / 오른쪽 시연 화면·카메라·로그)~~ — 2026-11-14 가 안. -->
+<div class="core">
+  <!-- 시연 화면(2026-11-13) — 관람객 수준을 고르고 [공연 시작]을 누르면 여기서 화면이 바뀌고 로봇 발화를 따라간다.
+       /stage/auto?embed: (수준, 지금 큐)로 화면을 고른다 — 전용 화면(웹툰·분해도)에 없는 큐는 같은 수준 종이 무대.
+       [프로젝터로 띄우기] = 같은 화면을 새 창(reachy-stage — 여러 번 눌러도 쌓이지 않는다)으로. 화면은 소리를 내지 않는다(로봇이 말한다). -->
+  <section class="panel stage-panel" aria-label="시연 화면">
+    <div class="panel-head">
+      <span class="panel-title">시연 화면</span>
+      <span id="stage-screen" class="stage-screen">불러오는 중…</span>
+      <button type="button" id="btn-stage" class="stage-pop" data-href="/stage/auto"
+              title="새 창으로 연다 — 프로젝터로 옮겨 전체 화면(⌃⌘F)">프로젝터로 띄우기 ↗</button>
+    </div>
+    <div class="stage-view" id="stage-view">
+      <iframe id="stage-frame" title="시연 화면" src="/stage/auto?embed"></iframe>
+    </div>
+  </section>
 
-    <section class="panel control-panel" aria-label="진행 제어">
-      <div class="panel-head">
-        <span class="panel-title">진행 제어</span>
-        <span>키보드 단축키 그대로</span>
+  <aside class="panel deck" aria-label="진행 제어">
+    <!-- 지금 큐 — 순서가 중요하다: 높이가 모자라면 이 블록 끝(주제)부터 잘린다(단추는 안 줄어든다). '다음' 은 [다음](n)이 실제로
+         밟을 큐(코스 밖은 건너뛴다). 상태 낱말은 renderNowNext. -->
+    <div class="now">
+      <div class="now-head"><span class="now-cap">지금</span><span id="now-tag" class="now-tag">READY</span></div>
+      <div id="cue-label" class="cue-label">CUE — / —</div>
+      <div class="next-line"><span class="now-cap">다음</span><span id="cue-next">—</span></div>
+      <div id="cue-topic" class="cue-topic"></div>
+    </div>
+    <!-- [공연 시작] ↔ [공연 종료] 한 버튼(2026-09-25). 라벨·명령·키 표시는 renderShowToggle 이
+         snapshot.show_running 으로 갈아 끼운다. 시작 = 첫 큐부터(s), 종료 = 멈추고 첫 큐로 되감기(e). -->
+    <button type="button" id="btn-show" class="ctrl-btn show" data-cmd="s"><span id="btn-show-label">공연 시작</span><kbd id="btn-show-key">S</kbd></button>
+    <div class="step-row">
+      <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
+      <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
+    </div>
+    <div class="auto">
+      <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
+      <div class="auto-track"><div id="auto-bar"></div></div>
+    </div>
+    <!-- 즉시 중단은 데크 맨 아래로 떨어뜨린다 — [다음] 을 누르려다 손이 미끄러져 닿는 자리가 아니게. 단독에서도 살아 있다. -->
+    <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
+  </aside>
+</div>
+
+<!-- 런다운 띠(U6: 큐 이동은 기본 화면에 남긴다 — 11-13 실기에서 운영자가 `g 05-donor` 를 썼다). 칩을 누르면 선택만 되고
+     머리 줄의 이동 확인 바에서 확인해야 이동한다(기존 두 단계 그대로). -->
+<section class="panel strip" aria-label="런다운">
+  <div class="panel-head">
+    <span class="panel-title">런다운</span>
+    <span id="rundown-summary">0개 중 0개 끝남</span>
+    <div id="goto-bar" class="goto-bar" hidden>
+      <span id="goto-text"></span>
+      <div class="goto-actions">
+        <button type="button" id="goto-confirm">이 큐로 이동</button>
+        <button type="button" id="goto-cancel">취소</button>
       </div>
-      <div class="control-grid">
-        <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
-        <button type="button" id="btn-restart" class="ctrl-btn">이 큐 다시<kbd>R</kbd></button>
-        <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
-        <!-- [공연 시작] ↔ [공연 종료] 한 버튼(2026-09-25). 라벨·명령·키 표시는 renderShowToggle 이
-             snapshot.show_running 으로 갈아 끼운다. 시작 = 첫 큐부터(s), 종료 = 멈추고 첫 큐로 되감기(e). -->
-        <button type="button" id="btn-show" class="ctrl-btn show" data-cmd="s"><span id="btn-show-label">공연 시작</span><kbd id="btn-show-key">S</kbd></button>
-        <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
-      </div>
-      <!-- ~~시연 영상 열기 버튼 묶음~~(2026-11-13 오전) — 같은 날 오후 조정실 안의 시연 화면 패널(오른쪽 위)로 옮겼다:
-           새 창(탭)으로 열면 조정하는 동안 화면이 안 보여 "시연영상과 무대조정이 따로 논다" 였다. -->
-      <div class="auto">
-        <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
-        <div class="auto-track"><div id="auto-bar"></div></div>
-        <!-- 침묵 대기 시간(콘솔 `w <초|끄기>` 와 같은 명령). 3~60초, 1초 단위. 끄면 운영자가 다음을 누른다. -->
-        <div class="wait-set">
-          <span class="wait-label">침묵 대기</span>
-          <button type="button" id="wait-dec" class="wait-btn" aria-label="침묵 대기 1초 줄이기">−</button>
-          <span id="wait-value">20초</span>
-          <button type="button" id="wait-inc" class="wait-btn" aria-label="침묵 대기 1초 늘리기">+</button>
-          <button type="button" id="wait-off" class="wait-btn wait-toggle">끄기</button>
-        </div>
-      </div>
-    </section>
+    </div>
+    <span class="strip-hint">번호를 누르면 이동 확인 · 흐린 점선은 코스 밖</span>
   </div>
+  <div id="rundown" class="rundown-list"></div>
+</section>
 
-  <div class="right-col">
-    <!-- 시연 화면(2026-11-13) — 관람객 수준을 고르고 [공연 시작]을 누르면 여기서 화면이 바뀌고 로봇 발화를 따라간다.
-         /stage/auto?embed: (수준, 지금 큐)로 화면을 고른다 — 전용 화면(웹툰·분해도)에 없는 큐는 같은 수준 종이 무대.
-         [프로젝터로 띄우기] = 같은 화면을 새 창(reachy-stage — 여러 번 눌러도 쌓이지 않는다)으로. 화면은 소리를 내지 않는다(로봇이 말한다). -->
-    <section class="panel stage-panel" aria-label="시연 화면">
+<!-- '고급' 서랍 — 늘 접힌 채 시작한다. 넓은 화면에서는 펼치면 시연 화면 칸 위에 떠오르고(데크·런다운은 그대로 보인다), 좁은 화면
+     에서는 아래로 펼쳐진다. 접힌 동안 로그 경고·카메라 사유가 생기면 요약 줄에 "경고 N · 마지막 글"(markHiddenProblem). -->
+<details id="advanced" class="advanced">
+  <summary>
+    <span class="adv-title">고급</span>
+    <span class="adv-list">운영 모드 · 이 큐 다시 · 침묵 대기 · 카메라·대기모드 · 이벤트 로그 · 링크</span>
+    <span id="adv-alert" class="adv-alert" hidden></span>
+    <span class="adv-chev" aria-hidden="true">▴</span>
+  </summary>
+  <div class="adv-body">
+    <section class="panel adv-ctrl" aria-label="운영 설정">
+      <div class="adv-row">
+        <span class="adv-cap">운영 모드</span>
+        <!-- 버튼 2개는 JS 가 hello.modes 로 짓는다(계약 순서: podcast, solo — 재접속마다
+             비우고 다시 짓는다, buildLevelControl 과 같은 이유). modes 가 없으면(구버전
+             서버) 이 컨테이너 자체를 숨긴다 — 던지지 않는다(계약: never throw). -->
+        <span id="mode" class="mode-group" hidden></span>
+      </div>
+      <div class="adv-row"><button type="button" id="btn-restart" class="ctrl-btn small">이 큐 다시<kbd>R</kbd></button></div>
+      <!-- 침묵 대기 시간(콘솔 `w <초|끄기>` 와 같은 명령). 3~60초, 1초 단위. 끄면 운영자가 다음을 누른다. -->
+      <div class="wait-set">
+        <span class="wait-label">침묵 대기</span>
+        <button type="button" id="wait-dec" class="wait-btn" aria-label="침묵 대기 1초 줄이기">−</button>
+        <span id="wait-value">20초</span>
+        <button type="button" id="wait-inc" class="wait-btn" aria-label="침묵 대기 1초 늘리기">+</button>
+        <button type="button" id="wait-off" class="wait-btn wait-toggle">끄기</button>
+      </div>
+      <div class="adv-row links">
+        <!-- 관람객 보조 화면·수준별 교육자료(2026-09-25) — 새 탭. 교육자료 주소의 수준은 renderLevelState 가
+             지금 수준으로 맞춘다. 보조 화면은 운영 노트북의 두 번째 모니터(HDMI)에 띄우는 것이 기본이다
+             (망에 열면 이 조정실도 같이 열린다 — docs/two-robot-offline-test.md). -->
+        <a id="link-audience" class="hdr-link" href="/audience" target="_blank" rel="noopener">관람객 화면 ↗</a>
+        <a id="link-handout" class="hdr-link" href="/handout" target="_blank" rel="noopener">교육자료 ↗</a>
+      </div>
+    </section>
+    <section class="panel log-panel" aria-label="이벤트 로그">
       <div class="panel-head">
-        <span class="panel-title">시연 화면</span>
-        <span id="stage-screen" class="stage-screen">불러오는 중…</span>
-        <button type="button" id="btn-stage" class="stage-pop" data-href="/stage/auto"
-                title="새 창으로 연다 — 프로젝터로 옮겨 전체 화면(⌃⌘F)">프로젝터로 띄우기 ↗</button>
+        <span class="panel-title">이벤트 로그</span>
+        <span id="log-warn-count">경고 0</span>
       </div>
-      <div class="stage-view" id="stage-view">
-        <iframe id="stage-frame" title="시연 화면" src="/stage/auto?embed"></iframe>
-      </div>
+      <div id="log" class="log"></div>
     </section>
     <div class="monitors">
       <section class="monitor-col" aria-label="사회자 모니터">
@@ -475,16 +642,8 @@
         <div class="caption" id="cap-docent"></div>
       </section>
     </div>
-
-    <section class="panel log-panel" aria-label="이벤트 로그">
-      <div class="panel-head">
-        <span class="panel-title">이벤트 로그</span>
-        <span id="log-warn-count">경고 0</span>
-      </div>
-      <div id="log" class="log"></div>
-    </section>
   </div>
-</div>
+</details>
 
 <script>
 "use strict";
@@ -514,7 +673,7 @@ var MODE_LABEL = { podcast: "팟캐스트", solo: "단독" }; // 계약이 고�
                               // 보여주지 죽지 않는다(아래 buildModeControl).
 var latestSnapshot = null;
 var selectedCueId = null; // 런다운 줄을 클릭해 "선택만" 된 큐 — 확인 전에는 이동하지 않는다
-var lastScrolledCueIdx = -1; // 런다운을 마지막으로 스크롤해 보여 준 현재 큐 — 바뀔 때만 스크롤한다
+// ~~lastScrolledCueIdx~~ — 런다운이 칩 격자로 다 보여(2026-11-14) 지금 큐를 스크롤해 보여 줄 일이 없어졌다.
 var warnCount = 0;
 var camPeers = {};  // role -> RTCPeerConnection
 var camNoFrameTimer = {};  // role -> setTimeout id (끊김 판정)
@@ -535,6 +694,9 @@ function setConn(state) {
   var el = document.getElementById("conn");
   el.textContent = CONN_LABEL[state] || state;
   el.className = "conn " + state;
+  // 끊긴 동안(재접속 중 포함) 로봇 상태를 모른다 — 마지막 스냅샷의 '말하는 중' 을 두면 빨간 '연결 끊김' 옆에서 거짓말을 한다.
+  // 다시 붙으면 hello·스냅샷의 renderRobots 가 되돌린다.
+  if (state !== "connected") markRobotsUnknown();
 }
 
 function connect() {
@@ -711,6 +873,7 @@ function clearLog() {
   while (log.firstChild) log.removeChild(log.firstChild);
   warnCount = 0;
   document.getElementById("log-warn-count").textContent = "경고 " + warnCount;
+  clearHiddenAlert();   // hello 이력이 경고를 다시 센다 — 요약 줄 개수도 같이 비워야 두 배가 안 된다
 }
 
 function renderSnapshot(s) {
@@ -734,6 +897,8 @@ function renderSnapshot(s) {
   renderOneRobot(s);   // 모드 토글이 없는 구버전 서버에서도 그린다(renderModeState 는 거기서 일찍 끝난다)
   renderShowToggle(s);
   renderCourseState(s);
+  renderNowNext(s);   // 진행 데크의 지금 상태·다음 큐(2026-11-14)
+  renderRobots(s);    // 머리의 로봇 알약 — 카메라 칸(탤리)이 서랍 안이라(2026-11-14)
 
   var connected = new Set(Array.isArray(s.connected) ? s.connected : []);
   var rejected = new Set(Array.isArray(s.rejected) ? s.rejected : []);
@@ -753,6 +918,9 @@ function renderSnapshot(s) {
       var reasonEl = document.getElementById("cam-reason-" + role);
       var btn = document.getElementById("cam-toggle-" + role);
       if (reasonEl) { reasonEl.textContent = c.reason || ""; reasonEl.hidden = !c.reason; }
+      // 카메라 칸은 '고급' 서랍 안이다 — 사유가 **새로 생길 때만** 요약 줄에 센다(스냅샷은 0.5초마다 와서 매번 세면 끝없이 오른다).
+      if (c.reason && c.reason !== lastCamReason[role]) markHiddenProblem((role === "mc" ? "사회자" : "도슨트") + " 카메라: " + c.reason);
+      lastCamReason[role] = c.reason || "";
       if (btn) btn.textContent = c.enabled ? "카메라 끄기" : "카메라 켜기";
     });
   }
@@ -896,6 +1064,7 @@ function appendLogFor(msg) {
   if (warn) {
     warnCount += 1;
     document.getElementById("log-warn-count").textContent = "경고 " + warnCount;
+    markHiddenProblem(text.textContent);   // 로그는 '고급' 서랍 안 — 접혀 있으면 요약 줄에 개수와 마지막 경고(2026-11-14)
   }
 }
 
@@ -920,7 +1089,6 @@ function buildRundown(cues) {
   var root = document.getElementById("rundown");
   while (root.firstChild) root.removeChild(root.firstChild);
   rundownRows = [];
-  lastScrolledCueIdx = -1;   // 행을 새로 지었다 — 재접속 뒤에도 현재 큐를 다시 보여 준다
 
   cues.forEach(function (c, i) {
     var title = c.title || c.id;
@@ -929,6 +1097,7 @@ function buildRundown(cues) {
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "cue-row";
+    btn.title = pad2(i + 1) + " " + title;   // 칩에는 짧은 이름만 — 전체 이름은 마우스를 올리면, 그리고 누른 뒤의 이동 확인 바에
 
     var num = document.createElement("span");
     num.className = "cue-num";
@@ -936,7 +1105,7 @@ function buildRundown(cues) {
 
     var titleSpan = document.createElement("span");
     titleSpan.className = "cue-title";
-    titleSpan.textContent = title;   // 런다운 줄에는 title(짧은 이름)을 쓴다
+    titleSpan.textContent = shortTitle(title);   // 칩이 좁아 ' — ' 뒤 부제는 뺀다(전체는 rundownRows·툴팁·확인 바)
 
     var tag = document.createElement("span");
     tag.className = "cue-tag";
@@ -949,6 +1118,11 @@ function buildRundown(cues) {
 
     rundownRows.push({ id: c.id, title: title, topic: topic, btn: btn, tag: tag });
   });
+  // 칩 칸 수 — 한 줄에 넓으면 20칸, 1280px 아래는 10칸까지. 줄 수를 먼저 정하고 칸을 고르게 나눈다(19 → 한 줄 19 / 두 줄 10·9).
+  // 큐 수는 hello 가 정하므로 CSS 에 박지 않고 여기서 준다.
+  var n = Math.max(1, cues.length);
+  root.style.setProperty("--cue-cols", String(Math.ceil(n / Math.ceil(n / 20))));
+  root.style.setProperty("--cue-cols-narrow", String(Math.ceil(n / Math.ceil(n / 10))));
 
   refreshRundownTags();
 }
@@ -984,14 +1158,12 @@ function refreshRundownTags() {
   document.getElementById("rundown-summary").textContent =
     rundownRows.length + "개 중 " + done + "개 끝남";
 
-  // 런다운이 창 높이에 맞춰 안쪽 스크롤이 되면서, 현재 큐가 목록 아래로 숨을 수 있다
-  // (19행 중 보이는 건 창 크기에 따라 7~10행). 큐가 **바뀔 때만** 그 행을 보이게 한다 —
-  // 스냅샷은 0.5초마다 오므로 매번 당기면 운영자가 다른 큐를 고르려 내려 본 목록을 도로
-  // 끌어올린다. `nearest` 는 이미 보이면 움직이지 않는다.
-  if (idx >= 0 && idx !== lastScrolledCueIdx && rundownRows[idx]) {
-    lastScrolledCueIdx = idx;
-    rundownRows[idx].btn.scrollIntoView({ block: "nearest" });
-  }
+  // 바로 다음에 밟을 큐(코스 안) 칩에 청록 테두리 — 데크의 '다음' 과 같은 큐다(2026-11-14).
+  var nx = idx >= 0 ? nextCueIndex(idx) : -1;
+  rundownRows.forEach(function (row, i) { row.btn.classList.toggle("upnext", i === nx); });
+
+  // ~~큐가 바뀔 때만 지금 행을 scrollIntoView~~ — 목록이 안쪽 스크롤일 때 지금 큐가 아래로 숨어서 했다. 칩 격자는 다 보이고,
+  // 페이지가 스크롤되는 좁은 폭에서 이것이 남으면 큐가 바뀔 때마다 **페이지가** 런다운 쪽으로 튄다(운영자 눈앞의 화면이 움직인다).
 }
 
 // ── 관람객 수준 4버튼 ────────────────────────────────────────────
@@ -1422,6 +1594,106 @@ function applyAutoProgress(wait, total, mode) {
   var ratio = t > 0 ? Math.min(1, Math.max(0, 1 - wait / t)) : 0;
   bar.style.width = Math.round(ratio * 100) + "%";
 }
+
+// ── 진행 데크 · 로봇 알약 · '고급' 서랍(2026-11-14 가 안) ─────────────────────
+function shortTitle(t) {
+  // 칩용 짧은 이름 — 큐 제목의 ' — ' 앞(예: "전파 이론 — 주파수와 파장" → "전파 이론"). 없으면 그대로.
+  var str = String(t), k = str.indexOf(" — ");
+  return k > 0 ? str.slice(0, k) : str;
+}
+
+function nextCueIndex(idx) {
+  // '다음' 이 실제로 밟는 큐 — 코스 밖은 건너뛴다(감독 n 과 같은 규칙). 없으면 -1(마지막 큐).
+  for (var i = idx + 1; i < rundownRows.length; i++) if (inCourse(rundownRows[i].id)) return i;
+  return -1;
+}
+
+function renderNowNext(s) {
+  var idx = indexOfCue(s.cue_id, s.cue_index);
+  var nx = idx >= 0 ? nextCueIndex(idx) : -1;
+  var nextEl = document.getElementById("cue-next");
+  nextEl.textContent = nx >= 0 ? pad2(nx + 1) + " " + rundownRows[nx].title : "— 마지막 큐";
+  nextEl.title = nextEl.textContent;
+  // 상태 낱말 — 런다운 지금 칩과 같은 판정(시작 전·단독은 방송 중이 아니다, refreshRundownTags 의 idle).
+  var tag = document.getElementById("now-tag"), text, cls = "";
+  if (s.mode === "solo") { text = "단독"; cls = "listen"; }
+  else if (s.show_running !== true) { text = "READY"; }
+  else if (s.state === "speaking") { text = "ON AIR · " + (s.speaking_role === "docent" ? "도슨트" : "사회자"); cls = "onair"; }
+  else { text = "질문 대기"; cls = "listen"; }
+  tag.textContent = text;
+  tag.className = "now-tag" + (cls ? " " + cls : "");
+}
+
+// 로봇 알약 상태 — 탤리(setTally)와 같은 판정 순서(거부 → 안 붙음 → 말하는 중)에 대기모드(z)를 더했다.
+var ROBOT_TEXT = { offline: "끊김", rejected: "거부됨", onair: "말하는 중", standby: "연결", paused: "대기모드" };
+function renderRobots(s) {
+  var connected = Array.isArray(s.connected) ? s.connected : [];
+  var rejected = Array.isArray(s.rejected) ? s.rejected : [];
+  var paused = Array.isArray(s.standby) ? s.standby : [];
+  ["mc", "docent"].forEach(function (role) {
+    var el = document.getElementById("robot-" + role);
+    if (!el) return;
+    var state = rejected.indexOf(role) !== -1 ? "rejected"
+      : connected.indexOf(role) === -1 ? "offline"
+      : s.speaking_role === role ? "onair"
+      : paused.indexOf(role) !== -1 ? "paused" : "standby";
+    el.className = "robot " + state;
+    el.querySelector("b").textContent = ROBOT_TEXT[state];
+  });
+}
+
+function markRobotsUnknown() {
+  ["mc", "docent"].forEach(function (role) {
+    var el = document.getElementById("robot-" + role);
+    if (!el) return;
+    el.className = "robot unknown";
+    el.querySelector("b").textContent = "모름";
+  });
+}
+
+// 접힌 서랍의 경고 — 로그 경고 줄·새 카메라 사유를 세어 요약 줄에 띄운다. 펼치면(또는 hello 로 로그를 비우면) 지운다.
+var hiddenAlerts = 0;
+var lastCamReason = { mc: "", docent: "" };
+function markHiddenProblem(text) {
+  if (document.getElementById("advanced").open) return;   // 펼쳐져 있으면 로그에서 바로 보인다
+  hiddenAlerts += 1;
+  var el = document.getElementById("adv-alert");
+  el.textContent = "경고 " + hiddenAlerts + " · " + text;   // 서버 문자열 — textContent 로만
+  el.title = el.textContent;
+  el.hidden = false;
+}
+function clearHiddenAlert() {
+  hiddenAlerts = 0;
+  // "이미 센 카메라 사유" 도 잊는다 — 재접속(hello)으로 비운 뒤 계속 남아 있는 사유가 다음 스냅샷에서 다시 세져야 한다. 펼친 동안
+  // 오는 스냅샷은 markHiddenProblem 이 세지 않고 이 값만 채우므로, 펼쳤다 닫아도 같은 사유를 또 세지는 않는다.
+  lastCamReason = { mc: "", docent: "" };
+  var el = document.getElementById("adv-alert");
+  if (el) { el.hidden = true; el.textContent = ""; }
+}
+document.getElementById("advanced").addEventListener("toggle", function () {
+  if (this.open) clearHiddenAlert();
+});
+
+// 떠오른 서랍의 자리 = 시연 화면 칸의 사각형(넓은 화면 — CSS 가 이 변수로 position: fixed 를 건다). 띠(단독·1인 모드)가 뜨거나
+// 창 크기가 바뀌면 칸이 움직이므로 다시 잰다. 좁은 화면(900px 아래)은 흐름 안에서 펼쳐 변수를 안 쓴다.
+function placeAdvanced() {
+  var d = document.getElementById("advanced"), body = d.querySelector(".adv-body");
+  var panel = document.querySelector(".core .stage-panel");
+  if (!d.open || !panel) return;
+  var r = panel.getBoundingClientRect();
+  body.style.setProperty("--adv-l", Math.round(r.left) + "px");
+  body.style.setProperty("--adv-t", Math.round(r.top) + "px");
+  body.style.setProperty("--adv-w", Math.round(r.width) + "px");
+  body.style.setProperty("--adv-h", Math.round(r.height) + "px");
+}
+document.getElementById("advanced").addEventListener("toggle", placeAdvanced);
+window.addEventListener("resize", placeAdvanced);
+if (window.ResizeObserver) new ResizeObserver(placeAdvanced).observe(document.querySelector(".core"));
+// Esc 로 서랍을 닫는다 — 떠오른 서랍이 시연 화면을 덮고 있을 때 빨리 걷어 내려고. 진행 단축키(P R N S E A)와 겹치지 않고,
+// 위의 진행 단축키 리스너와 따로 둔다(그 리스너는 수정키·자동반복·단독을 거르는 규칙이 있다 — Esc 는 그 규칙과 무관하다).
+document.addEventListener("keydown", function (ev) {
+  if (ev.key === "Escape") { var d = document.getElementById("advanced"); if (d.open) d.open = false; }
+});
 
 connect();
 </script>

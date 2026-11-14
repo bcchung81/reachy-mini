@@ -1,0 +1,2021 @@
+<!doctype html>
+<!--
+  ★ 조정실 단순화 시안 **가 — 핵심만 + '고급' 서랍**(2026-11-14, 갈래 B · 계획서 2026-11-14-show-readiness.md §4).
+    지금 조정실(stage/dashboard_page.html)의 CSS·스크립트를 그대로 쓰고 **DOM 을 다시 짠다**: 시연 화면이 가장 크고, 오른쪽 진행 데크
+    (지금·다음 큐, 공연 시작/종료, 이전·다음, 떨어뜨린 즉시 중단), 아래 런다운 띠(번호 칩 → 이동 확인), 맨 아래 '고급' 서랍
+    (운영 모드·이 큐 다시·침묵 대기·카메라·대기모드·이벤트 로그·링크). id 는 전부 그대로 있다(서랍 안이라도 DOM 에 있다).
+    시안 전용: 아래 "가짜 감독 소켓" 블록·자리 표시·오른쪽 아래 '시안' 막대 — 실제 구현에는 들어가지 않는다.
+    열기: open docs/design/control-room-A.html (움직이는 시연 화면은 fake_show.py --port 18782 를 띄우면 들어온다)
+  ── 아래는 원본 머리 주석 ──
+  무대감독 조정실 — 시안 B(docs/design/dashboard-B.dc.html)를 오프라인 한 장으로.
+
+  시연장은 인터넷이 없다: 이 파일은 외부 폰트·스크립트·이미지를 하나도 부르지
+  않는다(정적 테스트가 확인한다). 서버 문자열(관람객 STT, 경고, 대사)은 전부
+  textContent 로만 DOM 에 넣는다 — HTML 을 그대로 심는 DOM API 는 쓰지 않는다
+  (정적 테스트가 확인한다). 서버는 stage/dashboard.py 다(소켓·발행은
+  stage/server.py, stage/dashboard_hub.py) — 메시지 형식은 스펙 표
+  (docs/superpowers/specs/2026-09-21-stage-dashboard-design.md 51-61행)를 그대로 따른다.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>조정실 시안 가 — 핵심만 + 고급 서랍</title>
+<style>
+  /* 폰트는 시스템 스택뿐이다 — 하나도 내려받지 않는다. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #0D1014;
+    color: #E8EAED;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    display: flex;
+    flex-direction: column;
+    /* 높이를 창에 **고정**한다(min-height 가 아니다). min-height 면 로그·런다운이 길어질수록
+       페이지가 따라 늘어나 로그 끝이 창 밖으로 밀려나고, 운영자가 최신 경고를 보려면 페이지를
+       스크롤해야 했다. 고정해 두면 늘어나는 것은 각 목록 **안쪽** 스크롤뿐이다.
+       창이 아주 낮으면(.lower 하한 밑) 그때만 페이지가 스크롤된다. */
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  /* 단독 모드에서 잠기는 버튼들(진행 제어·확인 바·런다운 행) 공통 시각 표시.
+     `disabled` 하나로 클릭도 막히고(브라우저 기본) 눈에도 "지금 못 누른다"가 보여야
+     한다 — 안 그러면 운영자가 왜 안 먹히는지 화면만 봐서는 모른다. */
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .mono, .cue-label, .cue-topic, .cue-num, .cue-tag, .log-time, .log-text,
+  kbd, .cam-label, .mic, .auto-head span {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  header {
+    flex: 0 0 56px;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #242B35;
+    gap: 16px;
+    overflow: hidden;
+  }
+  header .left { display: flex; align-items: center; gap: 16px; min-width: 0; }
+  header .right { display: flex; align-items: center; gap: 18px; font-size: 13px; color: #9AA3AE; flex: 0 0 auto; }
+  .app-title { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+  /* 헤더 오른쪽 묶음(수준 버튼+대기 문구+연결 배지)이 약 500px 로 늘어나면, flex item
+     기본 최소폭(nowrap 텍스트는 줄어들지 않는다)에 걸려 이 라벨이 "관람객 수준" 캡션
+     위로 겹쳤다(1024px 실측, 수준 리뷰 Minor 2). min-width:0 으로 줄어들 수 있게 하고
+     넘치면 말줄임한다 — white-space:nowrap 은 그대로 둔다(말줄임은 한 줄 전제). */
+  .cue-label { font-size: 13px; color: #9AA3AE; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .cue-topic {
+    font-size: 12px; color: #6B7684; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; max-width: 320px;
+  }
+  /* 운영 모드 토글(팟캐스트/단독) — 제목 바로 옆(헤더 왼쪽)에 둔다. 전환이 발화를
+     멈추는 무거운 조작이라 오른쪽의 관람객 수준 버튼(가벼운 조작, 말을 끊지 않고 다음 발화부터)과
+     헷갈리지 않게 자리를 뗀다. 레벨 버튼과 같은 배지 크기로 헤더 56px 를 넘지 않는다. */
+  .mode-group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+  /* [hidden] 만으로는 위 flex 규칙에 밀린다 — .goto-bar[hidden] 과 같은 이유로
+     명시한다. hello.modes 가 없는 구버전 서버에서는 이 컨테이너 자체를 숨긴다. */
+  .mode-group[hidden] { display: none; }
+  .mode-btn {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; line-height: 1.3;
+  }
+  .mode-btn.applied { background: #4CC3D9; border-color: #4CC3D9; color: #05070A; }
+  .mode-note { font-size: 11px; color: #F0A64A; white-space: nowrap; flex: 0 0 auto; }
+  .mode-note[hidden] { display: none; }
+
+  .level-group { display: flex; align-items: center; gap: 6px; }
+  /* #level 은 버튼 4개의 컨테이너다(구버전 서버 폴백일 때만 평문 이름 하나). 헤더가
+     56px 로 고정이라 버튼은 배지 크기(11px/패딩 3~9px)로 작게 잡는다 — 그래도 1280px
+     폭에서 cue-topic(가변폭, 넘치면 말줄임) 옆에 들어간다. */
+  #level { color: #E8EAED; display: inline-flex; align-items: center; gap: 4px; }
+  .level-btn {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; line-height: 1.3;
+  }
+  /* 적용된 수준 = 채워진 색(계약: filled/primary). ~~대기 중인 수준 = 테두리 강조 +
+     대기 안내 문구~~ — 2026-09-25 수준 전환이 즉시(다음 발화부터)가 되어
+     대기가 없다. 누르면 곧바로 채워진 색이 옮겨 간다. */
+  .level-btn.applied { background: #4CC3D9; border-color: #4CC3D9; color: #05070A; }
+  .hdr-link {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+    border: 1px solid #3A4350; background: #1C222B; color: #9AA3AE; text-decoration: none;
+  }
+  .hdr-link:hover { color: #E8EAED; border-color: #4CC3D9; }
+
+  .conn {
+    font-size: 12px; font-weight: 600; color: #fff; background: #3A4350;
+    padding: 4px 10px; border-radius: 4px; white-space: nowrap;
+  }
+  .conn.connected { background: #2B6E39; }
+  .conn.disconnected { background: #E5484D; }
+
+  /* 단독 모드 안내 배너 — 헤더 "안"이 아니라 헤더 바로 아래 별도 줄에 둔다(헤더는
+     56px 고정을 지켜야 하므로 안에 넣으면 그 제약이 깨진다). 팟캐스트에서는 항상
+     [hidden] 이라 레이아웃에 아무 영향이 없고, 단독일 때만 나타나 그만큼을
+     `.lower`(flex:1 1 auto)가 줄어들며 나눠 가진다 — 페이지 스크롤은 생기지 않는다. */
+  .solo-banner {
+    flex: 0 0 auto; padding: 8px 24px; background: #10262B; color: #8FDCEA;
+    font-size: 13px; font-weight: 700; border-bottom: 1px solid #1D3A40;
+  }
+  .solo-banner[hidden] { display: none; }
+  /* 1인 모드(2026-11-13) — 한 대가 안 붙어 남은 로봇이 양쪽 대사를 자기 목소리로 읽는다. 실기에서 운영자가 모른 채
+     공연해 "사회자·도슨트 둘 다 남자 목소리" 였다 — 기동 출력의 경고는 조정실을 볼 때 이미 지나가 있다. */
+  .one-robot-banner { flex: 0 0 auto; padding: 8px 24px; background: #3A2410; color: #FFD58A; font-size: 14px;
+                      font-weight: 800; border-bottom: 1px solid #6B4318; }
+  .one-robot-banner[hidden] { display: none; }
+
+  /* 예전에는 `.monitors` 가 최상단 폭 전체를 쓰는 독립 줄이었다(자체 좌우 padding).
+     지금은 `.right-col` 안에 있어 그 부모(`.stage-grid`)의 padding 을 그대로 쓴다 —
+     여기서 또 주면 이중으로 좁아진다. */
+  .monitors { flex: 0 0 auto; display: flex; gap: 24px; flex-wrap: wrap; }
+  /* min-width 를 420→300 으로 낮췄다 — 왼쪽 열(300px 고정)이 새로 생겨, 태블릿
+     가로(1024px, 페이지 여백 48 + 두 열 사이 간격 24 뺀 나머지)에서도 두 카메라가
+     한 줄에 남으려면 이만큼 줄여야 한다(§1024px 테스트가 계산을 고정한다). */
+  .monitor-col { flex: 1 1 360px; min-width: 300px; display: flex; flex-direction: column; }
+  .cam {
+    /* 창 높이에 비례(최대 320px). 고정 320px 이면 720px 창에서 모니터만 460px 을 먹어
+       하단(런다운·제어·로그)이 창 밖으로 밀리고 페이지 스크롤이 생겼다 — 운영자 화면은
+       스크롤 없이 한눈에 들어와야 한다(즉시 중단 버튼이 창 밖에 있으면 안 된다). */
+    height: clamp(80px, 15vh, 170px);   /* 2026-11-13 시연 화면이 위에 들어오며 줄였다(실기 카메라는 SDK 오류로 어차피 안 나온다) */
+    border-radius: 6px 6px 0 0;
+    background: #05070A;
+    border: 1px solid #242B35;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .cam.onair { border: 3px solid #E5484D; }
+  .cam.rejected { border: 2px dashed #F0A64A; }
+  /* z-index: 1 — .cam-video(뒤 DOM 순서, absolute, 명시 z-index 없음=auto)가 같은 칸을
+     inset:0 으로 덮는다. 절대위치 형제는 z-index 가 같으면(둘 다 auto) DOM 순서로 쌓여
+     나중에 오는 video 가 위로 온다 — 영상이 뜨는 순간 라벨·탤리(OFFLINE/ON AIR)가
+     가려져 버린다(리뷰 Important). .cam-controls 가 이미 쓰는 값(1)과 맞춘다 — 새 값을
+     만들 이유가 없다. */
+  .cam-label { position: absolute; top: 12px; left: 12px; font-size: 12px; color: #4CC3D9; z-index: 1; }
+  .tally {
+    position: absolute; top: 10px; right: 12px; font-size: 12px; color: #9AA3AE;
+    border: 1px solid #3A4350; padding: 2px 8px; border-radius: 4px; z-index: 1;
+  }
+  .tally.onair { color: #fff; font-weight: 600; background: #E5484D; border-color: #E5484D; }
+  .tally.offline { color: #6B7684; }
+  .tally.rejected { color: #F0A64A; border-color: #F0A64A; }
+  .cam-placeholder { font-size: 14px; color: #6B7684; }
+  .mic { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #6B7684; }
+  .cam-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+               border-radius: 6px 6px 0 0; }
+  .cam-video[hidden] { display: none; }
+  .cam-controls { position: absolute; bottom: 8px; right: 8px; display: flex; gap: 6px; z-index: 1; }
+  .cam-controls button { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid #3A4350;
+                          background: #1C222B; color: #C9CFD6; }
+
+  /* 자막은 **고정 높이 + 안쪽 스크롤**. min-height 였을 때는 도슨트 해설(최대 280자)이
+     6~7줄로 늘어나 칸이 커지고, 그만큼 하단 패널을 창 밖으로 밀었다. */
+  .caption {
+    height: clamp(56px, 11vh, 110px); overflow-y: auto; padding: 12px 16px; background: #151A21; border: 1px solid #242B35;
+    border-top: none; border-radius: 0 0 6px 6px; font-size: 15px; line-height: 1.5; color: #9AA3AE;
+  }
+  .caption.onair { background: #1B1416; border-color: #4A2A2E; color: #FFFFFF; }
+
+  /* 대사 감정 배지 — 자막 앞에 붙는 작은 알약(감독이 `say` 에 싣는 `emotion`,
+     어휘 8종은 stage/cues.py::EMOTIONS). 크기·모양·테두리는 헤더의 수준·모드 배지
+     (.level-btn/.mode-btn)와 **같은 값**이다 — 여기서만 다른 크기를 쓰면 한 화면에
+     배지 방언이 둘이 된다. 글자만 강조색이라 ON AIR 로 흰 글자가 된 자막 위에서도
+     배지가 대사와 따로 읽힌다. 감정이 없거나 `설명` 이면 아예 만들지 않는다
+     (shownEmotion) — 거의 모든 줄이 `설명` 이라 그리면 늘 켜진 장식이 된다. */
+  .emotion-badge {
+    display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.3;
+    padding: 2px 8px; margin-right: 8px; border-radius: 999px;
+    border: 1px solid #3A4350; background: #1C222B; color: #8FDCEA;
+  }
+
+  /* 2단 그리드 — 남은 높이(헤더·단독 배너 아래)를 다 쓴다. 런다운·로그는 안쪽에서
+     스크롤하므로 여기에 하한을 두지 않는다(예전 260px·320px 하한이 720px 창에서 페이지
+     스크롤을 만들었다). 좁은 창(아래 미디어쿼리)에서만 세로로 쌓이고 페이지가 스크롤된다. */
+  .stage-grid { flex: 1 1 auto; min-height: 200px; padding: 16px 24px 20px; display: flex; gap: 24px; }
+  /* 왼쪽 열 — 런다운(위) + 진행 제어(아래), 세로 전체. 폭을 **고정**한다(flex-grow 0) —
+     오른쪽 카메라·로그가 창이 넓어질 때 그 여유를 갖게 하려는 것이다(사용자 요청: 로그를
+     가로로 넓게). 300px 은 옛 rundown-panel/control-panel 기본 폭(280~300)과 같다. */
+  .left-col { flex: 0 0 300px; min-width: 260px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  /* 오른쪽 열 — 카메라 두 대(위, 내용 높이만큼) + 로그(아래, 남는 높이 전부). */
+  .right-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .panel {
+    background: #151A21; border: 1px solid #242B35; border-radius: 6px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 8px; min-height: 0;
+  }
+  /* 런다운은 왼쪽 열의 남는 세로 공간을 다 먹는다(안쪽 스크롤) — 제어판은 내용 높이만큼만. */
+  .rundown-panel { flex: 1 1 auto; min-height: 0; }
+  .control-panel { flex: 0 0 auto; }
+  /* 로그는 오른쪽 열 폭 **전부**(카메라 두 대 + 사이 간격) — 예전 280px 고정 폭보다
+     훨씬 넓다(사용자 요청). 남는 세로 공간도 다 먹는다. */
+  .log-panel { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+
+  .panel-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
+  .panel-title { font-weight: 700; color: #E8EAED; }
+
+  /* `contain: size` — 목록의 **내용 길이가 패널 높이를 밀어 올리지 않게** 한다. 이것이 없으면
+     19행(약 620px)이 하단 줄 높이를 정해, 같은 줄의 이벤트 로그까지 그만큼 늘어나 창을 넘친다.
+     크기를 내용에서 떼면 목록은 패널이 준 높이만 차지하고 나머지는 안쪽에서 스크롤된다. */
+  .rundown-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; contain: size; display: flex; flex-direction: column; gap: 2px; }
+  .cue-row {
+    height: 30px; flex: 0 0 30px; display: flex; align-items: center; gap: 12px; padding: 0 10px;
+    border: none; border-radius: 4px; background: transparent; color: #C9CFD6; font-size: 13px; text-align: left;
+  }
+  .cue-row .cue-num { width: 20px; color: #9AA3AE; flex: 0 0 auto; }
+  .cue-row .cue-title { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cue-row .cue-tag { font-size: 11px; color: #6B7684; flex: 0 0 auto; }
+  .cue-row.done { color: #6B7684; }
+  /* 코스 밖 큐(2026-09-25) — 흐리게. 누르면 이동은 된다(운영자의 직접 이동). */
+  .cue-row.skip { color: #4A5260; }
+  .cue-row.skip .cue-tag { color: #4A5260; }
+  .cue-row.now { background: #3A1D21; color: #FFFFFF; font-weight: 700; }
+  .cue-row.now .cue-tag { color: #FF8A8E; }
+  /* 시작 전(idle)의 지금 큐는 READY — ON AIR 빨강을 켜지 않는다(P3). 두 클래스
+     자리(.now.ready)라 위 규칙보다 구체적이어서 이긴다. */
+  .cue-row.now.ready .cue-tag { color: #9AA3AE; }
+  /* .cue-row.todo 는 일부러 규칙이 없다 — 시안 B 목업도 미래 큐를 기본 .cue-row 색 그대로 두고
+     "NEXT" 태그만 달았다(강조는 지금 큐 하나뿐이어야 런다운에서 눈이 한 곳에만 간다). */
+  .cue-row.selected { outline: 1px solid #4CC3D9; outline-offset: -1px; }
+
+  .goto-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #10262B; border: 1px solid #4CC3D9; border-radius: 4px; padding: 8px 10px; font-size: 12px;
+  }
+  .goto-bar[hidden] { display: none; }
+  #goto-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .goto-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+  .goto-actions button { border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; }
+  #goto-confirm { background: #4CC3D9; color: #05070A; font-weight: 700; }
+  #goto-cancel { background: #242B35; color: #C9CFD6; }
+
+  .control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .ctrl-btn {
+    /* 창 높이에 비례(48~76px) — 낮은 창에서도 제어 패널이 하단 줄 안에 들어오게. */
+    height: clamp(48px, 8vh, 76px); border-radius: 6px; border: 1px solid #3A4350; background: #1C222B; color: #E8EAED;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    font-size: 15px; font-weight: 700;
+  }
+  .ctrl-btn kbd { font-size: 11px; color: #9AA3AE; }
+  .ctrl-btn.primary { border-color: #4CC3D9; background: #10262B; }
+  .ctrl-btn.primary kbd { color: #8FDCEA; }
+  .ctrl-btn.abort { grid-column: span 2; border: none; background: #E5484D; color: #fff; font-size: 18px; font-weight: 900; }
+  /* 교육자료 화면 열기(2026-11-13) — 실기 구동에서 교육자료(시연영상)를 아무도 안 열어 안 보였다. 조정실에서 바로 연다. */
+  /* 머리의 "교육자료 ↗"(관람객 폰용 카드 /handout)와 다른 것이다 — 이것은 공연을 따라가는 모션 화면(/stage/…)이라 '시연 영상' 이라 부른다. */
+  /* 시연 화면(2026-11-13) — 조정실 안에서 프로젝터와 같은 화면을 본다. 화면은 1280×720 으로 그려 패널 크기에 맞춰 줄인다
+     (작은 틀에 그대로 넣으면 페이지가 좁은 화면 배치로 바뀌어 프로젝터와 다른 모양이 된다). */
+  .stage-panel { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .stage-panel .panel-head { align-items: center; gap: 10px; }
+  .stage-screen { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #FFD58A; }
+  .stage-screen.fallback { color: #F0A64A; }
+  .stage-pop { flex: 0 0 auto; padding: 5px 12px; border-radius: 6px; border: 1px solid #F5A524; background: #2A2110;
+               color: #FFD58A; font-size: 13px; font-weight: 800; cursor: pointer; }
+  .stage-view { position: relative; height: clamp(170px, 44vh, 560px); background: #05070A; border-radius: 6px; overflow: hidden; }
+  .stage-view iframe { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; border: 0; transform-origin: 0 0; }
+  .ctrl-btn.abort kbd { color: #FFE1E2; }
+  /* 공연 시작 ↔ 공연 종료 토글(2026-09-25). 시작은 초록 테두리, 진행 중(종료 버튼)은 주황 테두리 —
+     빨간 채움(즉시 중단)과 헷갈리지 않게 채우지 않는다. 종료는 되감기라 중단보다 무겁지만 비상정지는 아니다. */
+  .ctrl-btn.show { border-color: #3FB950; }
+  .ctrl-btn.show kbd { color: #9BE9A8; }
+  .ctrl-btn.show.running { border-color: #F0A64A; background: #2A2113; }
+  .ctrl-btn.show.running kbd { color: #F5C98A; }
+
+  .auto { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  .auto-head { display: flex; justify-content: space-between; font-size: 12px; color: #9AA3AE; }
+  .auto-track { height: 6px; border-radius: 3px; background: #242B35; }
+  #auto-bar { width: 0%; height: 6px; border-radius: 3px; background: #F0A64A; transition: width 0.3s linear; }
+  .wait-set { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9AA3AE; }
+  .wait-label { margin-right: auto; }
+  #wait-value { min-width: 3.2em; text-align: center; color: #E8EAED; font-weight: 700; }
+  .wait-btn { border: 1px solid #3A4350; border-radius: 4px; background: #1C222B; color: #E8EAED;
+              min-width: 28px; height: 26px; padding: 0 8px; font-size: 13px; }
+  .wait-btn:disabled { opacity: 0.4; }
+
+  /* 로그는 200줄까지 쌓인다 — 런다운과 같은 이유로 `contain: size` 로 내용 길이를 패널 높이에서
+     떼고, 창에 맞춘 높이 안에서 세로 스크롤한다(최신 줄로 자동 스크롤은 appendLog 가 한다). */
+  .log { flex: 1 1 auto; min-height: 0; overflow-y: auto; contain: size; display: flex; flex-direction: column; gap: 4px; }
+  .log-line { display: flex; gap: 10px; font-size: 11.5px; line-height: 1.5; }
+  .log-time { color: #6B7684; flex: 0 0 auto; }
+  .log-text { color: #C9CFD6; overflow-wrap: anywhere; }
+  .log-line.warn .log-text { color: #F0A64A; }
+
+  /* 1280px 아래(태블릿 접속, 오프라인 테스트 절차 참고)에서는 `.cue-label` 이
+     min-width:0 으로 줄어들어도 오른쪽 묶음(수준 버튼+연결 배지)이 자리를
+     다 못 내준다(1024px 실측). "관람객 수준" 캡션은 정보용 텍스트라 좁은 폭에서
+     먼저 접는다 — 수준 버튼(.level-btn, 클릭으로
+     수준을 바꾸는 조작)과 연결 배지(#conn, 연결 끊김 경고)는 시연 중 언제나 보여야
+     하므로 여기서 숨기지 않는다. */
+  @media (max-width: 1180px) {
+    .level-caption { display: none; }
+    /* 설정 때 한 번 여는 편의 링크라 좁은 폭에서 먼저 접는다 — 주소는 운영 문서에 있다. */
+    .hdr-link { display: none; }
+  }
+
+  /* 900px 보다 좁으면(세로 태블릿·휴대폰 가로 등) 왼쪽 열(300 고정) + 오른쪽 열(카메라
+     최소 폭 2×300+24)이 한 줄에 안 들어간다. 그때 옆으로 우겨넣으면 카메라·로그가 몇 px
+     로 찌그러지므로, 두 열을 세로로 쌓고 각 패널에 쓸 만한 높이를 준 뒤 넘치는 만큼은
+     페이지 스크롤로 넘긴다(body 는 이미 overflow-y: auto — 옛 955px 분기와 같은 이유). */
+  @media (max-width: 900px) {
+    .stage-grid { flex-direction: column; flex: 0 0 auto; }
+    .left-col, .right-col { flex: 0 0 auto; width: 100%; }
+    .panel { min-height: 260px; }
+  }
+
+  /* 900px 아래에서는 머리를 두 줄로 접는다 — 56px 고정 + overflow:hidden 이면 세로 태블릿(768px)에서 오른쪽 끝의
+     연결 배지(#conn)가 잘려 안 보였다(지금 조정실도 같다). 연결 끊김 경고는 잘리면 안 된다. */
+  @media (max-width: 900px) {
+    header { flex: 0 0 auto; min-height: 56px; flex-wrap: wrap; padding: 8px 16px; row-gap: 8px; }
+    header .left, header .right { flex-wrap: wrap; row-gap: 6px; }
+  }
+
+  /* ═══ 시안 가 — 핵심만 + '고급' 서랍 ══════════════════════════════════════════════
+     위의 원본 규칙을 그대로 두고 이 아래에서 배치만 덮는다(실제 구현이라면 원본 배치 규칙 — .stage-grid·.left-col·.right-col —
+     을 지우고 tests/test_dashboard_page.py 의 1024px 합 테스트를 새 배치로 다시 써야 한다).
+     기본 화면: 머리(수준·코스·로봇 2대·연결) / 시연 화면(가장 큼) + 진행 데크 / 런다운 띠 / '고급' 줄.
+     런다운·코스는 기본 화면에 남긴다(U6 결정 2026-11-14). id 는 전부 그대로 — 서랍 안에 있어도 DOM 에 있다. */
+  :root { --deck-w: 300px; }
+  @media (max-width: 1279px) { :root { --deck-w: 272px; } }
+
+  /* 머리 — 로봇 알약. 상태 이름은 탤리와 같은 넷(끊김·거부됨·말하는 중·연결) + 대기모드. */
+  .robots { display: flex; gap: 6px; flex: 0 0 auto; }
+  .robot {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap;
+    padding: 3px 10px 3px 8px; border-radius: 999px; border: 1px solid #3A4350; background: #1C222B; color: #C9CFD6;
+  }
+  .robot i { width: 8px; height: 8px; border-radius: 50%; background: #6B7684; flex: 0 0 auto; }
+  .robot b { font-weight: 600; color: #9AA3AE; }
+  .robot.standby i { background: #3FB950; }
+  .robot.onair { border-color: #E5484D; background: #3A1D21; color: #fff; }
+  .robot.onair i { background: #E5484D; }
+  .robot.onair b { color: #FF8A8E; }
+  /* 끊김은 '꺼진 회색' 이 아니라 빨간 점선 — 로봇이 안 붙은 채 공연하면 1인 모드로 돈다(lessons 2026-11-13). */
+  .robot.offline { border: 1px dashed #E5484D; color: #FF8A8E; background: #1E1214; }
+  .robot.offline i { background: transparent; border: 1.5px solid #E5484D; }
+  .robot.offline b { color: #FF8A8E; }
+  .robot.rejected, .robot.paused { border: 1px dashed #F0A64A; color: #F5C98A; }
+  /* 조정실 소켓이 끊기면 로봇 상태를 모른다 — 마지막 스냅샷('말하는 중')을 그대로 두면 빨간 '연결 끊김' 옆에서 거짓말을 한다. */
+  .robot.unknown { border-style: dotted; color: #6B7684; background: transparent; }
+  .robot.unknown i { background: #3A4350; }
+  .robot.unknown b { color: #6B7684; }
+  .robot.rejected i, .robot.paused i { background: #F0A64A; }
+  .robot.rejected b, .robot.paused b { color: #F5C98A; }
+
+  /* 가운데 — 시연 화면 + 진행 데크 */
+  .core { flex: 1 1 auto; min-height: 0; display: flex; gap: 16px; padding: 16px 24px 0; }
+  .core .stage-panel { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  .core .stage-view { flex: 1 1 auto; height: auto; min-height: 160px; }
+  .deck { flex: 0 0 var(--deck-w); min-width: 0; gap: 10px; }
+  .now { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid #242B35; min-width: 0; }
+  .now-head { display: flex; justify-content: space-between; align-items: center; }
+  .now-cap { font-size: 11px; font-weight: 700; color: #6B7684; letter-spacing: 0.08em; flex: 0 0 auto; }
+  .now-tag {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 800;
+    padding: 2px 8px; border-radius: 4px; background: #242B35; color: #C9CFD6; white-space: nowrap;
+  }
+  .now-tag.onair { background: #E5484D; color: #fff; }
+  .now-tag.listen { background: #10262B; color: #8FDCEA; }
+  .deck .cue-label {
+    font-family: inherit; font-size: 16px; font-weight: 800; color: #FFFFFF; line-height: 1.35;
+    white-space: normal; overflow: visible;
+  }
+  .deck .cue-topic {
+    font-family: inherit; font-size: 12px; line-height: 1.45; color: #9AA3AE; max-width: none; white-space: normal;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .next-line { margin-top: 6px; display: flex; gap: 8px; align-items: baseline; min-width: 0; font-size: 13px; color: #C9CFD6; }
+  #cue-next { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .deck .ctrl-btn { width: 100%; }
+  .deck #btn-show { height: clamp(46px, 7vh, 64px); }
+  .step-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px; }
+  .step-row .ctrl-btn { height: clamp(56px, 11vh, 104px); font-size: 18px; }
+  .deck .auto { margin-top: 0; }
+  .deck #btn-abort { margin-top: auto; height: clamp(54px, 8vh, 72px); }
+
+  /* 런다운 띠 — 번호 칩. 넓으면 한 줄(19칸), 1280px 아래는 두 줄(칸 수는 buildRundown 이 --n1/--n2 로 준다). */
+  .strip { flex: 0 0 auto; margin: 12px 24px 0; padding: 10px 12px 12px; gap: 8px; }
+  .strip .panel-head { align-items: center; gap: 12px; min-height: 26px; }
+  .strip .goto-bar { margin-left: auto; padding: 3px 4px 3px 10px; min-width: 0; }
+  .strip-hint { margin-left: auto; color: #6B7684; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .strip .goto-bar:not([hidden]) ~ .strip-hint { display: none; }
+  .strip .rundown-list {
+    contain: none; overflow: visible; flex: 0 0 auto; display: grid; gap: 4px;
+    grid-template-columns: repeat(var(--n1, 19), minmax(0, 1fr));
+  }
+  @media (max-width: 1279px) { .strip .rundown-list { grid-template-columns: repeat(var(--n2, 10), minmax(0, 1fr)); } }
+  .strip .cue-row {
+    position: relative; height: 46px; flex: none; min-width: 0; flex-direction: column; align-items: flex-start;
+    justify-content: center; gap: 1px; padding: 4px 7px; border: 1px solid #2A313C; background: #1A2028;
+  }
+  .strip .cue-row .cue-num { width: auto; font-size: 14px; font-weight: 800; color: #E8EAED; }
+  .strip .cue-row .cue-title { font-size: 10.5px; color: #9AA3AE; max-width: 100%; flex-grow: 0; }
+  .strip .cue-row .cue-tag { display: none; }
+  .strip .cue-row.now .cue-tag { display: block; position: absolute; top: 5px; right: 6px; font-size: 9px; }
+  .strip .cue-row.done { background: transparent; border-color: #1F252E; }
+  .strip .cue-row.done .cue-num, .strip .cue-row.done .cue-title { color: #4A5260; }
+  .strip .cue-row.skip { background: transparent; border-style: dashed; border-color: #262C35; }
+  .strip .cue-row.skip .cue-num, .strip .cue-row.skip .cue-title { color: #3F4652; }
+  .strip .cue-row.upnext { border-color: #4CC3D9; }
+  .strip .cue-row.now { background: #3A1D21; border-color: #E5484D; }
+  .strip .cue-row.now .cue-title { color: #FFD0D2; }
+  .strip .cue-row.now.ready { background: #1C222B; border-color: #9AA3AE; }
+  .strip .cue-row.now.ready .cue-title { color: #C9CFD6; }
+  .strip .cue-row.selected { outline: 2px solid #4CC3D9; outline-offset: 1px; }
+
+  /* '고급' 서랍 */
+  .advanced { flex: 0 0 auto; margin: 12px 24px 16px; }
+  .advanced > summary {
+    list-style: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; cursor: pointer;
+    border: 1px solid #242B35; border-radius: 6px; background: #12161C; color: #9AA3AE; font-size: 12px;
+  }
+  .advanced > summary::-webkit-details-marker { display: none; }
+  .advanced[open] > summary { border-color: #3A4350; color: #C9CFD6; }
+  .adv-title { font-weight: 800; color: #E8EAED; font-size: 13px; flex: 0 0 auto; }
+  .adv-list { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 접힌 동안 쌓인 경고 — 개수 + 마지막 경고 글. 펼치면 지운다. */
+  .adv-alert {
+    flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 2px 10px; border-radius: 999px; background: #3A2410; border: 1px solid #F0A64A; color: #FFD58A; font-weight: 700;
+  }
+  .adv-alert[hidden] { display: none; }
+  .adv-chev { flex: 0 0 auto; color: #6B7684; }
+  .advanced[open] .adv-chev { transform: rotate(180deg); }
+  .adv-body { display: grid; grid-template-columns: 236px minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; margin-top: 10px; }
+  /* 넓은 화면: 펼치면 **시연 화면 칸 위에 꼭 맞게** 떠오른다(자리는 placeAdvanced 가 그 칸의 사각형으로 준다) — 오른쪽 진행 데크
+     (다음·즉시 중단)와 아래 런다운 띠는 가리지 않는다. 흐름 안에서 펼치면 그만큼 데크가 눌려 1024×768 에서 [즉시 중단] 이 창 밖으로
+     밀렸고(계산), 화면 아래쪽에 붙여 띄우면 런다운 띠를 반쯤 가렸다(1440 캡처). */
+  @media (min-width: 901px) {
+    .advanced[open] > .adv-body {
+      position: fixed; left: var(--adv-l, 24px); top: var(--adv-t, 72px); width: var(--adv-w, 60vw); height: var(--adv-h, 60vh);
+      z-index: 20; margin: 0; padding: 14px; background: #0D1014; border: 1px solid #3A4350; border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); grid-template-rows: minmax(0, 1fr);
+    }
+  }
+  /* 1280px 아래의 떠오른 서랍 — 세 칸이면 카메라가 100px 남짓으로 눌려 라벨과 탤리가 겹쳤다(1024 캡처). 위: 설정 | 로그, 아래: 카메라 둘. */
+  @media (min-width: 901px) and (max-width: 1279px) {
+    .advanced[open] > .adv-body { grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+    .adv-body .adv-ctrl { grid-column: 1; grid-row: 1; }
+    .adv-body .log-panel { grid-column: 2; grid-row: 1; }
+    .adv-body .monitors { grid-column: 1 / -1; grid-row: 2; }
+  }
+  .adv-ctrl { gap: 12px; overflow-y: auto; }
+  .adv-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .adv-cap { font-size: 12px; color: #9AA3AE; min-width: 60px; }
+  /* 236px 칸에서 '침묵 대기'·'끄기' 가 두 줄로 쪼개졌다(캡처) — 낱말은 안 쪼개고 줄째로 넘긴다. */
+  .adv-ctrl .wait-set { flex-wrap: wrap; row-gap: 6px; }
+  .adv-ctrl .wait-label, .adv-ctrl .wait-btn { white-space: nowrap; }
+  .ctrl-btn.small { height: 40px; width: 100%; flex-direction: row; gap: 8px; font-size: 14px; }
+  .adv-body .monitors { gap: 12px; flex-wrap: nowrap; min-width: 0; min-height: 0; }
+  .adv-body .monitor-col { flex: 1 1 0; min-width: 0; }
+  .adv-body .log-panel { min-height: 0; }
+  .adv-body .links .hdr-link { display: inline-block; }
+
+  /* 좁은 화면(세로 태블릿) — 위에서 아래로 쌓고 페이지가 스크롤된다. 진행 데크는 한 줄 단추 넷. */
+  @media (max-width: 900px) {
+    .core { flex-direction: column; flex: 0 0 auto; padding: 12px 16px 0; }
+    .core .stage-view { flex: none; height: auto; aspect-ratio: 16 / 9; }
+    .deck { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .deck .now { grid-column: 1 / -1; }
+    .step-row { display: contents; }
+    .deck .auto { grid-column: 1 / -1; order: 9; }
+    .deck #btn-abort { margin-top: 0; order: 5; grid-column: auto; }   /* 원본의 span 2 를 풀어야 넷째 칸에 들어간다(캡처) */
+    .deck #btn-show, .step-row .ctrl-btn, .deck #btn-abort { height: 60px; font-size: 15px; }
+    .strip, .advanced { margin-left: 16px; margin-right: 16px; }
+    .panel { min-height: 0; }
+    .adv-body { grid-template-columns: 1fr; }
+    .adv-body .log-panel { height: 260px; }
+    .adv-list { display: none; }
+  }
+
+  /* ── 시안 전용(실제 구현에는 없다): 시연 화면 자리 표시 · 오른쪽 아래 상태 막대 ── */
+  .mock-stage-hold {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 16px; text-align: center; color: #9AA3AE; font-size: 13px; z-index: 1;
+    background: repeating-linear-gradient(135deg, #0B0E12 0 14px, #0E1217 14px 28px);
+  }
+  .mock-stage-hold[hidden] { display: none; }
+  .mock-stage-hold b { color: #E8EAED; font-size: 15px; }
+  .mock-stage-hold code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #8FDCEA;
+                          background: #05070A; border: 1px solid #242B35; border-radius: 4px; padding: 6px 8px;
+                          white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+  .mock-bar {
+    position: fixed; right: 10px; bottom: 10px; z-index: 50; display: flex; align-items: center; gap: 4px;
+    padding: 5px 6px 5px 10px; border-radius: 8px; background: rgba(40, 20, 60, 0.94); border: 1px dashed #B48CFF;
+    font-size: 11px; color: #E0D0FF; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  }
+  .mock-bar[hidden] { display: none; }
+  .mock-bar > span { font-weight: 800; margin-right: 4px; }
+  .mock-bar button { font-size: 11px; padding: 2px 7px; border-radius: 999px; border: 1px solid #6E58A0;
+                     background: transparent; color: #E0D0FF; }
+  .mock-bar button.on { background: #B48CFF; color: #14081F; border-color: #B48CFF; }
+</style>
+</head>
+<body>
+
+<!-- 시안 가: 머리는 "지금 공연을 바꾸는 손잡이 + 경고" 만 — 수준·코스·로봇 2대·연결. 큐 이름은 오른쪽 진행 데크로 내려갔다. -->
+<header>
+  <div class="left">
+    <span class="app-title">무대감독 · 조정실</span>
+    <!-- 단독 불가 안내 — 경고성이라 머리에 남긴다(모드 토글은 '고급' 서랍). -->
+    <span id="mode-note" class="mode-note" hidden></span>
+  </div>
+  <div class="right">
+    <span id="course-group" class="level-group" hidden>
+      <span class="level-caption">코스</span>
+      <span id="course"></span>
+    </span>
+    <span class="level-group">
+      <span class="level-caption">관람객 수준</span>
+      <span id="level">—</span>
+    </span>
+    <!-- 로봇 2대 — 카메라 칸(탤리)이 서랍으로 접혀 로봇이 붙었는지가 안 보이게 되므로 여기 둔다. 끊김은 빨간 점선. -->
+    <span class="robots" aria-label="로봇 연결">
+      <span id="robot-mc" class="robot unknown"><i aria-hidden="true"></i>사회자 <b>모름</b></span>
+      <span id="robot-docent" class="robot unknown"><i aria-hidden="true"></i>도슨트 <b>모름</b></span>
+    </span>
+    <span id="conn" class="conn">연결 중…</span>
+  </div>
+</header>
+
+<div id="solo-banner" class="solo-banner" hidden>단독 모드 — 사회자 로봇이 관람객 질문에 답합니다</div>
+<div id="one-robot-banner" class="one-robot-banner" hidden></div>
+
+<!-- 가운데: 시연 화면(주인공) + 진행 데크 -->
+<div class="core">
+  <section class="panel stage-panel" aria-label="시연 화면">
+    <div class="panel-head">
+      <span class="panel-title">시연 화면</span>
+      <span id="stage-screen" class="stage-screen">불러오는 중…</span>
+      <button type="button" id="btn-stage" class="stage-pop" data-href="/stage/auto"
+              title="새 창으로 연다 — 프로젝터로 옮겨 전체 화면(⌃⌘F)">프로젝터로 띄우기 ↗</button>
+    </div>
+    <div class="stage-view" id="stage-view">
+      <iframe id="stage-frame" title="시연 화면" src="about:blank"></iframe>
+        <!-- 시안 전용: 가짜 공연(fake_show.py)이 안 떠 있을 때의 자리 표시. 실제 조정실은 같은 오리진의 /stage/auto?embed 를 넣는다. -->
+        <div id="mock-stage-hold" class="mock-stage-hold" hidden>
+          <b>시연 화면 자리</b>
+          <span>가짜 공연을 띄우면 여기에 실제 /stage/auto 화면(로봇 대사를 따라 움직이는 화면)이 들어온다</span>
+          <code>.venv/bin/python scripts/handout_live/fake_show.py --port 18782 --cues 03-theory,04-morse --level 일반 --loop</code>
+        </div>
+    </div>
+  </section>
+
+  <aside class="panel deck" aria-label="진행 제어">
+    <div class="now">
+      <div class="now-head"><span class="now-cap">지금</span><span id="now-tag" class="now-tag">READY</span></div>
+      <div id="cue-label" class="cue-label">CUE — / —</div>
+      <div id="cue-topic" class="cue-topic"></div>
+      <div class="next-line"><span class="now-cap">다음</span><span id="cue-next">—</span></div>
+    </div>
+    <button type="button" id="btn-show" class="ctrl-btn show" data-cmd="s"><span id="btn-show-label">공연 시작</span><kbd id="btn-show-key">S</kbd></button>
+    <div class="step-row">
+      <button type="button" id="btn-prev" class="ctrl-btn">이전<kbd>P</kbd></button>
+      <button type="button" id="btn-next" class="ctrl-btn primary">다음<kbd>N</kbd></button>
+    </div>
+    <div class="auto">
+      <div class="auto-head"><span>자동 진행</span><span id="auto-text">대기 전</span></div>
+      <div class="auto-track"><div id="auto-bar"></div></div>
+    </div>
+    <!-- 즉시 중단은 데크 맨 아래로 떨어뜨린다 — [다음] 을 누르려다 손이 미끄러져 닿는 자리가 아니게. -->
+    <button type="button" id="btn-abort" class="ctrl-btn abort">즉시 중단<kbd>A</kbd></button>
+  </aside>
+</div>
+
+<!-- 런다운 띠(U6: 큐 이동은 기본 화면에 남긴다) — 번호 칩을 누르면 기존과 같은 이동 확인 바가 머리 줄에 뜬다. -->
+<section class="panel strip" aria-label="런다운">
+  <div class="panel-head">
+    <span class="panel-title">런다운</span>
+    <span id="rundown-summary">0개 중 0개 끝남</span>
+    <div id="goto-bar" class="goto-bar" hidden>
+      <span id="goto-text"></span>
+      <div class="goto-actions">
+        <button type="button" id="goto-confirm">이 큐로 이동</button>
+        <button type="button" id="goto-cancel">취소</button>
+      </div>
+    </div>
+    <span class="strip-hint">번호를 누르면 이동 확인 · 흐린 점선은 코스 밖</span>
+  </div>
+  <div id="rundown" class="rundown-list"></div>
+</section>
+
+<!-- '고급' 서랍 — 공연 중에는 거의 안 만지는 것. 넓은 화면에서는 펼치면 시연 화면 위로 떠오르고(진행 데크는 그대로 보인다),
+     좁은 화면에서는 아래로 펼쳐진다. 접힌 동안 경고가 쌓이면 이 줄에 개수와 마지막 경고를 띄운다. -->
+<details id="advanced" class="advanced">
+  <summary>
+    <span class="adv-title">고급</span>
+    <span class="adv-list">운영 모드 · 이 큐 다시 · 침묵 대기 · 카메라·대기모드 · 이벤트 로그 · 링크</span>
+    <span id="adv-alert" class="adv-alert" hidden></span>
+    <span class="adv-chev" aria-hidden="true">▴</span>
+  </summary>
+  <div class="adv-body">
+    <section class="panel adv-ctrl" aria-label="운영 설정">
+      <div class="adv-row"><span class="adv-cap">운영 모드</span><span id="mode" class="mode-group" hidden></span></div>
+      <div class="adv-row"><button type="button" id="btn-restart" class="ctrl-btn small">이 큐 다시<kbd>R</kbd></button></div>
+      <div class="wait-set">
+        <span class="wait-label">침묵 대기</span>
+        <button type="button" id="wait-dec" class="wait-btn" aria-label="침묵 대기 1초 줄이기">−</button>
+        <span id="wait-value">20초</span>
+        <button type="button" id="wait-inc" class="wait-btn" aria-label="침묵 대기 1초 늘리기">+</button>
+        <button type="button" id="wait-off" class="wait-btn wait-toggle">끄기</button>
+      </div>
+      <div class="adv-row links">
+        <a id="link-audience" class="hdr-link" href="/audience" target="_blank" rel="noopener">관람객 화면 ↗</a>
+        <a id="link-handout" class="hdr-link" href="/handout" target="_blank" rel="noopener">교육자료 ↗</a>
+      </div>
+    </section>
+    <div class="monitors">
+      <section class="monitor-col" aria-label="사회자 모니터">
+        <div class="cam offline" id="mon-mc">
+          <span class="cam-label">CAM 1 · 사회자</span>
+          <span class="tally offline" id="tag-mc">OFFLINE</span>
+          <video id="vid-mc" class="cam-video" autoplay muted playsinline hidden></video>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+            <circle cx="12" cy="12.5" r="3.5"></circle>
+            <path d="M8 6l1.5-2h5L16 6"></path>
+          </svg>
+          <span class="cam-placeholder" id="cam-reason-mc">[사회자 카메라 영상 — 실기 연결 후]</span>
+          <span class="mic" id="mic-mc">MIC —</span>
+          <div class="cam-controls">
+            <button type="button" class="cam-toggle" id="cam-toggle-mc">카메라 끄기</button>
+            <button type="button" class="standby-toggle" id="standby-toggle-mc">대기모드</button>
+          </div>
+        </div>
+        <div class="caption" id="cap-mc"></div>
+      </section>
+      <section class="monitor-col" aria-label="도슨트 모니터">
+        <div class="cam offline" id="mon-docent">
+          <span class="cam-label">CAM 2 · 도슨트</span>
+          <span class="tally offline" id="tag-docent">OFFLINE</span>
+          <video id="vid-docent" class="cam-video" autoplay muted playsinline hidden></video>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3A4350" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="13" rx="2"></rect>
+            <circle cx="12" cy="12.5" r="3.5"></circle>
+            <path d="M8 6l1.5-2h5L16 6"></path>
+          </svg>
+          <span class="cam-placeholder" id="cam-reason-docent">[도슨트 카메라 영상 — 실기 연결 후]</span>
+          <span class="mic" id="mic-docent">MIC —</span>
+          <div class="cam-controls">
+            <button type="button" class="cam-toggle" id="cam-toggle-docent">카메라 끄기</button>
+            <button type="button" class="standby-toggle" id="standby-toggle-docent">대기모드</button>
+          </div>
+        </div>
+        <div class="caption" id="cap-docent"></div>
+      </section>
+    </div>
+    <section class="panel log-panel" aria-label="이벤트 로그">
+      <div class="panel-head">
+        <span class="panel-title">이벤트 로그</span>
+        <span id="log-warn-count">경고 0</span>
+      </div>
+      <div id="log" class="log"></div>
+    </section>
+  </div>
+</details>
+
+<script>
+// ── 시안 전용 — 가짜 감독 소켓 ─────────────────────────────────────────────
+// 이 블록은 docs/design 의 시안에만 있다(진짜 stage/dashboard_page.html 에는 없다).
+// 진짜 조정실은 같은 호스트의 /ws 에 붙는데, 시안은 file:// 로 열려 감독 소켓의 Origin 검사에 거절된다
+// (docs/lessons.md "교육자료 화면을 file:// 로 열면…" — 풀면 안 되는 검사다). 그래서 아래 본 스크립트가 쓰는
+// WebSocket 을 이 가짜로 바꿔 끼운다 — 본 스크립트의 소켓·렌더 코드는 그대로 두고 감독과 같은 모양의
+// hello·snapshot·sent·recv·warn·command 를 받는다(모양은 stage/dashboard.py handler·_pump, stage/director.py::snapshot).
+// 큐 이름·대사는 data/cues.yaml·courses.yaml 에서 그대로 뽑았다(2026-11-14). 버튼·단축키가 보낸 명령
+// (s e n p r g a l k m w c z)을 받아 상태를 바꾸고, 공연 중이면 대사 → 질문 대기(침묵 카운트다운) → 다음 큐를 스스로 돈다.
+// 상태 바꾸기: 주소 뒤 ?s=one-robot(1인 모드) | solo(단독) | down(연결 끊김) | warn(가린 곳에 경고) — 오른쪽 아래 '시안' 막대로도.
+// ?clean=1 이면 시안 막대를 숨긴다(캡처용). ?show=18782 = 시연 화면 틀에 넣을 가짜 공연(fake_show.py)의 포트.
+(function () {
+  "use strict";
+  var D = {"cues":[{"id":"01-intro","title":"체험관 개요","topic":"KCA 설립 목적과 전파체험관의 성격","lines":[["mc","01-intro","안녕하세요, 여러분! 전파체험관 이야기 시간에 오신 걸 환영해요. 진행은 제가, 해설은 옆에 있는 도슨트가 맡을게요. 도슨트, 이 체험관이 어떤 곳인지부터 소개해 줄래요?",null],["docent","01-intro:pt0:docent",null,{"초등":"안녕하세요, 여러분! 전파는 눈에 안 보이지만 우리가 날마다 쓰고 있거든요. 이 체험관은 그 전파를 직접 보고 만져 보게 만든 곳이에요.","중고등":"반가워요, 여러분! 이 체험관은 눈에 보이지 않는 전파를 직접 보고 체험해 볼 수 있게 만든 곳이에요. 전파가 뭔지, 어디에 쓰이는지 하나씩 만나 보게 될 거예요.","일반":"반갑습니다! 이 체험관은 전파를 직접 체험할 수 있게 만든 곳으로, 2020년 11월에 문을 열었어요. 전파가 무엇인지부터 생활 곳곳에 어떻게 쓰이는지까지 차례로 둘러보실 거예요.","전문가":"반갑습니다. 이 체험관은 전파를 직접 체험하도록 만든 대국민 전시 공간으로, 2020년 11월에 문을 열었어요. 한국방송통신전파진흥원의 진흥과 인력양성 기능이 시민과 직접 만나는 자리라고 보시면 돼요."}],["mc","01-intro:pt1","오, 그럼 이 체험관은 누가 만든 거예요?",null],["docent","01-intro:docent",null,{"초등":"한국방송통신전파진흥원이라는 곳에서 만들었어요. 전파는 모두가 함께 쓰는 거라서, 누군가 사이좋게 나눠 주고 지켜 줘야 하거든요.","중고등":"한국방송통신전파진흥원이라는 공공기관이 만들었어요. 전파는 아무나 마음대로 쓰는 게 아니라 나라가 관리하는 공공 자원이거든요. 그래서 전파를 관리하고 인력도 키우죠.","일반":"한국방송통신전파진흥원이 만들었어요. 전파를 효율적으로 관리하고, 방송과 통신, 전파를 진흥하고, 인력을 키우려고 세운 기관이거든요.","전문가":"한국방송통신전파진흥원이에요. 전파법 제66조에 따라 설립된 기관이고요, 사업은 방송통신융합 산업진흥, ICT기금 운용, 전파산업진흥, 전파자원관리 이렇게 넷으로 나뉘어요."}]]},{"id":"02-history","title":"전파의 발견 역사","topic":"전파는 발명인가 발견인가 — 맥스웰·헤르츠·마르코니","lines":[["mc","02-history","자, 첫 번째 이야기는 전파가 처음 세상에 알려진 이야기예요. 도슨트, 전파는 도대체 누가 만든 거예요?",null],["docent","02-history:pt0:docent",null,{"초등":"놀랍게도 전파는 누가 만든 게 아니에요! 원래 우리 주변에 있었는데, 눈에 안 보여서 아무도 몰랐던 거예요.","중고등":"사실 전파는 누가 만든 게 아니라 찾아낸 거예요. 없던 걸 새로 만드는 게 발명이라면, 전파는 원래 있던 걸 알아낸 거라서 발견이라고 부르거든요.","일반":"재밌게도 전파는 발명이 아니라 발견이에요. 머리로 예언한 사람, 실험으로 증명한 사람, 통신에 쓴 사람이 다 따로 있었다는 게 이 이야기의 재미거든요.","전문가":"발명이 아니라 발견이에요. 다만 발견한 사람을 딱 한 명으로 꼽기는 어렵습니다. 이론적 예언, 실험적 증명, 실용화가 각각 다른 사람의 일이었거든요."}],["mc","02-history:pt1","와, 원래 있던 거였다니 신기하네요! 그럼 눈에 안 보이는 전파를 어떻게 찾아낸 거예요?",null],["docent","02-history:pt1:docent",null,{"초등":"먼저 한 과학자가 계산을 해 보고 '이런 게 있을 거야' 하고 알아냈어요. 그다음에 다른 과학자가 실험으로 진짜 있다는 걸 보여 줬답니다.","중고등":"그게 재밌는 부분이에요. 맥스웰이라는 과학자가 먼저 수식만으로 이런 파동이 있을 거라고 예언했거든요. 그리고 헤르츠가 실험으로 처음 증명했죠.","일반":"맥스웰은 전기와 자기, 빛이 한 가지 현상이라는 이론을 세웠는데요, 그 방정식이 전자기파가 있다고 예언했어요. 그걸 실험으로 처음 확실하게 증명한 사람이 헤르츠예요.","전문가":"맥스웰 방정식이 전자기파의 존재를 예언했고, 헤르츠가 처음으로 결정적인 실험으로 증명했어요. 흔히 출발점으로 꼽는 1785년은 쿨롱 법칙이 나온 해라서, 전자기학의 출발점이지 전파의 발견은 아니에요."}]]},{"id":"03-theory","title":"전파 이론 — 주파수와 파장","topic":"전파란 무엇인가 — 주파수·파장·헤르츠, 그리고 둘의 반비례 관계","lines":[["mc","03-theory","이제 전파가 정확히 뭔지 원리로 들어가 볼게요. 도슨트, 전파는 도대체 뭐예요?",null],["docent","03-theory:pt0:docent",null,{"초등":"전파는 눈에 보이지도 않고 만져지지도 않는 물결 같은 거예요. 연못의 물결처럼 멀리 퍼져 가는데요, 전파는 물이 없는 텅 빈 곳도 지나가요.","중고등":"전파는 전기와 자기가 서로를 밀어 주며 퍼져 나가는 전자기파의 한 갈래예요. 소리는 공기가 없으면 못 가잖아요? 그런데 전파는 텅 빈 우주 공간에서도 퍼져 나가요.","일반":"전파는 빛과 같은 전자기파의 한 갈래로, 아무것도 없는 공간에서도 스스로 퍼져 나가요. 소리는 공기가 있어야 들리잖아요. 전파는 진공에서도 가고, 그때는 빛의 속도로 달려요.","전문가":"전파법은 전파를 인공적인 유도 없이 공간에 퍼져 나가는 전자파로서 국제전기통신연합이 정한 범위의 주파수를 가진 것으로 정의해요. 그 범위는 ITU 전파규칙이 3,000기가헤르츠보다 낮은 주파수로 잡고 있고요."}],["mc","03-theory:pt1","아하, 그렇군요! 그럼 주파수는 뭐예요?",null],["docent","03-theory:pt1:docent",null,{"초등":"주파수는 전파가 얼마나 빠르게 출렁이는지를 말해요. 아주 빠르게 출렁이는 전파도 있고, 느릿느릿 천천히 출렁이는 전파도 있답니다.","중고등":"주파수는 전파가 1초에 몇 번 출렁이는지를 나타내는 양이고, 단위는 헤르츠예요. 재밌는 건 이 이름이 앞에서 전파를 처음 증명한 헤르츠에서 왔다는 거예요.","일반":"주파수는 1초 동안 진동하는 횟수를 나타내는 물리량이고, 단위가 헤르츠예요. 1초에 한 번 진동하면 1헤르츠, 천 번이면 1킬로헤르츠라고 부르죠.","전문가":"주파수는 단위시간당 반복 횟수를 나타내는 물리량이고, 헤르츠는 그 SI 단위로 초의 역수예요. 주기적인 현상에만 쓰고, 이름은 전자기파를 처음 결정적으로 증명한 하인리히 헤르츠에서 왔습니다."}]]},{"id":"04-morse","title":"전파이야기 체험 — 모스부호·헤르츠 실험·라이덴 병","topic":"점과 선의 약속, 불꽃으로 만든 전파, 전기를 담는 병","lines":[["mc","04-morse","체험관에는 직접 만져볼 수 있는 장치들도 있다고 들었어요. 도슨트, 전파이야기 체험존에서는 무엇을 해볼 수 있나요?",null],["docent","04-morse:pt0:docent",null,{"초등":"점과 선으로 글자를 보내는 모스 부호를 직접 손으로 쳐 볼 수 있어요! 짧게 똑, 길게 뚜우, 이 두 소리만으로 편지를 쓰는 셈이에요.","중고등":"모스 부호랑 헤르츠의 전파 실험, 라이덴 병을 직접 체험해 볼 수 있어요. 전파를 처음 만들고 쓰던 방법을 손으로 하나씩 따라가 보는 거죠.","일반":"모스 부호, 헤르츠의 전파 실험, 그리고 라이덴 병까지 세 가지를 직접 해 볼 수 있어요. 전파를 처음 증명하고 통신에 쓰기까지의 과정을 손으로 따라가 보는 코너예요.","전문가":"국제 모스 부호 송신, 헤르츠의 불꽃간극 실험, 라이덴 병 방전까지 전파 기술의 출발점을 재현해 볼 수 있어요. 이론이 실험 장치로 내려오는 지점을 직접 만져 보는 셈이죠."}],["mc","04-morse:pt1","재밌겠네요! 그럼 모스 부호는 어떻게 만들어진 거예요?",null],["docent","04-morse:pt1:docent",null,{"초등":"짧은 신호와 긴 신호를 섞어서 글자마다 약속을 정해 둔 거예요. 자주 쓰는 글자일수록 짧은 신호를 줘서 빨리 보낼 수 있게 했답니다.","중고등":"점과 선의 길이 차이로 글자를 나타내는데, 자주 쓰는 글자일수록 짧은 부호를 받았어요. 그래서 영어에서 가장 흔한 E가 점 하나예요. 한글 전신 부호는 김학우가 만들었죠.","일반":"사실 이건 모스 혼자 만든 게 아니에요. 동료 베일이 알파벳 부호로 넓혔고, 지금의 국제 모스 부호는 1865년에 표준이 됐어요. SOS도 세 글자가 아니라 끊지 않고 이어 치는 하나의 신호예요.","전문가":"베일이 알파벳 부호로 확장한 코드가 1848년 게르케의 개량을 거쳐 1865년 5월 17일 파리 국제전신협약에서 표준화됐어요. 현행 표준은 ITU-R 권고 M.1677-1이고, 선은 점 셋, 낱말 사이 간격은 점 일곱이에요."}]]},{"id":"05-donor","title":"기증자 — 장황남 박사","topic":"의사가 평생 모은 통신기기를 기증했다는 대비","lines":[["mc","05-donor","이 체험관 전시품 중에는 한 분이 기증한 것들이 있다고 들었어요. 도슨트, 장황남 박사가 누구인지 소개해 주세요.",null],["docent","05-donor:pt0:docent",null,{"초등":"병을 고치는 의사 선생님이에요! 통신 기계를 무척 좋아해서 아주 오랫동안 하나씩 모았고, 그걸 혼자 갖지 않고 우리가 볼 수 있게 내놓았어요.","중고등":"놀랍게도 본업이 의사였던 분이에요. 전남 완도에서 태어나 의과대학을 다녔고, 1963년 전남에서 처음으로 아마추어 무선국을 연 사람이기도 해요.","일반":"전파나 통신이 본업이 아닌 의사예요. 전남 완도에서 태어나 전남의과대학을 나왔고, 1963년에는 전남 최초의 아마추어 무선 통신사로 자기 무선국을 운영했어요.","전문가":"전남 완도 출생으로 광주고등학교와 전남의과대학을 나와 전남의대 약리학교실에서 석사과정을 마친 의사예요. 1963년 전남 최초의 아마추어 무선 통신사로 호출부호 에이치엠 사 디 에프 무선국을 운영했어요."}],["mc","05-donor:pt1","의사 선생님이 통신 기계를요? 그럼 모은 기계들은 어떻게 됐어요?",null],["docent","05-donor:docent",null,{"초등":"모은 기계들을 대학교에 내놓아서, 그분 이름을 딴 박물관이 생겼어요. 덕분에 많은 사람이 옛날 통신 기계를 볼 수 있게 됐답니다.","중고등":"1972년 미국으로 건너가 의사로 일하면서도 수집을 이어 갔어요. 모은 것을 기증해서 2014년 조선대학교에 그의 이름을 딴 정보통신박물관이 세워졌어요.","일반":"1972년 미국 뉴욕주 뉴어크에서 내과를 개업하고도 수십 년에 걸쳐 수집을 이어 갔어요. 그렇게 모은 4천5백여 점을 조선대학교에 기증해 2014년 9월 30일 장황남정보통신박물관이 문을 열었어요.","전문가":"1972년 미국 뉴욕주 뉴어크에서 내과를 개업해 의사협회장을 지냈고, 아마추어 무선 잡지 QST에 기술 기사도 실었어요. 유무선 통신기기 4천5백여 점을 조선대학교에 기증해 2014년 9월 30일 장황남정보통신박물관이 개관했어요."}]]},{"id":"06-bands","title":"주파수 대역별 기증품 — 초장파에서 밀리미터파까지","topic":"ITU 주파수 대역 구분과 대역별 전시 장비","lines":[["mc","06-bands","이번엔 기증품을 주파수 대역별로 둘러볼 차례예요. 도슨트, 전파를 왜 여러 종류로 나눠 놓은 거예요?",null],["docent","06-bands:pt0:docent",null,{"초등":"전파에도 아주 길게 출렁이는 것부터 쌀알만큼 짧게 떨리는 것까지 여러 종류가 있거든요. 길이가 다르면 잘하는 일도 달라서 나눠 놓은 거예요.","중고등":"주파수에 따라 전파의 성질이 달라서예요. 주파수가 낮을수록 한 번 출렁이는 길이, 즉 파장이 길고, 높을수록 짧아지거든요.","일반":"주파수에 따라 파장과 성질이 달라서예요. 이 코너 제목의 초장파는 주파수가 아주 낮은 쪽, 밀리미터파는 아주 높은 쪽이고, 파장으로 치면 100킬로미터에서 1밀리미터까지예요.","전문가":"주파수에 따라 전파 특성이 달라서 구간별로 다뤄야 하거든요. 파장은 주파수에 반비례해서, 제목의 범위인 3킬로헤르츠에서 300기가헤르츠는 파장으로 100킬로미터에서 1밀리미터예요."}],["mc","06-bands:pt1","아, 그렇구나! 그럼 길이가 다르면 실제로 뭐가 달라져요?",null],["docent","06-bands:pt1:docent",null,{"초등":"신기하게도 긴 전파는 언덕을 빙 돌아서 넘어가고, 짧은 전파는 곧게 쭉 나아가요. 그래서 하는 일도 서로 달라요.","중고등":"파장이 긴 전파는 언덕 같은 장애물을 휘돌아 넘어가고 땅을 따라 지평선 너머까지 가요. 반대로 짧은 전파는 빛처럼 곧게 나아가서 앞이 트여 있어야 잘 닿죠.","일반":"장파나 중파 같은 낮은 주파수는 언덕을 휘돌아 넘고 땅을 따라 지평선 너머까지 가요. 초단파부터는 빛처럼 곧게 가서 보이는 거리 안에서 쓰이고, 단파는 하늘의 전리층에서 꺾여 멀리 가기도 해요.","전문가":"VLF에서 MF까지는 회절로 장애물을 넘는 지표파가 주된 전파 방식이고, VHF 이상은 가시선 전파가 주를 이뤄요. 중파와 단파는 전리층 굴절로 대륙 간 거리까지 가기도 해서, 파장이 길수록 멀리 간다고 단정할 순 없어요."}]]},{"id":"07-maritime","title":"해상무선통신","topic":"타이타닉 침몰이 해상 무선통신 규칙을 어떻게 바꿨나 — 1912년 런던 회의·SOLAS·GMDSS","lines":[["mc","07-maritime","이번엔 바다 위의 무선통신 이야기예요. 도슨트, 타이타닉호 이야기를 들려주실래요?",null],["docent","07-maritime:pt0:docent",null,{"초등":"옛날 큰 배가 바다에서 가라앉을 때, 한 사람이 끝까지 도와 달라는 신호를 전파로 보냈어요. 그걸 들은 다른 배가 달려와 사람들을 구했답니다.","중고등":"1912년 타이타닉이 침몰할 때 무선통신사가 마지막까지 구조 신호를 보냈어요. 그 신호를 들은 다른 배가 달려와 구명정에 있던 사람들을 구했죠.","일반":"1912년 4월 타이타닉이 침몰할 때 무선통신사 잭 필립스가 마지막까지 구조 신호를 보냈어요. 카르파티아호가 달려와 구명정의 사람들을 구했고, 공식 조사로는 약 700명이 살아남았죠.","전문가":"영국 난파위원회 보고서 기준으로 승선 2,201명 중 711명이 살아남았어요. 카르파티아호가 구명정에서 712명을 올렸고, 정선 시각은 새벽 4시 5분으로 침몰 1시간 45분 뒤였죠."}],["mc","07-maritime:pt1","그 사고가 바꾼 게 있다고 들었어요. 무엇이 달라졌나요?",null],["docent","07-maritime:pt1:docent",null,{"초등":"그때부터 배들은 언제나 서로의 구조 신호를 듣고 있기로 약속했어요. 덕분에 지금도 바다에서 누가 도움을 부르면 가까운 배가 달려갈 수 있답니다.","중고등":"사고 뒤 조사위원회가 모든 배는 밤낮 끊기지 않게 무선을 지켜야 한다고 권고했어요. 그 권고가 국제 규칙이 됐으니, 사고가 사람이 아니라 규칙을 바꾼 셈이죠.","일반":"사고 몇 달 뒤 1912년 런던 국제무선전신회의가 조난신호의 공통 주파수를 정하고, 배가 정해진 시간마다 조난 호출을 듣도록 했어요. 1914년에는 해상인명안전협약이 처음 채택됐고요.","전문가":"같은 보고서 권고 제20항이 충분한 수의 훈련된 통신사로 밤낮 끊기지 않는 당직을 요구했어요. 그 권고가 두 갈래로 흘러 1912년 런던 국제무선전신회의의 공통 조난파장과 청취 의무, 1914년 최초 해상인명안전협약이 됐고요."}]]},{"id":"08-aviation","title":"항공무선통신과 시뮬레이터","topic":"하늘의 무선 규칙은 누가 정하나 — ICAO 부속서 10과 항공안전법, 그리고 조종석 체험","lines":[["mc","08-aviation","바다 다음은 하늘이에요! 도슨트, 항공무선통신 코너에서는 무엇을 해볼 수 있어요?",null],["docent","08-aviation:pt0:docent",null,{"초등":"진짜 조종석에 앉아서 손잡이를 당겨 비행기를 띄워 볼 수 있어요! 비행기는 하늘에서도 땅에 있는 사람과 전파로 이야기하면서 날아가거든요.","중고등":"실제 조종사 교육용 장비를 체험용으로 고친 시뮬레이터가 있어서 조종석에서 이륙까지 해 볼 수 있어요. 비행기가 관제소와 어떻게 통신하는지도 함께 볼 수 있고요.","일반":"실제 조종사 교육용 장비를 이착륙 체험용으로 개조한 시뮬레이터가 있어요. 코너 안쪽에서는 항공기 어느 위치에 어떤 통신 안테나가 붙는지도 볼 수 있고요.","전문가":"조종사 교육용 장비를 개조한 시뮬레이터로 이륙을 체험할 수 있고, 항공기 통신 안테나 배치도 함께 볼 수 있어요. 조종면은 요크가 피치와 롤을, 페달이 요를 맡습니다."}],["mc","08-aviation:pt1","비행기는 어떻게 땅이랑 이야기하는 거예요?",null],["docent","08-aviation:pt1:docent",null,{"초등":"비행기와 땅이 보이지 않는 실로 이어져 있다고 생각하면 돼요. 그 실이 전파라서, 조종사는 하늘에서도 땅의 목소리를 들을 수 있어요.","중고등":"비행기에는 관제소와 말할 무선기, 위치를 알리는 장비, 사고 때 위치를 쏘는 비상 신호기가 실려 있어요. 어느 나라 하늘을 날든 같은 방식으로 통신해야 하거든요.","일반":"항공기에는 관제기관과 교신할 무선전화 송수신기, 위치를 응답하는 트랜스폰더, 사고 시 위치를 알리는 비상위치표지가 법으로 의무예요. 무선기는 하나가 고장나도 되도록 두 벌을 싣고요.","전문가":"항공안전법 제51조와 시행규칙 제107조가 무선전화 송수신기 두 대와 트랜스폰더, 비상위치지시용 무선표지설비를 의무화해요. 비상표지는 121.5메가헤르츠와 406메가헤르츠로 송신하고요."}]]},{"id":"09-special-exhibit","title":"특별교류전시","topic":"유관기관 교류 특별전시 — 현재 전시품","lines":[["mc","09-special-exhibit","특별교류전시라는 코너도 있다고 들었어요. 도슨트, 그건 어떤 코너예요?",null],["docent","09-special-exhibit:docent",null,{"초등":"이 코너의 물건들은 가끔씩 바뀌는 특별한 전시예요. 그래서 오늘 보이는 것과 다음에 오셨을 때 보이는 게 다를 수 있답니다.","중고등":"다른 기관과 교류해서 일정 기간만 여는 전시 공간이에요. 그래서 지금 무엇이 있는지는 눈앞에 보이는 것을 보고 말씀드리는 게 정확해요.","일반":"유관기관과 교류해 특별 전시품을 일정 기간 선보이는 공간이에요. 전시품과 기간은 그때그때 달라지니, 지금 보고 계신 것을 중심으로 봐 주시면 좋겠어요.","전문가":"상설전시와 달리 기간 한정이라 소장과 대여의 주체가 갈리는 공간이에요. 그래서 전시품 목록과 교류 기관은 시기마다 달라지고, 지금 놓인 실물을 기준으로 보시는 게 맞습니다."}]]},{"id":"10-ham","title":"아마추어 무선통신 (HAM)","topic":"취미로서의 아마추어 무선과 그것을 떠받치는 국제·국내 제도","lines":[["mc","10-ham","이번엔 취미로 즐기는 무선통신, 아마추어 무선이에요. 도슨트, 햄이 뭐예요?",null],["docent","10-ham:pt0:docent",null,{"초등":"돈을 벌려고가 아니라 그냥 재미있어서, 무선으로 멀리 있는 사람과 이야기를 나누는 사람들이 있어요. 그 사람들을 햄이라고 부른답니다.","중고등":"돈벌이가 아니라 스스로 익히고 기술을 시험해 보려고 하는 무선통신이 아마추어 무선이에요. 그런 무선을 즐기는 사람들을 햄이라고 부르고요.","일반":"국제전기통신연합은 아마추어업무를 금전적 이익 없이 개인적 관심에서 하는 자기훈련과 상호통신, 기술연구라고 정의해요. 그런 무선을 즐기는 사람을 햄이라고 부르고요.","전문가":"국제 전파규칙 제1.56조가 아마추어업무를 금전적 이익 없는 자기훈련, 상호통신, 기술연구로 정의해요. 영리 목적이 아니라는 점이 정의의 핵심이고, 운용 규칙은 전파규칙 제25조가 따로 둡니다."}],["mc","10-ham:pt1","아, 그렇군요. 그런데 취미인데 왜 자격시험까지 봐야 해요?",null],["docent","10-ham:pt1:docent",null,{"초등":"전파는 모두가 나눠 쓰는 거라서, 아무나 마음대로 쓰면 서로 방해가 되거든요. 그래서 잘 쓸 수 있는지 먼저 확인하고 쓰게 해요.","중고등":"전파는 남과 나눠 쓰는 자원이라 나라가 자격을 확인하고 허가한 뒤에야 쓸 수 있어요. 시험은 방해 없이 제대로 쓰라는 약속인 셈이죠.","일반":"전파법이 무선설비와 무선국, 무선종사자를 나눠 규정하고 있어요. 전파를 보내거나 받는 시설이 무선설비, 그 설비와 조작하는 사람을 합쳐 무선국, 자격을 받은 사람이 무선종사자예요.","전문가":"전파규칙 제25.6조가 각국에 자격 검증 의무를 지우고, 출력 상한은 제25.7조에 따라 각국이 정해요. 우리는 전파법 제70조의 자격검정과 시행령 별표 17의 네 등급이 있고, 검정 업무는 한국방송통신전파진흥원에 위탁돼 있습니다."}]]},{"id":"11-iot","title":"사물인터넷","topic":"사물인터넷이란 무엇이며 5G 가 그것을 어디까지 바꾸는가","lines":[["mc","11-iot","다음 주제는 사물인터넷이에요. 도슨트, 사물인터넷이 뭐예요?",null],["docent","11-iot:pt0:docent",null,{"초등":"전등이나 시계, 자동차 같은 물건들이 인터넷으로 서로 연결된 거예요. 그래서 물건들끼리 서로 말을 걸 수 있게 됐답니다.","중고등":"사물에 통신 기능을 붙여 서로 연결하고, 거기서 모인 정보로 서비스를 만드는 걸 사물인터넷이라고 해요. 물건이 인터넷에 접속하는 셈이죠.","일반":"국제 표준에서는 사물을 서로 연결해 진보된 서비스를 가능하게 하는 글로벌 인프라라고 정의해요. 이때 사물은 물리적인 것뿐 아니라 가상의 것도 포함하고요.","전문가":"국제 표준 ITU-T Y.4000이 사물인터넷을 정보사회를 위한 글로벌 인프라로 정의해요. 물리적 사물과 가상 사물을 구분하고, 기기는 통신 기능을 가진 장치로 따로 규정합니다."}],["mc","11-iot:pt1","아, 그렇군요. 그럼 우리한테 뭐가 좋아지는 거예요?",null],["docent","11-iot:pt1:docent",null,{"초등":"멀리 있어도 물건을 켜고 끄고, 지금 어떤지 알 수 있어요. 집에 가지 않아도 전등을 끌 수 있는 거죠.","중고등":"사람이 일일이 입력하지 않아도 사물이 스스로 상태를 알린다는 게 가장 큰 차이예요. 그래서 멀리서도 켜고 끄거나 상태를 확인할 수 있고요.","일반":"사람이 하나하나 확인하지 않아도 사물이 스스로 상태를 알려 준다는 점이에요. 그 정보를 모아 관리하거나 자동으로 반응하게 만들 수도 있고요.","전문가":"사람의 개입 없이 사물이 상태를 보고하고 제어되는 구조라는 점이에요. 표준도 이를 사물 간 통신과 그 위의 서비스 계층으로 나눠 규정하고요. 사람이 아니라 사물이 데이터의 출발점이 되는 셈입니다."}]]},{"id":"12-multimedia","title":"KCA 멀티미디어실","topic":"KCA 방송콘텐츠 제작지원과 멀티미디어실","lines":[["mc","12-multimedia","한국방송통신전파진흥원이 방송 콘텐츠도 지원한다고 하던데요. 도슨트, 멀티미디어실에서는 뭘 볼 수 있어요?",null],["docent","12-multimedia:pt0:docent",null,{"초등":"방송 프로그램을 직접 볼 수 있는 곳이에요. 어떤 걸 볼 수 있는지는 화면에서 골라 보시면 돼요.","중고등":"방송 콘텐츠를 볼 수 있는 공간이에요. 전파를 관리하는 일만 하는 게 아니라, 그 위에 실리는 방송 콘텐츠 제작도 돕고 있거든요.","일반":"방송통신 진흥과 관련된 콘텐츠를 볼 수 있는 공간이에요. 한국방송통신전파진흥원이 제작 지원 사업도 하고 있어서, 그 결과물을 함께 소개하는 자리죠.","전문가":"방송통신 진흥 사업의 결과물을 보여 주는 공간이에요. 전파법 제66조가 정한 진흥 사업과 방송통신발전기금 운용이 이 공간의 배경이고요. 구체적인 지원작은 확인 전이라 말씀드리기 어렵습니다."}],["mc","12-multimedia:pt1","전파를 관리하는 기관이 방송 프로그램까지 돕는 거예요?",null],["docent","12-multimedia:docent",null,{"초등":"네, 전파를 돌보는 일만 하는 게 아니라 방송을 만드는 일도 도와줘요. 전파 위에 실려 오는 게 바로 방송이니까요.","중고등":"네, 전파는 길이고 방송은 그 길 위를 달리는 셈이라 둘이 이어져 있어요. 그래서 길을 관리하는 곳이 그 위에 실리는 콘텐츠 제작도 돕는 거죠.","일반":"네, 한국방송통신전파진흥원은 전파 관리와 함께 방송통신 진흥도 맡고 있어요. 콘텐츠 제작 지원은 그 진흥 사업 가운데 하나고요.","전문가":"전파법 제66조가 정한 진흥 사업의 한 갈래라고 보시면 돼요. 방송통신발전기금을 운용해 콘텐츠 제작을 지원하는 구조이고, 전파 관리와 진흥이 한 기관 안에 함께 있는 셈입니다."}]]},{"id":"13-chromakey","title":"크로마키 체험","topic":"크로마키 합성 기법과 체험","lines":[["mc","13-chromakey","크로마키 체험 코너 이야기도 해 볼까요? 도슨트, 크로마키가 뭐예요?",null],["docent","13-chromakey:pt0:docent",null,{"초등":"초록색 천 앞에 서면 그 초록색만 쏙 빼고 다른 그림을 넣을 수 있는 기술이에요. 가만히 서 있어도 다른 곳에 간 것처럼 보이죠.","중고등":"특정 색을 골라내 투명하게 만들고, 그 자리에 다른 영상을 합성하는 기법이에요. 그래서 초록 천 앞에 서면 배경만 쏙 바뀌는 거죠.","일반":"다른 카메라로 찍은 배경 위에 전경을 합성하는 기법이에요. 특정 색을 골라 투명하게 만든 뒤 그 자리에 다른 화면을 넣는 방식이고요.","전문가":"색상 키잉으로 특정 색 영역을 투명하게 처리하고 그 자리에 다른 영상을 합성하는 기법이에요. 전경과 배경을 따로 촬영해 합치는 구조라, 배경을 바꿔 끼우기가 자유롭습니다."}],["mc","13-chromakey:pt1","그럼 어디에 쓰여요?",null],["docent","13-chromakey:docent",null,{"초등":"날씨를 알려 주는 방송이나 영화에서 많이 써요. 기상 캐스터 뒤에 지도가 나오는 것도 이 기술이랍니다.","중고등":"날씨예보나 영화에서 많이 쓰여요. 실제로는 아무것도 없는 천 앞에 서 있는데 화면에는 다른 배경이 보이는 거죠.","일반":"뉴스 날씨예보나 공상과학 영화에서 많이 쓰여요. 촬영장에는 초록 천만 있고 배경은 나중에 합성해 넣는데, 덕분에 같은 자리에서 전혀 다른 장면을 만들 수 있죠.","전문가":"방송 날씨예보와 영화 시각효과에서 널리 쓰입니다. 전경만 촬영하고 배경을 따로 만들어 합성하니 배경 교체가 자유롭고, 촬영이 끝난 뒤에도 장면을 바꿀 수 있고요."}]]},{"id":"14-mobile","title":"이동통신","topic":"1세대부터 5세대까지 — 무엇이 언제, 어디서 처음이었나","lines":[["mc","14-mobile","이번 주제는 휴대폰의 발전, 이동통신이에요. 도슨트, 맨 처음 휴대폰은 어떻게 생겼어요?",null],["docent","14-mobile:pt0:docent",null,{"초등":"맨 처음 전화기는 들고 다닐 수 없어서 자동차에 싣고 다녔어요. 그게 자동차 한 대보다 비쌌대요!","중고등":"처음엔 차에 싣고 다니는 카폰이었어요. 국내 기준으로 1984년에 시작됐는데, 자동차 한 대 값보다 비쌌죠.","일반":"국내 1세대는 1984년 차량전화로 시작했어요. 들고 다니는 게 아니라 차에 싣는 전화였는데, 총비용이 약 400만 원이라 당시 승용차보다 비쌌고요.","전문가":"국내 1세대는 1984년 차량전화로 시작했어요. 총비용이 약 400만 원이었는데 그해 포니2가 347만 원이었으니, 자동차보다 비쌌던 셈입니다."}],["mc","14-mobile:pt1","아, 그렇군요. 그 뒤로는 뭐가 달라졌어요?",null],["docent","14-mobile:pt1:docent",null,{"초등":"점점 작아져서 손에 들고 다닐 수 있게 됐어요. 목소리만 주고받다가 글자도 보내고, 나중엔 얼굴까지 보면서 이야기하게 됐답니다.","중고등":"2세대에서 디지털로 바뀌어 음성과 문자를 쓰게 됐어요. 3세대에선 영상통화가, 4세대 LTE부터 데이터가 가능해졌죠. 국내 기준 1996년과 2011년이 시작이고요.","일반":"1996년 국내에서 CDMA 방식 디지털 이동통신이 상용화됐어요. 2000년대 초 3세대에서 영상통화가 가능해졌고, 2011년에는 국내에서 LTE가 상용화됐죠.","전문가":"1989년 국책과제로 시작해 1991년 퀄컴과 공동개발하고 1996년 CDMA를 상용화했어요. 3세대 국내 상용은 2003년 12월 W-CDMA, 4세대는 2011년 7월 LTE고요."}]]},{"id":"15-emf","title":"전자파 측정","topic":"전자파 인체보호기준과 전자파 등급제 — 무엇을 어떤 기준으로 재는가","lines":[["mc","15-emf","지금부터는 한국방송통신전파진흥원이 정부에서 위탁받은 전파품질 관리 이야기예요. 도슨트, 눈에 보이지도 않는 전자파를 어떻게 재고 관리해요?",null],["docent","15-emf:pt0:docent",null,{"초등":"전자파는 멀어질수록 빠르게 약해져요. 난롯불에서 한 걸음 물러나면 덜 뜨거운 것처럼요. 그래서 정해 둔 선을 넘지 않는지 계속 재고 있답니다.","중고등":"세기가 거리에 따라 빠르게 줄어서, 얼마나 센지를 말하려면 어디서 쟀는지도 함께 말해야 해요. 나라가 일반인 기준과 직업인 기준을 따로 두고 판단하고요.","일반":"국가가 전파법에 따라 전자파 인체보호기준을 정해 두었고, 일반인 기준과 직업인 기준이 따로 있어요. 세기는 발생원에서 멀어질수록 빠르게 줄어들기 때문에, 어디서 쟀는지가 늘 함께 가야 하고요.","전문가":"전파법 제47조의2 제1항이 인체보호기준과 등급기준, 측정기준의 고시 근거예요. 같은 조 제2항은 기준을 넘는 장소에 출입을 막는 안전시설을 두도록 의무화하고 있고요."}],["mc","15-emf:pt1","아, 그래서 어디서 쟀는지가 중요하군요. 그럼 기준을 넘는지는 어떻게 알아요?",null],["docent","15-emf:pt1:docent",null,{"초등":"커다란 안테나가 있는 곳에는 얼마나 센지 보여 주는 표시가 붙어 있어요. 어른들이 정해진 때마다 재서 확인하고요.","중고등":"기지국 같은 설비에는 기준 대비 세기를 보여 주는 등급 라벨을 붙이게 돼 있어요. 2014년부터 시행됐고요.","일반":"일정 규모 이상의 무선국은 세기를 재서 보고하고 1등급과 2등급, 주의, 경고 네 가지 라벨을 붙여요. 1등급은 일반인 기준의 절반 이하죠. 이 등급은 설비에 붙는 것이지 체험관 불빛은 아니에요.","전문가":"등급 경계는 1등급이 일반인 기준의 50퍼센트 이하, 2등급이 그 초과에서 기준 이하, 주의등급이 일반인 기준 초과에서 직업인 기준 이하, 경고등급이 직업인 기준 초과예요. 표시 대상은 보고대상 무선국이고요."}]]},{"id":"16-inspection","title":"무선국 검사","topic":"전파를 법적 기준에 맞게 쓰고 있는지 누가 어떻게 확인하나 — 전파법 제24조와 KCA 위탁","lines":[["mc","16-inspection","전파품질 관리의 또 다른 축은 무선국 검사예요. 도슨트, 무선국 검사가 뭐예요?",null],["docent","16-inspection:pt0:docent",null,{"초등":"전파는 나눠 쓰는 거라서 한 사람이 너무 세게 쓰면 다른 사람 것이 안 들려요. 그래서 기계가 약속대로 만들어졌는지 직접 가서 확인한답니다.","중고등":"전파는 한정돼 있어서 혼신이 생기면 남의 통신이 끊겨요. 그래서 법이 무선국을 허가제로 두고, 설비를 다 만든 뒤에 기준에 맞는지 검사를 받아야 쓸 수 있게 했죠.","일반":"허가는 시작이고 검사가 마무리예요. 무선국은 설비를 다 갖춘 뒤 준공검사를 받아야 비로소 운용할 수 있고, 검사는 기술기준만이 아니라 무선종사자의 자격과 정원까지 함께 봅니다.","전문가":"근거는 전파법 제24조예요. 준공검사에서 기술기준과 무선종사자 자격, 정원 배치기준 적합 여부를 보고, 제25조 제1항이 준공검사를 받은 뒤에 운용하도록 못박아 검사를 운용의 전제로 만듭니다."}],["mc","16-inspection:pt1","아, 그렇군요. 검사는 한 번만 받으면 되는 거예요?",null],["docent","16-inspection:pt1:docent",null,{"초등":"아니에요. 처음 만들었을 때 한 번 보고, 그 뒤에도 정해진 때마다 다시 확인해요. 배나 비행기가 먼 나라로 떠날 때도 따로 살펴보고요.","중고등":"한 번으로 끝나지 않고 정해진 주기마다 다시 받아요. 허가받은 대로 바꿨는지 보는 검사도 있고, 배나 비행기가 외국으로 나갈 때도 따로 받고요.","일반":"검사는 네 가지예요. 준공검사, 5년 범위에서 받는 정기검사, 허가받은 대로 바꿨는지 보는 변경검사, 필요할 때 하는 수시검사죠. 배나 항공기가 외국으로 출항할 때도 검사 대상이 되고요.","전문가":"제24조 제4항이 5년 범위의 정기검사를, 제5항이 선박과 항공기의 외국 출항 같은 수시검사를 둡니다. 판정 기준은 제45조 기술기준과 제71조 무선종사자 자격, 정원 배치기준 둘이고요."}]]},{"id":"17-rover","title":"원격 무선조종 차량 — 행성 탐사","topic":"전파로 다른 천체의 차량을 움직인다는 것 — 그리고 빛의 속도라는 한계","lines":[["mc","17-rover","체험관에는 행성 탐사 체험도 있다고 들었어요. 도슨트, 원격 무선조종 차량 코너는 뭘 하는 곳이에요?",null],["docent","17-rover:pt0:docent",null,{"초등":"아주 멀리 있는 자동차를 전파로 움직여 보는 곳이에요. 다른 천체 위를 달리는 차를 직접 몰아 보는 기분을 느낄 수 있답니다.","중고등":"증강현실로 다른 천체를 다니며 탐사차를 조종해 보는 코너예요. 전파로 멀리 있는 차를 움직인다는 게 어떤 일인지 몸으로 느껴 보는 거죠.","일반":"증강현실로 다른 천체의 표면을 다니며 탐사로봇을 조종해 보는 코너예요. 물이나 생명체, 광물자원의 흔적을 찾는 미션을 게임처럼 수행하고요.","전문가":"증강현실 기반으로 탐사차를 조종해 보는 체험 코너예요. 실제 행성 탐사의 조건, 특히 통신 지연이 조종을 어떻게 제약하는지를 체감하는 자리라고 보시면 됩니다."}],["mc","17-rover:pt1","실제로도 지구에서 실시간으로 조종할 수 있어요?",null],["docent","17-rover:pt1:docent",null,{"초등":"너무 멀면 가라고 말해도 그 말이 도착하는 데 한참 걸려요. 그래서 차가 스스로 조심하며 가야 한답니다.","중고등":"전파는 빛의 속도인데도 우주에서는 그게 느려요. 달은 왕복 2초에서 3초라 화면을 보며 몰 수 있었지만, 화성은 편도로도 몇 분이 걸려 실시간 조종이 안 되죠.","일반":"전파가 빛의 속도로 가도 지구와 화성 사이는 편도로 약 3분에서 20분대가 걸려요. 그래서 화성 로버는 조이스틱으로 몰 수 없고, 미리 보낸 계획을 다음 날 실행하며 스스로 장애물을 피해요.","전문가":"지구와 화성 거리는 5,460만 킬로미터에서 4억 20만 킬로미터라 광행시간이 편도 약 3분에서 22.4분이에요. 그래서 화성 로버는 자율항법으로 전방 지형도를 만들어 경로를 스스로 계획하고, 그 대가로 주행 속도가 아주 느립니다."}]]},{"id":"18-science","title":"과학 원리 실험 도구","topic":"전파의 바탕이 되는 기초 과학 원리 — 정전기·전자기 유도·공진·검파, 그리고 테레민","lines":[["mc","18-science","마지막 주제는 전파와 관련된 기초 과학 실험 도구들이에요. 도슨트, 어떤 게 있어요?",null],["docent","18-science:pt0:docent",null,{"초등":"손을 대지 않고 허공에서 손만 움직여 연주하는 악기가 있어요. 손을 가까이 가져가면 소리가 높아지고, 멀리 하면 낮아진답니다.","중고등":"테레민이라는 악기가 있어요. 1920년에 만들어졌는데, 악기를 만들려던 게 아니라 가까이 온 것을 알아채는 센서 연구에서 나온 물건이죠.","일반":"테레민이라는 악기가 눈에 띄어요. 1920년 러시아 물리학자 레온 테레민이 만들었는데, 원래는 근접 센서 연구에서 나온 물건이에요. 미국 특허는 1928년이고요.","전문가":"정전기와 전자기 유도, 전자기 회전, 공진, 검파, 표시까지 원리별로 모여 있어요. 1831년 패러데이의 전자기 유도부터 1891년 테슬라 코일, 코히러 검파기, 오실로스코프까지 이어집니다."}],["mc","18-science:pt1","손도 안 대는데 어떻게 소리가 나요?",null],["docent","18-science:docent",null,{"초등":"마법 같지만 마법이 아니에요. 눈에 보이지 않는 전기의 힘이 손이 가까이 왔는지 알아채는 거랍니다.","중고등":"두 금속 막대가 안테나처럼 생겼지만 전파를 주고받는 안테나가 아니에요. 손과 함께 축전기가 돼서 손의 거리를 알아채는 거죠.","일반":"두 금속 막대는 전파용 안테나가 아니라 축전기 극판으로 작동해요. 손이 가까워지면 정전용량이 달라지는데, 음정 안테나에 손이 가까울수록 음이 높아지고요.","전문가":"헤테로다인 원리예요. 500킬로헤르츠 미만으로 맞춘 발진기 두 개의 주파수 차를 가청음으로 쓰고, 안테나는 전파용이 아니라 커패시터 극판으로 손의 거리를 정전용량으로 읽습니다."}]]},{"id":"19-closing","title":"마무리","topic":"해설 종료 인사와 되짚기 — 새 정보 없이 닫는다","lines":[["mc","19-closing","오늘의 전파체험관 이야기는 이걸로 마칠게요. 도슨트, 마무리 인사 부탁해요.",null],["docent","19-closing:docent",null,{"초등":"와 주셔서 고맙습니다! 눈에 보이지 않는 전파를 사람이 찾아내서 지금처럼 쓰게 됐다는 것, 그거 하나만 기억해 주세요.","중고등":"오늘 함께해 주셔서 고맙습니다. 전파는 발명이 아니라 발견이었고, 그걸 통신에 쓰면서 방송과 이동통신으로 이어졌죠. 지금은 나라가 기준을 두고 관리하고 있고요.","일반":"관람해 주셔서 고맙습니다. 발견에서 실용화로, 방송과 이동통신으로, 그리고 전파품질 관리와 인체보호기준으로 이어지는 하루였어요. 궁금한 점이 남으셨다면 지금 물어보셔도 좋습니다.","전문가":"함께해 주셔서 고맙습니다. 이론과 실증, 실용화로 이어진 발견의 계보가 방송과 이동통신으로 이어졌고, 그 위에 인체보호기준과 무선국 검사라는 관리 체계가 놓였죠. 기준 이하 노출의 장기 영향은 아직 연구가 계속되고 있고요."}]]}],"levels":["초등","중고등","일반","전문가"],"courses":["전체","하이라이트"],"course_ids":{"전체":null,"하이라이트":["01-intro","02-history","03-theory","04-morse","07-maritime","14-mobile","17-rover","18-science","19-closing"]}};
+  var Q = new URLSearchParams(location.search);
+  var SHOW_PORT = /^\d{2,5}$/.test(Q.get("show") || "") ? Q.get("show") : "18782";
+  var CUES = D.cues;
+  var IDS = CUES.map(function (c) { return c.id; });
+  var LINE_S = 5.5;          // 대사 한 줄 길이(초) — 진짜는 캐시 소리 길이다. 시안은 고정이면 충분하다.
+  var st = {
+    cue: Math.max(0, IDS.indexOf("03-theory")), running: true, level: "일반", course: "하이라이트",
+    mode: "podcast", connected: ["docent", "mc"], standby: [], rejected: [], waitTotal: 8,
+    cameras: { mc: { enabled: true, reason: "" }, docent: { enabled: true, reason: "" } },
+    machine: "idle", speaking: null, wait: null, armed: false, line: 0, label: "", lineEnd: 0, waitEnd: 0,
+    seq: 40, down: false, scenario: "normal"
+  };
+  var socks = [];
+  var history = [];
+
+  function t() { return Date.now() / 1000; }
+  function courseIds() { return D.course_ids[st.course] || null; }
+  function inCourse(i) { var c = courseIds(); return !c || c.indexOf(IDS[i]) !== -1; }
+  function soloRole() {
+    var active = st.connected.filter(function (r) { return st.standby.indexOf(r) === -1; });
+    return active.length === 1 ? active[0] : null;
+  }
+  function snapshotFields() {
+    var c = courseIds();
+    var pos = c ? c.indexOf(IDS[st.cue]) : st.cue;
+    return {
+      cue_index: st.cue, cue_id: IDS[st.cue], cue_count: IDS.length, show_running: st.running,
+      course: st.course, course_position: [pos >= 0 ? pos + 1 : null, c ? c.length : IDS.length],
+      course_cue_ids: c, state: st.machine, speaking_role: st.speaking,
+      question_wait_s: st.wait, question_wait_total_s: st.waitTotal,
+      connected: st.connected.slice().sort(), solo_role: soloRole(), standby: st.standby.slice(),
+      rejected: st.rejected.slice(), level: st.level, level_pending: null, mode: st.mode,
+      solo_available: st.connected.indexOf("mc") !== -1 && st.standby.indexOf("mc") === -1,
+      cameras: st.cameras
+    };
+  }
+  function emit(msg, keep) {
+    if (keep) { history.push(msg); if (history.length > 80) history.shift(); }
+    socks.forEach(function (s) { s._recv(msg); });
+  }
+  function ev(kind, extra) {
+    var m = { kind: kind, t: t() };
+    for (var k in extra) m[k] = extra[k];
+    emit(m, true);
+  }
+  function warn(text) { ev("warn", { text: text }); }
+  function sendSnap() {
+    var m = snapshotFields(); m.kind = "snapshot"; emit(m, false);
+    mockStageLabel();
+  }
+
+  // ── 공연 흐름 — 감독처럼: say → speaking_started → (길이) → speaking_ended → … → 질문 대기 → 다음 큐 ──
+  function textOf(line) { return line[2] !== null ? line[2] : (line[3][st.level] || line[3]["일반"]); }
+  function startLine() {
+    var line = CUES[st.cue].lines[st.line];
+    var role = soloRole() || line[0];          // 1인 모드면 남은 한 대가 양쪽 대사를 읽는다
+    st.seq += 1; st.machine = "speaking"; st.speaking = role; st.label = line[1]; st.wait = null; st.armed = false;
+    ev("sent", { role: role, type: "say", fields: { cue_id: line[1], seq: st.seq, text: textOf(line) } });
+    ev("recv", { role: role, type: "speaking_started", fields: { cue_id: line[1], seq: st.seq } });
+    st.lineEnd = t() + LINE_S;
+  }
+  function stopSpeech() {
+    if (st.machine === "speaking" && st.speaking) {
+      ev("sent", { role: st.speaking, type: "abort", fields: {} });
+      ev("recv", { role: st.speaking, type: "speaking_ended", fields: { cue_id: st.label, seq: st.seq } });
+    }
+    if (st.machine === "listening" && st.armed) ev("sent", { role: "mc", type: "mic", fields: { open: false } });
+    st.speaking = null; st.wait = null; st.armed = false;
+  }
+  function endLine() {
+    ev("recv", { role: st.speaking, type: "speaking_ended", fields: { cue_id: st.label, seq: st.seq } });
+    st.line += 1;
+    if (st.line < CUES[st.cue].lines.length) { startLine(); return; }
+    st.machine = "listening"; st.speaking = null;              // 큐 끝 — 관람객 질문을 기다린다
+    ev("sent", { role: "mc", type: "mic", fields: { open: true } });
+    st.armed = st.waitTotal !== null;
+    st.waitEnd = t() + (st.waitTotal || 0); st.wait = st.armed ? st.waitTotal : null;
+  }
+  function goCue(i) {
+    stopSpeech();
+    st.cue = i; st.line = 0;
+    if (st.running && st.mode === "podcast") startLine(); else { st.machine = st.mode === "solo" ? "listening" : "idle"; }
+  }
+  function step(dir) {
+    var i = st.cue + dir;
+    while (i >= 0 && i < IDS.length && !inCourse(i)) i += dir;
+    return i >= 0 && i < IDS.length ? i : -1;
+  }
+  function firstInCourse() { var c = courseIds(); return c ? IDS.indexOf(c[0]) : 0; }
+  function tick() {
+    if (!st.running || st.mode !== "podcast") return;
+    if (st.machine === "speaking" && t() >= st.lineEnd) endLine();
+    else if (st.machine === "listening" && st.armed) {
+      st.wait = Math.max(0, st.waitEnd - t());
+      if (st.wait <= 0) {
+        var i = step(+1);
+        if (i < 0) { stopSpeech(); st.running = false; st.machine = "idle"; ev("command", { cmd: "(자동)", ok: true, lines: ["마지막 큐 — 공연 끝"] }); }
+        else goCue(i);
+      }
+    }
+  }
+
+  // ── 명령 — 콘솔(stage/console.py)과 같은 문자열 ──
+  function onCmd(cmd) {
+    var head = cmd.split(/\s+/)[0], arg = cmd.slice(head.length).trim(), ok = true, lines = [], i;
+    var role = arg === "mc" || arg === "docent" ? arg : null;
+    if (st.mode === "solo" && "sneprg".indexOf(head) !== -1 && head.length === 1) {
+      ev("command", { cmd: cmd, ok: false, lines: ["거절됨: 단독 모드에서는 팟캐스트 진행을 하지 않는다 — 먼저 m podcast"] });
+      sendSnap(); return;
+    }
+    switch (head) {
+      case "s":
+        if (st.running) { ok = false; lines = ["거절됨: 이미 공연 중이다 — 끝내려면 e"]; break; }
+        st.running = true; goCue(firstInCourse()); lines = ["공연 시작 — " + IDS[st.cue] + " 부터"]; break;
+      case "e":
+        stopSpeech(); st.running = false; st.cue = firstInCourse(); st.line = 0; st.machine = "idle";
+        lines = ["공연 종료 — 첫 큐로 되감았다"]; break;
+      case "n": i = step(+1); if (i < 0) { ok = false; lines = ["거절됨: 마지막 큐다"]; } else goCue(i); break;
+      case "p": i = step(-1); if (i < 0) { ok = false; lines = ["거절됨: 첫 큐다"]; } else goCue(i); break;
+      case "r": goCue(st.cue); break;
+      case "g": i = IDS.indexOf(arg); if (i < 0) { ok = false; lines = ["거절됨: 모르는 큐 " + arg]; } else goCue(i); break;
+      case "a":
+        stopSpeech(); st.machine = st.running ? "listening" : "idle"; lines = ["즉시 중단 — 발화를 멈췄다"]; break;
+      case "l":
+        if (D.levels.indexOf(arg) < 0) { ok = false; lines = ["거절됨: 모르는 수준 " + arg]; break; }
+        if (arg === st.level) { lines = ["이미 " + arg]; break; }
+        st.level = arg; lines = ["수준 " + arg + " — 다음 발화부터"]; break;
+      case "k":
+        if (D.courses.indexOf(arg) < 0) { ok = false; lines = ["거절됨: 모르는 코스 " + arg]; break; }
+        st.course = arg; lines = ["코스 " + arg + " — 지금 큐는 끝까지"]; break;
+      case "m":
+        if (arg === "solo" && !(st.connected.indexOf("mc") !== -1 && st.standby.indexOf("mc") === -1)) {
+          ok = false; lines = ["거절됨: 단독은 사회자 로봇이 붙어 있어야 한다"]; break;
+        }
+        if (arg !== "solo" && arg !== "podcast") { ok = false; lines = ["거절됨: 모르는 모드 " + arg]; break; }
+        stopSpeech(); st.mode = arg; st.machine = arg === "solo" ? "listening" : (st.running ? "listening" : "idle");
+        lines = [arg === "solo" ? "단독 — 사회자가 관람객 질문에 답한다" : "팟캐스트로 돌아왔다"]; break;
+      case "w":
+        if (arg === "끄기") { st.waitTotal = null; st.armed = false; st.wait = null; }
+        else { i = parseInt(arg, 10); if (!(i >= 3 && i <= 60)) { ok = false; lines = ["거절됨: 3~60초"]; break; } st.waitTotal = i; }
+        lines = lines.length ? lines : ["침묵 대기 " + (st.waitTotal === null ? "끔" : st.waitTotal + "초")]; break;
+      case "c":
+        if (!role) { ok = false; lines = ["거절됨: c mc|docent"]; break; }
+        st.cameras[role].enabled = !st.cameras[role].enabled; lines = ["카메라 " + role + (st.cameras[role].enabled ? " 켬" : " 끔")]; break;
+      case "z":
+        if (!role) { ok = false; lines = ["거절됨: z mc|docent"]; break; }
+        i = st.standby.indexOf(role); if (i < 0) st.standby.push(role); else st.standby.splice(i, 1);
+        lines = [role + (i < 0 ? " 대기모드" : " 대기 해제")]; break;
+      default: ok = false; lines = ["거절됨: 모르는 명령 " + cmd];
+    }
+    ev("command", { cmd: cmd, ok: ok, lines: lines });
+    sendSnap();
+  }
+
+  // ── 시안 상태(시나리오) ──
+  function setScenario(name) {
+    st.scenario = name;
+    st.connected = ["docent", "mc"]; st.standby = []; st.down = false;
+    st.cameras.mc.reason = ""; st.cameras.docent.reason = "";
+    if (st.mode === "solo") { st.mode = "podcast"; if (st.running) goCue(st.cue); }
+    if (name === "one-robot") {
+      st.connected = ["mc"];
+      ev("disconnect", { role: "docent" });
+      warn("1인 모드로 공연한다 — 도슨트 로봇이 안 붙었다. 합류 명령은 무대감독 창에 찍혔다");
+    } else if (name === "solo") {
+      stopSpeech(); st.mode = "solo"; st.machine = "listening";
+    } else if (name === "down") {
+      st.down = true;
+      socks.slice().forEach(function (s) { s._fire("error", {}); });
+    } else if (name === "warn") {
+      st.cameras.mc.reason = "카메라 협상 실패 — 로봇 SDK WebRTC(실기에서 본 모양)";
+      warn("도슨트 답 생성 실패(게이트웨이 502) — 사과문으로 대신했다");
+      warn("TTS 프록시: 고정 대사인데 캐시 키가 다르다 — 로봇 목소리 설정이 굽기와 다르다");
+    }
+    sendSnap();
+    document.querySelectorAll("[data-mock-s]").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-mock-s") === name); });
+  }
+
+  // ── 가짜 WebSocket — 본 스크립트가 쓰는 것만(open/close/error/message, readyState, send, close) ──
+  function FakeSocket(url) {
+    var self = this;
+    this.url = url; this.readyState = 0; this._h = {};
+    setTimeout(function () {
+      if (st.down) { self._fire("error", {}); return; }   // 본 스크립트가 error 에서 close() 를 부른다 → 재접속 예약
+      self.readyState = 1; socks.push(self); self._fire("open", {});
+      self._recv({
+        kind: "hello", cues: CUES.map(function (c) { return { id: c.id, title: c.title, topic: c.topic }; }),
+        levels: D.levels, modes: ["podcast", "solo"], courses: D.courses, history: history.slice(),
+        snapshot: snapshotFields()
+      });
+    }, 250);
+  }
+  FakeSocket.CONNECTING = 0; FakeSocket.OPEN = 1; FakeSocket.CLOSING = 2; FakeSocket.CLOSED = 3;
+  FakeSocket.prototype.addEventListener = function (type, fn) { (this._h[type] = this._h[type] || []).push(fn); };
+  FakeSocket.prototype._fire = function (type, e) { (this._h[type] || []).slice().forEach(function (fn) { fn(e); }); };
+  FakeSocket.prototype._recv = function (msg) {
+    if (this.readyState !== 1) return;
+    var self = this, data = JSON.stringify(msg);
+    setTimeout(function () { if (self.readyState === 1) self._fire("message", { data: data }); }, 0);
+  };
+  FakeSocket.prototype.send = function (data) {
+    if (this.readyState !== 1) return;
+    var o; try { o = JSON.parse(data); } catch (e) { return; }
+    if (o && typeof o.cmd === "string") setTimeout(function () { onCmd(o.cmd.trim()); }, 60);  // rtc 는 무시(카메라 영상 없음)
+  };
+  FakeSocket.prototype.close = function () {
+    if (this.readyState === 3) return;
+    var self = this; this.readyState = 3;
+    socks = socks.filter(function (s) { return s !== self; });
+    this._fire("close", {});
+  };
+  window.WebSocket = FakeSocket;
+
+  // ── 시연 화면 — 가짜 공연(fake_show.py)이 떠 있으면 그 /stage/auto?embed 를 넣고, 없으면 자리 표시 ──
+  // 진짜 조정실은 같은 오리진의 /stage/auto?embed 가 고른 화면을 postMessage 로 알리는데, 시안(file://)은 오리진이 달라 못 받는다 —
+  // 머리 줄의 "수준 · 큐 → 화면" 은 이 가짜가 /stage/auto 와 같은 규칙(웹툰·분해도는 01·02 만, 없으면 카드 화면)으로 채운다.
+  function mockStageLabel() {
+    var el = document.getElementById("stage-screen");
+    if (!el) return;
+    var cue = IDS[st.cue], two = cue === "01-intro" || cue === "02-history", name = "종이 무대", why = "";
+    if (st.level === "전문가") { name = two ? "분해도" : "카드 화면"; why = two ? "" : "분해도에 " + cue + " 가 아직 없다 — 카드 화면으로 이어 보기"; }
+    else if (st.level !== "일반") { name = two ? "웹툰" : "카드 화면"; why = two ? "" : "웹툰에 " + cue + " 가 아직 없다 — 카드 화면으로 이어 보기"; }
+    el.textContent = st.level + " · " + cue + " → " + name + (why ? " — " + why : "");
+    el.classList.toggle("fallback", !!why);
+    el.title = el.textContent;
+  }
+  function mountStage() {
+    var frame = document.getElementById("stage-frame"), hold = document.getElementById("mock-stage-hold");
+    var base = "http://127.0.0.1:" + SHOW_PORT;
+    // no-cors 탐침 — 서버가 있으면 불투명 응답으로 풀리고, 없으면(연결 거부) 거절된다. 틀에 바로 넣으면 브라우저 오류 화면이 뜬다.
+    fetch(base + "/stage/manifest", { mode: "no-cors", cache: "no-store" }).then(function () {
+      frame.src = base + "/stage/auto?embed";
+      if (hold) hold.hidden = true;
+    }).catch(function () {
+      if (hold) hold.hidden = false;
+    });
+  }
+
+  // ── 시작 — 지난 이력 몇 줄을 깔고 03큐 도중에서 시작한다(공연 중 화면) ──
+  (function seed() {
+    ev("connect", { role: "mc" }); ev("connect", { role: "docent" });
+    ev("command", { cmd: "k 하이라이트", ok: true, lines: ["코스 하이라이트"] });
+    ev("command", { cmd: "l 일반", ok: true, lines: ["수준 일반"] });
+    ev("command", { cmd: "s", ok: true, lines: ["공연 시작 — 01-intro 부터"] });
+    var seq = 30;
+    [0, 1].forEach(function (ci) {
+      CUES[ci].lines.slice(0, 2).forEach(function (line) {
+        seq += 1;
+        ev("sent", { role: line[0], type: "say", fields: { cue_id: line[1], seq: seq, text: textOf(line) } });
+      });
+    });
+    ev("recv", { role: "mc", type: "heard", fields: { text: "전파는 눈에 보여요?" } });
+    st.seq = seq;
+    if (st.running) startLine();
+  })();
+  setInterval(tick, 100);
+  setInterval(sendSnap, 500);
+  window.__mock = { set: setScenario, state: st };
+  document.addEventListener("DOMContentLoaded", function () {
+    mountStage();
+    var bar = document.getElementById("mock-bar");
+    if (bar) {
+      bar.hidden = Q.get("clean") === "1";
+      bar.querySelectorAll("[data-mock-s]").forEach(function (b) {
+        b.addEventListener("click", function () { setScenario(b.getAttribute("data-mock-s")); });
+      });
+      var x = document.getElementById("mock-bar-close");
+      if (x) x.addEventListener("click", function () { bar.hidden = true; });
+    }
+    var s0 = Q.get("s");
+    if (s0 && s0 !== "normal") setScenario(s0);
+    else document.querySelectorAll('[data-mock-s="normal"]').forEach(function (b) { b.classList.add("on"); });
+  });
+})();
+
+</script>
+<script>
+"use strict";
+// 이 파일은 빌드 과정이 없다 — 브라우저가 그대로 읽는 순수 JS 하나다.
+// 서버는 stage/dashboard.py 다(발행은 stage/server.py `_publish`). 메시지 형식은
+// docs/superpowers/specs/2026-09-21-stage-dashboard-design.md 표(51-61행)를 그대로 따른다.
+
+// ── 상태 ──────────────────────────────────────────────────────────
+var ws = null;
+var reconnectTimer = null;
+var RECONNECT_MS = 2000;
+var LOG_MAX = 200;
+
+var rundownRows = [];     // [{id, title, topic, btn, tag}] — hello.cues 로 짓는다(hello 는
+                           // 연결마다 다시 오므로 매번 새로 짓는다 — "한 번만" 아니다)
+var levelButtons = {};    // name -> button 엘리먼트. hello.levels 로 지을 때만 채워진다
+var levelButtonsMode = false; // hello.levels 가 있어야 true. 없으면(구버전 서버) #level 은
+                               // 버튼 없이 snapshot.level 이름만 평문으로 보여준다(폴백 —
+                               // 절대 안 터진다. 계약: level-switch-contract.md).
+var courseButtons = {};   // name -> button. hello.courses 로 짓는다(2026-09-25)
+var modeButtons = {};     // name("podcast"/"solo") -> button 엘리먼트. hello.modes 로
+                           // 지을 때만 채워진다(레벨과 같은 패턴).
+var modeButtonsMode = false; // hello.modes 가 있어야 true. 없으면(구버전 서버) 토글 전체를
+                              // 숨긴다 — 절대 안 던진다(계약).
+var MODE_LABEL = { podcast: "팟캐스트", solo: "단독" }; // 계약이 고정한 두 값만 안다.
+                              // 모르는 이름이 와도(4단계 전까지는 안 온다) 이름 그대로
+                              // 보여주지 죽지 않는다(아래 buildModeControl).
+var latestSnapshot = null;
+var selectedCueId = null; // 런다운 줄을 클릭해 "선택만" 된 큐 — 확인 전에는 이동하지 않는다
+var lastScrolledCueIdx = -1; // 런다운을 마지막으로 스크롤해 보여 준 현재 큐 — 바뀔 때만 스크롤한다
+var warnCount = 0;
+var camPeers = {};  // role -> RTCPeerConnection
+var camNoFrameTimer = {};  // role -> setTimeout id (끊김 판정)
+
+var CONN_LABEL = { connecting: "연결 중…", connected: "연결됨", disconnected: "연결 끊김 — 재접속 중" };
+var TALLY_TEXT = { offline: "OFFLINE", rejected: "거부됨", onair: "ON AIR", standby: "STANDBY" };
+var STATE_CLASSES = ["offline", "rejected", "onair", "standby"];
+
+// ── 접속 ──────────────────────────────────────────────────────────
+// 같은 호스트의 /ws 로 붙는다 — 대시보드가 어느 호스트·포트에 떠 있어도
+// 하드코딩 없이 맞는 곳으로 간다(REACHY_DASHBOARD_HOST/PORT 로 옮겨도 그대로 동작).
+function wsUrl() {
+  var scheme = location.protocol === "https:" ? "wss://" : "ws://";
+  return scheme + location.host + "/ws";
+}
+
+function setConn(state) {
+  var el = document.getElementById("conn");
+  el.textContent = CONN_LABEL[state] || state;
+  el.className = "conn " + state;
+  if (state !== "connected") markRobotsUnknown();   // 시안 가: 끊긴 동안 로봇 알약은 '모름' — 다음 스냅샷이 되돌린다
+}
+
+function connect() {
+  setConn("connecting");
+  ws = new WebSocket(wsUrl());
+  ws.addEventListener("open", function () { setConn("connected"); });
+  ws.addEventListener("close", scheduleReconnect);
+  // 에러 뒤에는 항상 close 가 따라오므로 재접속은 close 쪽 한 곳에서만 잡는다 —
+  // 여기서 또 스케줄하면 타이머가 두 벌 돌아 재접속이 두 번 겹칠 수 있다.
+  ws.addEventListener("error", function () { ws.close(); });
+  ws.addEventListener("message", function (ev) {
+    var msg;
+    try {
+      msg = JSON.parse(ev.data);
+    } catch (err) {
+      // 서버가 규약에 안 맞는 것을 보냈다 — 페이지를 죽이지 않고 콘솔에만 남긴다.
+      console.warn("대시보드: 메시지를 해석할 수 없다", err);
+      return;
+    }
+    handleMessage(msg);
+  });
+}
+
+function scheduleReconnect() {
+  setConn("disconnected");
+  if (reconnectTimer) return;   // 이미 재접속을 기다리는 중이면 중복 예약하지 않는다
+  reconnectTimer = setTimeout(function () {
+    reconnectTimer = null;
+    connect();
+  }, RECONNECT_MS);
+}
+
+function sendCmd(cmd) {
+  // 콘솔(stage/console.py)이 받는 것과 같은 명령 문자열을 그대로 보낸다.
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    // console.warn 만 남기면 운영자는 버튼(또는 단축키, 즉시 중단 포함 — 예외
+    // 없다)을 눌렀는데 왜 반응이 없는지 화면만 봐서는 모른다. 로그 패널에도
+    // 경고 줄로 남긴다(경고 수에도 센다). 서버가 보낸 이벤트가 아니라 이 페이지가
+    // 지어낸 줄이라 t 는 지금 시각을 쓴다.
+    appendLogFor({
+      kind: "warn",
+      t: Date.now() / 1000,
+      text: "보내지 못했다(연결 끊김) — 터미널 콘솔 키를 쓴다: " + cmd,
+    });
+    return;
+  }
+  ws.send(JSON.stringify({ cmd: cmd }));
+}
+
+// ── 카메라 WebRTC — 관람객 카메라 두 대의 영상을 받는다 ────────────
+// rtc 메시지 형식은 스펙 표(2026-09-22-dashboard-camera-design.md)를 따른다 — M5:
+// 2026-09-21 스펙은 카메라를 "이번 범위 밖" 으로 명시한 문서라 rtc 표는 거기 없다.
+// {kind:"rtc", role, sdp?, candidate?, sdpMLineIndex?, bye?}. 페이지는 답신 SDP·
+// ICE 후보를 같은 형식으로 ws 에 되돌린다 — 서버가 로봇 쪽 스트리머와 중계한다.
+function ensurePeer(role) {
+  if (camPeers[role]) return camPeers[role];
+  var pc = new RTCPeerConnection({ iceServers: [] });
+  var video = document.getElementById("vid-" + role);
+  pc.ontrack = function (ev) {
+    video.srcObject = ev.streams[0] || new MediaStream([ev.track]);
+    video.hidden = false;
+    document.getElementById("cam-reason-" + role).hidden = true;
+  };
+  pc.onicecandidate = function (ev) {
+    if (!ev.candidate) return;
+    ws.send(JSON.stringify({ rtc: { role: role, candidate: ev.candidate.candidate,
+                                     sdpMLineIndex: ev.candidate.sdpMLineIndex } }));
+  };
+  pc.onconnectionstatechange = function () {
+    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      requestCamRestart(role);
+    }
+  };
+  camPeers[role] = pc;
+  return pc;
+}
+
+function requestCamRestart(role) {
+  video_hide(role);
+  ws.send(JSON.stringify({ rtc: { role: role, restart: true } }));
+}
+
+function video_hide(role) {
+  var v = document.getElementById("vid-" + role);
+  v.hidden = true;
+  v.srcObject = null;
+}
+
+function handleRtc(msg) {
+  var role = msg.role;
+  if (!role) return;
+  if (msg.bye) {
+    var pc = camPeers[role];
+    if (pc) { pc.close(); delete camPeers[role]; }
+    video_hide(role);
+    return;
+  }
+  var pc = ensurePeer(role);
+  if (msg.sdp) {
+    pc.setRemoteDescription(msg.sdp).then(function () {
+      return pc.createAnswer();
+    }).then(function (answer) {
+      return pc.setLocalDescription(answer).then(function () { return answer; });
+    }).then(function (answer) {
+      ws.send(JSON.stringify({ rtc: { role: role, sdp: { type: "answer", sdp: answer.sdp } } }));
+    }).catch(function (err) { console.warn("대시보드: rtc 협상 실패", role, err); });
+  } else if (msg.candidate) {
+    pc.addIceCandidate({ candidate: msg.candidate, sdpMLineIndex: msg.sdpMLineIndex }).catch(function () {});
+  }
+}
+
+// ── 메시지 종류별 렌더 — kind 하나에 함수 하나 ─────────────────────
+function handleMessage(msg) {
+  if (!msg || typeof msg.kind !== "string") return;
+  switch (msg.kind) {
+    case "hello":
+      renderHello(msg);
+      break;
+    case "snapshot":
+      renderSnapshot(msg);
+      break;
+    case "sent":
+      renderSent(msg);
+      break;
+    case "rtc":
+      handleRtc(msg);
+      break;
+    case "recv":
+    case "connect":
+    case "disconnect":
+    case "warn":
+    case "command":
+      appendLogFor(msg);
+      break;
+    default:
+      console.warn("대시보드: 모르는 메시지 종류 — " + msg.kind);
+  }
+}
+
+function renderHello(msg) {
+  // hello 는 연결마다 온다(세션에 한 번이 아니다) — 새로고침·재접속마다 다시 온다.
+  // 로그와 경고 수를 먼저 비운다: 안 비우면 이력이 지금까지 쌓인 실시간 줄 옆에
+  // 다시 덧쌓여 로그 줄이 중복되고 경고 수가 두 배가 된다.
+  clearLog();
+
+  var cues = Array.isArray(msg.cues) ? msg.cues : [];
+  buildRundown(cues);
+  // hello.levels 도 연결마다 다시 온다 — buildRundown 과 같은 이유로 매번 새로 짓는다
+  // (안 그러면 재접속마다 레벨 버튼이 두 배로 쌓인다).
+  buildLevelControl(msg.levels);
+  // hello.modes 도 마찬가지로 연결마다 다시 온다 — 같은 이유로 매번 새로 짓는다.
+  buildModeControl(msg.modes);
+  buildCourseControl(msg.courses);
+
+  // 이력은 appendLogFor 가 아니라 handleMessage 로 흘린다 — 그래야 실시간과 같은
+  // 길을 타서 sent say/mic 이 자막·MIC 표시에도 반영된다. appendLogFor 만 부르면
+  // 로그 줄은 남아도 자막·MIC 는 복원되지 않는다(LISTENING 중 새로고침하면
+  // 운영자가 관람객 마이크가 열린 걸 모른다).
+  var history = Array.isArray(msg.history) ? msg.history : [];
+  for (var i = 0; i < history.length; i++) {
+    handleMessage(history[i]);
+  }
+
+  // 이력 재생 뒤에 hello.snapshot 을 적용한다 — 탤리·런다운 태그는 스냅샷이 최종
+  // 권위다(이력 재생 중 마지막으로 본 speaking_role 이 지금은 낡았을 수 있다).
+  // snapshot 이 없어도(null) 안 터진다.
+  if (msg.snapshot) renderSnapshot(msg.snapshot);
+}
+
+function clearLog() {
+  // hello 를 다시 받을 때(재접속·새로고침) 지난 로그를 비운다 — 안 비우면 이력이
+  // 중복되고 경고 수가 두 배가 된다(P2).
+  var log = document.getElementById("log");
+  while (log.firstChild) log.removeChild(log.firstChild);
+  warnCount = 0;
+  document.getElementById("log-warn-count").textContent = "경고 " + warnCount;
+  clearHiddenAlert();   // 시안 가: hello 이력이 경고를 다시 센다 — 두 번 세지 않게 같이 비운다
+}
+
+function renderSnapshot(s) {
+  latestSnapshot = s;
+
+  var idx = indexOfCue(s.cue_id, s.cue_index);
+  var cue = idx >= 0 && idx < rundownRows.length ? rundownRows[idx] : null;
+  var title = cue ? cue.title : (s.cue_id || "—");
+  var num = typeof s.cue_index === "number" ? s.cue_index + 1 : "—";
+  var count = typeof s.cue_count === "number" ? s.cue_count : "—";
+  document.getElementById("cue-label").textContent =
+    "CUE " + pad2(num) + " / " + count + " · " + title;
+
+  var topicEl = document.getElementById("cue-topic");
+  var topic = cue ? cue.topic : "";
+  topicEl.textContent = topic;
+  topicEl.title = topic;   // 잘려도 마우스오버로 전문을 본다
+
+  renderLevelState(s);
+  renderModeState(s);
+  renderOneRobot(s);   // 모드 토글이 없는 구버전 서버에서도 그린다(renderModeState 는 거기서 일찍 끝난다)
+  renderShowToggle(s);
+  renderCourseState(s);
+  renderNowNext(s);   // 시안 가
+  renderRobots(s);    // 시안 가 — 카메라 칸(탤리)이 서랍 안이라 로봇 연결은 머리 알약으로
+
+  var connected = new Set(Array.isArray(s.connected) ? s.connected : []);
+  var rejected = new Set(Array.isArray(s.rejected) ? s.rejected : []);
+  setTally("mc", connected, rejected, s.speaking_role);
+  setTally("docent", connected, rejected, s.speaking_role);
+
+  refreshRundownTags();
+  refreshGotoBarForCurrent();
+  applyAutoProgress(s.question_wait_s, s.question_wait_total_s, s.mode);
+
+  // 카메라 relay 가 있을 때만 snapshot.cameras 가 온다(계약, Task 7) — 없으면(구버전
+  // 서버·relay 미장착) 아무것도 하지 않는다(never throw).
+  if (s.cameras) {
+    ["mc", "docent"].forEach(function (role) {
+      var c = s.cameras[role];
+      if (!c) return;
+      var reasonEl = document.getElementById("cam-reason-" + role);
+      var btn = document.getElementById("cam-toggle-" + role);
+      if (reasonEl) { reasonEl.textContent = c.reason || ""; reasonEl.hidden = !c.reason; }
+      // 시안 가: 사유가 **새로 생길 때만** 센다 — 스냅샷은 0.5초마다 와서 매번 세면 개수가 끝없이 오른다.
+      if (c.reason && c.reason !== lastCamReason[role]) markHiddenProblem((role === "mc" ? "사회자" : "도슨트") + " 카메라: " + c.reason);
+      lastCamReason[role] = c.reason || "";
+      if (btn) btn.textContent = c.enabled ? "카메라 끄기" : "카메라 켜기";
+    });
+  }
+  if (Array.isArray(s.standby)) {
+    ["mc", "docent"].forEach(function (role) {
+      var btn = document.getElementById("standby-toggle-" + role);
+      if (btn) btn.textContent = s.standby.indexOf(role) !== -1 ? "대기 해제" : "대기모드";
+    });
+  }
+}
+
+function renderSent(msg) {
+  var role = msg.role;
+  var fields = msg.fields || {};
+  if (msg.type === "say" && role && typeof fields.text === "string") {
+    var cap = document.getElementById("cap-" + role);
+    // 관람객 STT·로봇 대사가 그대로 온다 — textContent 로만 넣는다(setCaption).
+    if (cap) setCaption(cap, fields.text, fields.emotion);
+  } else if (msg.type === "mic" && role) {
+    var mic = document.getElementById("mic-" + role);
+    if (mic) mic.textContent = fields.open ? "MIC ON" : "MIC OFF";
+  }
+  appendLogFor(msg);
+}
+
+// ── 대사 감정 ─────────────────────────────────────────────────────
+// 감독이 `say` 에 싣는 `emotion`(계약: 계획 §12.5, 어휘 8종은 stage/cues.py::EMOTIONS).
+function shownEmotion(value) {
+  // `설명` 은 "특별한 감정 없음"(stage/cues.py::DEFAULT_EMOTION)이라 거의 모든 줄에
+  // 붙는다 — 그리면 배지가 늘 켜져 있는 장식이 되어 진짜 감정(놀람·아쉬움)이 눈에 안
+  // 띈다. 필드가 아예 없는 경우(감정을 모르는 옛 감독, 관람객 질문 답)도 같다.
+  // 문자열이 아닌 값이 와도 던지지 않는다 — 자막은 시연 내내 도는 경로라 여기서
+  // 던지면 그 뒤 대사가 화면에서 통째로 멈춘다(계약: never throw).
+  // 아는 태그 목록을 여기 한 벌 더 두지 않는다 — 모르는 태그는 감독이 기동에서
+  // 거절하고(load_cues), 목록을 들고 있으면 어휘가 늘 때마다 두 곳이 어긋난다.
+  if (typeof value !== "string") return "";
+  var name = value.trim();
+  return name === "" || name === "설명" ? "" : name;
+}
+
+function setCaption(cap, text, emotion) {
+  // 칸을 **비우고 다시 짓는다.** 배지 엘리먼트를 남긴 채 텍스트만 갈아 끼우면 감정이
+  // 없는 다음 대사에 앞 대사의 배지가 그대로 붙어 있고, 운영자는 그것을 지금 감정으로
+  // 읽는다.
+  while (cap.firstChild) cap.removeChild(cap.firstChild);
+  var name = shownEmotion(emotion);
+  if (name) {
+    var badge = document.createElement("span");
+    badge.className = "emotion-badge";
+    badge.textContent = name;   // 감독이 준 문자열 — textContent 로만 넣는다
+    cap.appendChild(badge);
+  }
+  cap.appendChild(document.createTextNode(text));
+}
+
+// ── 로그 한 줄 ────────────────────────────────────────────────────
+function describeEvent(msg) {
+  var fields = msg.fields || {};
+  switch (msg.kind) {
+    case "sent":
+      if (msg.type === "say") {
+        // 감정은 로그에도 남긴다 — 자막은 다음 대사가 곧 덮어쓰므로, 시연이 끝난 뒤
+        // "이 대사에 왜 저 모션이 났나" 를 되짚을 기록은 이 줄뿐이다. 배지와 **같은
+        // 규칙**(없거나 `설명` 이면 안 적는다)이라 같은 함수를 쓴다 — 규칙을 두 벌로
+        // 적으면 한쪽만 고쳐져 화면과 로그가 엇갈린다.
+        var emo = shownEmotion(fields.emotion);
+        return "say " + msg.role + " " + fields.cue_id + " seq=" + fields.seq +
+               (emo ? " " + emo : "");
+      }
+      if (msg.type === "mic") return "mic " + msg.role + " " + (fields.open ? "on" : "off");
+      if (msg.type === "abort") return "abort " + msg.role;
+      return msg.type + " " + msg.role;
+    case "recv":
+      if (msg.type === "heard") return "관람객> " + fields.text;
+      if (msg.type === "speaking_started") return "[" + msg.role + "] 발화 시작 seq=" + fields.seq;
+      if (msg.type === "speaking_ended") return "[" + msg.role + "] 발화 종료 seq=" + fields.seq;
+      if (msg.type === "error") {
+        // fields = {where, detail}(stage/server.py:217) — 그대로 이어붙이면
+        // "[mc] error" 로만 남아 무엇이 어디서 실패했는지 로그만 봐서는 모른다.
+        // where·detail 은 둘 다 없을 수 있어 있는 것만 잇는다.
+        var where = typeof fields.where === "string" ? fields.where : "";
+        var detail = typeof fields.detail === "string" ? fields.detail : "";
+        var text = "[" + msg.role + "] 오류";
+        if (where) text += " " + where;
+        if (detail) text += (where ? ": " : " ") + detail;
+        return text;
+      }
+      return "[" + msg.role + "] " + msg.type;
+    case "connect":
+      return "[" + msg.role + "] 붙었다";
+    case "disconnect":
+      return "[" + msg.role + "] 끊겼다";
+    case "warn":
+      return msg.text || "";
+    case "command": {
+      // ok=false 면 서버 lines 가 이미 "거절됨: …" 을 담고 있다(stage/console.py
+      // `out(f"  거절됨: {exc}")`). 접두에서 또 "거절됨" 을 붙이면 "거절됨 거절됨: …"
+      // 으로 겹친다. lines 를 그대로 쓰고, lines 가 비어 있을 때만 "거절됨" 을 채운다.
+      var lines = Array.isArray(msg.lines) ? msg.lines.join(" ") : "";
+      if (!msg.ok) return "명령 " + msg.cmd + " — " + (lines || "거절됨");
+      return "명령 " + msg.cmd + " — 실행" + (lines ? " " + lines : "");
+    }
+    default:
+      return String(msg.kind);
+  }
+}
+
+function isWarnLine(msg) {
+  return msg.kind === "warn" || (msg.kind === "command" && msg.ok === false);
+}
+
+function formatTime(t) {
+  // 서버는 epoch 초(time.time())를 보낸다 — 시간대는 브라우저가 알아서 맞춘다.
+  if (typeof t !== "number") return "--:--:--";
+  var d = new Date(t * 1000);
+  var two = function (n) { return String(n).padStart(2, "0"); };
+  return two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds());
+}
+
+function appendLogFor(msg) {
+  var warn = isWarnLine(msg);
+  var line = document.createElement("div");
+  line.className = warn ? "log-line warn" : "log-line";
+
+  var time = document.createElement("span");
+  time.className = "log-time";
+  time.textContent = formatTime(msg.t);
+
+  var text = document.createElement("span");
+  text.className = "log-text";
+  text.textContent = describeEvent(msg);   // 서버 문자열 — textContent 로만 넣는다
+
+  line.appendChild(time);
+  line.appendChild(text);
+
+  var log = document.getElementById("log");
+  log.appendChild(line);
+  while (log.childElementCount > LOG_MAX) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;   // 최신이 아래 — 자동 스크롤
+
+  if (warn) {
+    warnCount += 1;
+    document.getElementById("log-warn-count").textContent = "경고 " + warnCount;
+    markHiddenProblem(text.textContent);   // 시안 가: 서랍이 접혀 로그가 안 보인다 → '고급' 줄에 개수와 마지막 경고
+  }
+}
+
+// ── 런다운 ────────────────────────────────────────────────────────
+function pad2(n) {
+  return typeof n === "number" ? String(n).padStart(2, "0") : String(n);
+}
+
+function indexOfCue(cueId, fallbackIndex) {
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === cueId) return i;
+  }
+  return typeof fallbackIndex === "number" ? fallbackIndex : -1;
+}
+
+function buildRundown(cues) {
+  // hello 는 연결마다 온다(세션에 한 번만 오는 게 아니다) — 재접속·새로고침마다
+  // 다시 온다. 그래서 root 를 먼저 비우고 매번 다시 짓는다(안 비우면 런다운 줄이
+  // 두 배로 쌓인다). 반대로 snapshot 은 세션 내내 자주 오므로 그때는 클래스·
+  // 텍스트만 갈아끼운다(rundownRows) — 매번 다시 지으면 클릭 리스너를 새로 달아야
+  // 하고 스크롤 위치도 흔들린다.
+  var root = document.getElementById("rundown");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  rundownRows = [];
+  lastScrolledCueIdx = -1;   // 행을 새로 지었다 — 재접속 뒤에도 현재 큐를 다시 보여 준다
+
+  cues.forEach(function (c, i) {
+    var title = c.title || c.id;
+    var topic = c.topic || title;
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cue-row";
+    btn.title = pad2(i + 1) + " " + title;   // 시안 가: 칩에는 짧은 이름만 — 전체 이름은 마우스를 올리면, 그리고 이동 확인 바에
+
+    var num = document.createElement("span");
+    num.className = "cue-num";
+    num.textContent = pad2(i + 1);
+
+    var titleSpan = document.createElement("span");
+    titleSpan.className = "cue-title";
+    titleSpan.textContent = shortTitle(title);   // 시안 가: 칩이 좁아 ' — ' 뒤 부제는 뺀다(전체는 rundownRows·확인 바)
+
+    var tag = document.createElement("span");
+    tag.className = "cue-tag";
+
+    btn.appendChild(num);
+    btn.appendChild(titleSpan);
+    btn.appendChild(tag);
+    btn.addEventListener("click", function () { selectCue(c.id); });
+    root.appendChild(btn);
+
+    rundownRows.push({ id: c.id, title: title, topic: topic, btn: btn, tag: tag });
+  });
+  // 시안 가: 칩 칸 수 — 넓으면 한 줄(전부), 1280px 아래는 두 줄(반 올림). 큐 수는 hello 가 정하므로 여기서 준다.
+  root.style.setProperty("--n1", String(Math.max(1, cues.length)));
+  root.style.setProperty("--n2", String(Math.max(1, Math.ceil(cues.length / 2))));
+
+  refreshRundownTags();
+}
+
+function refreshRundownTags() {
+  var idx = latestSnapshot ? indexOfCue(latestSnapshot.cue_id, latestSnapshot.cue_index) : -1;
+  var done = 0;
+  rundownRows.forEach(function (row, i) {
+    row.btn.classList.remove("done", "now", "todo", "selected", "ready", "skip");
+    if (i !== idx && !inCourse(row.id)) {
+      // 코스 밖 큐(2026-09-25) — 진행이 밟지 않는다. 이동(`g`)은 여전히 된다 — 눌러서 고를 수는 있다.
+      row.btn.classList.add("skip");
+      row.tag.textContent = "제외";
+    } else if (idx >= 0 && i < idx) {
+      row.btn.classList.add("done");
+      row.tag.textContent = "DONE";
+      done += 1;
+    } else if (i === idx) {
+      row.btn.classList.add("now");
+      // 시작 전(idle)에는 아직 방송 중이 아니다 — 여기서 ON AIR(빨강)를 켜면
+      // 운영자가 이미 시작된 것으로 착각한다. idle 이 아니면(발화 중·LISTENING)
+      // 그대로 ON AIR. **단독도 방송 중이 아니다**(2026-09-25) — 단독은 곧바로 LISTENING
+      // 이라 state 만 보면 멈춰 둔 팟캐스트 큐가 ON AIR 로 켜진다(화면 실측).
+      var idle = latestSnapshot && (latestSnapshot.state === "idle" || latestSnapshot.mode === "solo");
+      if (idle) row.btn.classList.add("ready");
+      row.tag.textContent = idle ? "READY" : "ON AIR";
+    } else {
+      row.btn.classList.add("todo");
+      row.tag.textContent = "NEXT";
+    }
+    if (row.id === selectedCueId) row.btn.classList.add("selected");
+  });
+  document.getElementById("rundown-summary").textContent =
+    rundownRows.length + "개 중 " + done + "개 끝남";
+  // 시안 가: 바로 다음에 밟을 큐(코스 안) 칩에 청록 테두리 — 데크의 '다음' 과 같은 큐다.
+  var nx = idx >= 0 ? nextCueIndex(idx) : -1;
+  rundownRows.forEach(function (row, i) { row.btn.classList.toggle("upnext", i === nx); });
+
+  // 런다운이 창 높이에 맞춰 안쪽 스크롤이 되면서, 현재 큐가 목록 아래로 숨을 수 있다
+  // (19행 중 보이는 건 창 크기에 따라 7~10행). 큐가 **바뀔 때만** 그 행을 보이게 한다 —
+  // 스냅샷은 0.5초마다 오므로 매번 당기면 운영자가 다른 큐를 고르려 내려 본 목록을 도로
+  // 끌어올린다. `nearest` 는 이미 보이면 움직이지 않는다.
+  if (idx >= 0 && idx !== lastScrolledCueIdx && rundownRows[idx]) {
+    lastScrolledCueIdx = idx;
+    rundownRows[idx].btn.scrollIntoView({ block: "nearest" });
+  }
+}
+
+// ── 관람객 수준 4버튼 ────────────────────────────────────────────
+function buildLevelControl(levels) {
+  // hello 는 연결마다 다시 온다 — 컨테이너를 먼저 비우고 다시 짓는다(buildRundown 과
+  // 같은 이유: 안 비우면 재접속마다 버튼이 두 배로 쌓인다).
+  var root = document.getElementById("level");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  levelButtons = {};
+  // hello.levels 가 없는 구버전 서버에서는 배열이 아니거나 비어 있다 — 그때는 버튼을
+  // 하나도 짓지 않고 renderLevelState 가 이름만 평문으로 넣는다(never throw, 계약).
+  levelButtonsMode = Array.isArray(levels) && levels.length > 0;
+  if (!levelButtonsMode) return;
+
+  levels.forEach(function (name) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "level-btn";
+    btn.textContent = name;   // 서버가 준 수준 이름 그대로 — textContent 로만 넣는다
+    // 확인 단계 없이 바로 보낸다 — 되돌릴 수 있는 조작이고 말을 끊지 않는다(지금 문장은
+    // 끝까지, 다음 발화부터 새 수준 — 2026-09-25). 지금 적용된 수준을 다시 눌러도 그냥
+    // "l <이름>" 을 보낸다 — "이미 그 수준" 경고도 감독 쪽 같은 명령이 하므로 페이지에서
+    // 따로 분기하지 않는다. 마우스 클릭만 받는다 — ev.code 단축키는 두지 않는다(레벨은
+    // 실수로 눌리기 쉬운 키보드 경로를 얹지 않는다).
+    btn.addEventListener("click", function () { sendCmd("l " + name); });
+    root.appendChild(btn);
+    levelButtons[name] = btn;
+  });
+}
+
+function renderLevelState(s) {
+  // 교육자료 링크는 늘 지금 수준으로 연다 — 운영자가 수준을 바꾼 뒤 인쇄하면 그 수준 자료가 나온다.
+  if (s.level) {
+    document.getElementById("link-handout").href = "/handout?level=" + encodeURIComponent(s.level);
+  }
+  if (!levelButtonsMode) {
+    // 구버전 서버 폴백 — 버튼이 없으니 이름만 보여준다(계약: never throw).
+    document.getElementById("level").textContent = s.level || "—";
+    return;
+  }
+  // ~~s.level_pending(대기 중인 이름)을 테두리로 강조했다~~ — 2026-09-25 즉시 적용으로
+  // 대기가 없다. 서버는 호환으로 null 을 계속 싣지만 페이지는 읽지 않는다.
+  Object.keys(levelButtons).forEach(function (name) {
+    levelButtons[name].classList.toggle("applied", name === s.level);
+  });
+}
+
+// ── 코스(전체/하이라이트) — 2026-09-25 ────────────────────────────
+function buildCourseControl(courses) {
+  // hello 는 연결마다 다시 온다 — 비우고 다시 짓는다(수준·모드와 같은 이유).
+  var root = document.getElementById("course");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  courseButtons = {};
+  // 코스가 하나뿐이면(또는 구버전 서버) 고를 것이 없다 — 묶음을 숨긴다.
+  var ok = Array.isArray(courses) && courses.length > 1;
+  document.getElementById("course-group").hidden = !ok;
+  if (!ok) return;
+  courses.forEach(function (name) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "level-btn";
+    btn.textContent = name;   // 서버가 준 코스 이름 그대로 — textContent 로만
+    // 확인 단계 없이 바로 보낸다 — 말을 끊지 않고(지금 큐는 끝까지) 되돌리기도 버튼 한 번이다.
+    btn.addEventListener("click", function () { sendCmd("k " + name); });
+    root.appendChild(btn);
+    courseButtons[name] = btn;
+  });
+}
+
+function renderCourseState(s) {
+  Object.keys(courseButtons).forEach(function (name) {
+    courseButtons[name].classList.toggle("applied", name === s.course);
+  });
+}
+
+function inCourse(id) {
+  // 스냅샷의 course_cue_ids 가 null 이면(전체 코스·구버전 서버) 모든 큐가 코스 안이다.
+  var ids = latestSnapshot && latestSnapshot.course_cue_ids;
+  return !Array.isArray(ids) || ids.indexOf(id) !== -1;
+}
+
+// ── 운영 모드 토글(팟캐스트/단독) ────────────────────────────────
+function buildModeControl(modes) {
+  // hello 는 연결마다 다시 온다 — buildLevelControl 과 같은 이유로 컨테이너를 먼저
+  // 비우고 다시 짓는다(안 비우면 재접속마다 버튼이 두 배로 쌓인다).
+  var root = document.getElementById("mode");
+  while (root.firstChild) root.removeChild(root.firstChild);
+  modeButtons = {};
+  // hello.modes 가 없는 구버전 서버에서는 토글 전체를 숨긴다 — 계약이 없는 서버에
+  // 명령을 보내 봐야 감독이 모른다. 버튼을 하나도 안 짓고 던지지도 않는다.
+  modeButtonsMode = Array.isArray(modes) && modes.length > 0;
+  root.hidden = !modeButtonsMode;
+  if (!modeButtonsMode) return;
+
+  modes.forEach(function (name) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mode-btn";
+    btn.dataset.mode = name;
+    // 서버가 준 이름은 "podcast"/"solo" 고정(계약) — 한국어 라벨을 붙이되, 모르는
+    // 이름이 오면(4단계 전까지는 안 오지만 방어적으로) 이름 그대로 보여준다.
+    btn.textContent = MODE_LABEL[name] || name;
+    btn.addEventListener("click", function () {
+      // 확인 단계 없이 바로 보낸다 — 팟캐스트→단독도 마찬가지다. 런다운 두 단계
+      // 이동(goto-bar)과 달리 이 버튼은 (1) 단독 쪽은 solo_available 일 때만
+      // 눌리고(로봇 앱이 지원할 때만), (2) 되돌리기(단독→팟캐스트)가 버튼 한 번이라
+      // 실수의 대가가 낮다 — "실수 한 번이 진행을 깨지 않는다"(스펙 결정 2)를 해치는
+      // 정도가 런다운 이동보다 작다고 판단해 확인 바를 쓰지 않는다(task-2 브리프 판정).
+      var current = latestSnapshot ? latestSnapshot.mode : null;
+      if (name === current) return;   // 이미 그 모드 — 감독도 "바꿀 것이 없다"로 경고만 한다
+      sendCmd("m " + name);
+    });
+    root.appendChild(btn);
+    modeButtons[name] = btn;
+  });
+}
+
+function renderModeState(s) {
+  var note = document.getElementById("mode-note");
+  if (!modeButtonsMode) {
+    // 구버전 서버 폴백 — 토글이 이미 숨어 있으니 안내문도 비워 둔다.
+    note.textContent = "";
+    note.hidden = true;
+    applySoloLockdown(false);
+    return;
+  }
+  Object.keys(modeButtons).forEach(function (name) {
+    var btn = modeButtons[name];
+    btn.classList.remove("applied");
+    if (name === s.mode) btn.classList.add("applied");
+  });
+  // 단독 버튼은 사회자가 붙어 있지 않거나 대기모드면 잠근다(계약: solo_available).
+  // ~~사회자 앱이 caps 로 단독을 알리지 않았으면~~ — 2026-09-25 감독이 대화를 맡아 앱과 무관하다. 이미 단독 모드라면(잠깐이라도
+  // solo_available 이 흔들려도) 잠그지 않는다 — 잠그면 팟캐스트로 되돌아갈 버튼까지
+  // 막히는 게 아니라 단독 버튼 자체가 "지금 상태"를 보여주는 자리라, 눌러도 감독이
+  // 어차피 "이미 solo 모드다"로 무시하지만 disabled 로 만들면 지금 모드가 무엇인지
+  // 시각적으로 헷갈린다.
+  var soloLocked = !s.solo_available && s.mode !== "solo";
+  if (modeButtons.solo) modeButtons.solo.disabled = soloLocked;
+  if (soloLocked) {
+    // 잠긴 이유가 둘이다(감독의 거절 경고도 둘) — 사회자 로봇이 안 붙었거나, 붙었는데 대기모드다.
+    // 하나로 뭉개면 사회자가 끊긴 것을 대기모드 문제로 오인해 엉뚱한 곳을 본다(최종 리뷰 M4).
+    // connected 가 없는 구버전 서버면 "사회자 연결" 쪽으로 읽힌다.
+    var mcConnected = Array.isArray(s.connected) && s.connected.indexOf("mc") !== -1;
+    note.textContent = mcConnected ? "단독: 사회자 대기모드 해제 후" : "단독: 사회자 로봇 연결 후";
+    note.hidden = false;
+  } else {
+    note.textContent = "";
+    note.hidden = true;
+  }
+
+  applySoloLockdown(s.mode === "solo");
+}
+
+function applySoloLockdown(isSolo) {
+  // 단독에서는 감독이 팟캐스트 진행 명령을 거절한다(계약: "단독 모드에서는 팟캐스트
+  // 진행(...)을 하지 않는다 — 먼저 m podcast"). 페이지에서도 눌러 봐야 소용없다는 것을
+  // 미리 보여준다 — 안 그러면 운영자가 눌렀는데 로그에 거절 경고만 쌓이는 것을 보고야
+  // 안다. 런다운 행·확인 바도 같은 이유로 잠근다. 즉시 중단(abort)만은 살려 둔다 —
+  // 단독 중에도 사회자가 이상 동작을 하면 멈출 유일한 손잡이라서다(계약에도 단독
+  // 진행 가드 목록에 abort 는 없다).
+  ["btn-prev", "btn-restart", "btn-next", "btn-show"].forEach(function (id) {
+    document.getElementById(id).disabled = isSolo;
+  });
+  // 스냅샷마다 여기를 지나므로 공연 토글의 누른-뒤-잠금을 풀어 버리지 않게 다시 건다.
+  if (showToggleLocked()) document.getElementById("btn-show").disabled = true;
+  document.getElementById("goto-confirm").disabled = isSolo;
+  document.getElementById("goto-cancel").disabled = isSolo;
+  rundownRows.forEach(function (row) { row.btn.disabled = isSolo; });
+
+  // 확인 바가 열린 채(런다운 행을 눌러 선택해 둔 상태) 단독으로 전환되면, 위에서 막
+  // 확인·취소 버튼과 런다운 행이 함께 잠겨 바를 닫을 방법이 없는 막다른 골목이 된다
+  // (수준 리뷰 I2). 단독으로 들어가는 순간 열려 있던 확인 바를 스스로 닫는다 — 팟캐스트로
+  // 돌아오면 다시 누르면 그만이라 잃을 것이 없다. selectedCueId 가 이미 null 이면(바가
+  // 안 열려 있었으면) closeGotoBar 는 그냥 hidden 을 다시 세팅할 뿐이라 안전하다.
+  if (isSolo) closeGotoBar();
+
+  document.getElementById("solo-banner").hidden = !isSolo;
+}
+
+// 1인 모드 띠(2026-11-13) — snapshot.solo_role 은 진행에 쓸 수 있는 로봇이 한 대뿐일 때 그 역할(둘이거나 없으면 null).
+function renderOneRobot(s) {
+  var el = document.getElementById("one-robot-banner");
+  var solo = s && (s.solo_role === "mc" || s.solo_role === "docent") ? s.solo_role : null;
+  if (!solo) { el.hidden = true; return; }
+  var name = { mc: "사회자", docent: "도슨트" };
+  var gone = solo === "mc" ? "docent" : "mc";
+  el.textContent = "1인 모드 — " + name[gone] + " 로봇이 없어 " + name[solo] + " 로봇이 " + name[gone] +
+    " 대사도 자기 목소리로 읽는다. 두 대로 하려면 무대감독 창에 찍힌 합류 명령(주소 포함)으로 " + name[gone] + " 로봇을 붙인다";
+  // ~~REACHY_ROLE=… ./reachy.sh robot up~~ 을 그대로 보여 주지 않는다 — 주소 없이 치면 기본 주소(도슨트 로봇)의 config 를 덮어쓴다.
+  el.hidden = false;
+}
+
+// ── 큐 이동 확인 바 — 클릭은 선택만, 확인해야 이동한다 ─────────────
+function selectCue(id) {
+  var row = null;
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === id) { row = rundownRows[i]; break; }
+  }
+  if (!row) return;
+
+  selectedCueId = id;
+  refreshRundownTags();
+
+  var curIdx = latestSnapshot ? indexOfCue(latestSnapshot.cue_id, latestSnapshot.cue_index) : -1;
+  var rowIdx = rundownRows.indexOf(row);
+  var isCurrent = curIdx >= 0 && curIdx === rowIdx;
+  var label = row.btn.querySelector(".cue-num").textContent + " " + row.title;
+
+  var bar = document.getElementById("goto-bar");
+  var text = document.getElementById("goto-text");
+  var confirm = document.getElementById("goto-confirm");
+
+  if (isCurrent) {
+    // 지금 방송 중인 큐를 다시 누른 것 — 큐 이동이 아니라 "다시(r)" 를 권한다.
+    text.textContent = "\"" + label + "\" — 지금 방송 중이다. 다시 하려면 R.";
+    confirm.textContent = "이 큐 다시(R)";
+  } else {
+    text.textContent = "\"" + label + "\" 으로 이동";
+    confirm.textContent = "이 큐로 이동";
+  }
+  bar.hidden = false;
+  bar.dataset.current = isCurrent ? "1" : "";
+}
+
+function closeGotoBar() {
+  selectedCueId = null;
+  document.getElementById("goto-bar").hidden = true;
+  refreshRundownTags();
+}
+
+function refreshGotoBarForCurrent() {
+  // snapshot 이 갱신되며 선택해 둔 큐가 방금 현재 큐가 됐을 수 있다(운영자가
+  // 다른 경로로 이미 옮긴 경우) — 문구를 다시 맞춘다.
+  var stillThere = false;
+  for (var i = 0; i < rundownRows.length; i++) {
+    if (rundownRows[i].id === selectedCueId) { stillThere = true; break; }
+  }
+  if (selectedCueId && stillThere) selectCue(selectedCueId);
+}
+
+// ── 시연 화면(2026-11-13) ─────────────────────────────────────────
+// 조정실 안의 틀 — 1280×720 으로 그린 화면을 패널에 맞춰 줄이고 가운데 둔다(프로젝터와 같은 모양).
+(function () {
+  var view = document.getElementById("stage-view");
+  var frame = document.getElementById("stage-frame");
+  function fit() {
+    var w = view.clientWidth, h = view.clientHeight;
+    if (!w || !h) return;
+    var k = Math.min(w / 1280, h / 720);
+    frame.style.transform = "translate(" + Math.round((w - 1280 * k) / 2) + "px," + Math.round((h - 720 * k) / 2) + "px) scale(" + k + ")";
+  }
+  fit();
+  if (window.ResizeObserver) { new ResizeObserver(fit).observe(view); } else { window.addEventListener("resize", fit); }
+  // 어느 화면을 골랐는지 — /stage/auto?embed 가 알려 준다(같은 오리진만 받는다).
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin || !ev.data || ev.data.type !== "stage-auto") return;
+    var d = ev.data, el = document.getElementById("stage-screen");
+    el.textContent = (d.level || "—") + (d.cue ? " · " + d.cue : "") + " → " + d.label + (d.why ? " — " + d.why : "");
+    el.classList.toggle("fallback", !!d.why);
+    el.title = el.textContent;
+  });
+})();
+
+// 프로젝터로 — 같은 오리진의 /stage/auto 를 새 창으로 연다(교육자료 화면이 이 서버의 /ws/audience 에 붙어 공연을 따라간다 —
+// file:// 는 Origin 검사에 막힌다).
+document.querySelectorAll("#btn-stage[data-href]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var w = window.open(btn.getAttribute("data-href"), "reachy-stage");
+    if (w) { w.focus(); } else { btn.textContent = "팝업이 막혔다 — 주소창에 " + btn.getAttribute("data-href"); }
+  });
+});
+
+document.getElementById("goto-confirm").addEventListener("click", function () {
+  if (!selectedCueId) return;
+  var isCurrent = document.getElementById("goto-bar").dataset.current === "1";
+  if (isCurrent) {
+    sendCmd("r");
+  } else {
+    sendCmd("g " + selectedCueId);
+  }
+  closeGotoBar();
+});
+document.getElementById("goto-cancel").addEventListener("click", closeGotoBar);
+
+// ── 진행 제어 버튼·자동 진행 표시 ───────────────────────────────────
+document.getElementById("btn-prev").addEventListener("click", function () { sendCmd("p"); });
+document.getElementById("btn-restart").addEventListener("click", function () { sendCmd("r"); });
+document.getElementById("btn-next").addEventListener("click", function () { sendCmd("n"); });
+document.getElementById("btn-abort").addEventListener("click", function () { sendCmd("a"); });
+
+// ── 공연 시작 ↔ 공연 종료 토글 ──────────────────────────────────────
+// 한 버튼이 snapshot.show_running 에 따라 두 명령을 오간다. **누른 뒤 잠깐 잠근다**: 토글은 누른
+// 순간의 라벨로 명령을 고르는데, [공연 종료] 를 두 번 누르면 그 사이 스냅샷이 도착해 두 번째 누름이
+// [공연 시작] 이 된다 — 끝내려던 공연이 곧바로 첫 큐부터 다시 시작한다. 감독은 반대 방향(진행 중인데
+// s)을 경고로 막지만 이 교차는 두 명령이 각각 정당해서 못 막는다.
+//
+// ~~1000ms~~ → **1500ms, 눈에 보이게 잠근다**(2026-09-25 실측): 브라우저 자동화로 두 번 누르니 간격이
+// 1005ms 라 1초 잠금을 5ms 차로 넘어 `e` 뒤에 `s` 가 나갔다. "눌렸나?" 하고 다시 누르는 사람의 간격도
+// 그쯤이다. 잠긴 동안 버튼을 흐리게(disabled) 두어 운영자가 "지금은 안 눌린다" 를 보고, 풀린 뒤에는
+// 바뀐 라벨을 읽고 누르게 한다.
+var SHOW_TOGGLE_LOCK_MS = 1500;
+var showToggleLockedUntil = 0;
+
+function showToggleLocked() { return Date.now() < showToggleLockedUntil; }
+
+function renderShowToggle(s) {
+  // 구버전 서버(필드 없음)는 시작으로 둔다 — 그 서버의 s 는 "지금 큐 시작" 이라 같은 버튼이 통한다.
+  var running = s.show_running === true;
+  var btn = document.getElementById("btn-show");
+  btn.classList.toggle("running", running);
+  btn.dataset.cmd = running ? "e" : "s";
+  document.getElementById("btn-show-label").textContent = running ? "공연 종료" : "공연 시작";
+  document.getElementById("btn-show-key").textContent = running ? "E" : "S";
+}
+
+document.getElementById("btn-show").addEventListener("click", function () {
+  var now = Date.now();
+  if (now < showToggleLockedUntil) return;
+  showToggleLockedUntil = now + SHOW_TOGGLE_LOCK_MS;
+  var btn = this;
+  btn.disabled = true;
+  sendCmd(btn.dataset.cmd === "e" ? "e" : "s");
+  setTimeout(function () {
+    // 단독이면 계속 잠가 둔다 — 단독 잠금은 applySoloLockdown 몫이다.
+    btn.disabled = !!(latestSnapshot && latestSnapshot.mode === "solo");
+  }, SHOW_TOGGLE_LOCK_MS);
+});
+
+// 카메라 켜기/끄기·대기모드 버튼 — 콘솔(stage/console.py)과 같은 "c <role>"/"z <role>"
+// 명령 문자열을 그대로 보낸다(계약, Task 5). 라벨은 renderSnapshot 이 cameras/standby
+// 로 갈아 끼운다 — 여기서는 클릭 시 명령만 보낸다.
+["mc", "docent"].forEach(function (role) {
+  var camBtn = document.getElementById("cam-toggle-" + role);
+  if (camBtn) camBtn.addEventListener("click", function () { sendCmd("c " + role); });
+  var standbyBtn = document.getElementById("standby-toggle-" + role);
+  if (standbyBtn) standbyBtn.addEventListener("click", function () { sendCmd("z " + role); });
+});
+
+var KEY_CMD = { "KeyP": "p", "KeyR": "r", "KeyN": "n", "KeyS": "s", "KeyE": "e", "KeyA": "a" };
+document.addEventListener("keydown", function (ev) {
+  // 수정키가 하나라도 눌려 있으면 무시한다 — 브라우저 단축키(예: Cmd+R 새로고침)
+  // 와 겹치지 않게 하기 위해서다.
+  if (ev.ctrlKey || ev.altKey || ev.metaKey || ev.shiftKey) return;
+  // 자동반복(키를 길게 누르고 있을 때 브라우저가 계속 쏘는 keydown)을 거른다 —
+  // 안 거르면 N 을 0.3초 넘게 누른 것만으로 sendCmd 가 여러 번 불려 큐가 여러 개
+  // 건너뛴다("실수 한 번이 진행을 깨지 않는다"는 원칙 위반, 스펙 결정 2).
+  if (ev.repeat) return;
+  // `ev.key` 대신 물리 키 위치인 `ev.code` 로 매핑한다 — 한글 입력기(IME)가 켜진
+  // 상태면 `ev.key` 가 `ㄴ`·`ㅜ` 같은 자모가 되어 버려 단축키가 조용히 안 먹는다.
+  // `ev.code` 는 입력기 상태와 무관하게 항상 물리 키 이름(KeyN 등)이다.
+  var cmd = KEY_CMD[ev.code];
+  if (!cmd) return;
+  // 단독에서는 진행 버튼(prev/restart/next/show)이 disabled 지만, 키보드 지름길은
+  // DOM 의 disabled 속성과 무관하게 그대로 sendCmd 를 불러 버튼 잠금을 우회했다(수준
+  // 리뷰 I1) — applySoloLockdown 이 막으려던 "감독이 거절해 로그에 경고만 쌓이는"
+  // 상황을 키보드로는 그대로 재현한 것이다. 즉시 중단(a)만은 버튼과 마찬가지로 단독
+  // 에서도 살려 둔다.
+  if (cmd !== "a" && latestSnapshot && latestSnapshot.mode === "solo") return;
+  ev.preventDefault();
+  sendCmd(cmd);
+});
+
+function setTally(role, connected, rejected, speakingRole) {
+  var mon = document.getElementById("mon-" + role);
+  var tag = document.getElementById("tag-" + role);
+  var cap = document.getElementById("cap-" + role);
+  var state;
+  if (rejected.has(role)) state = "rejected";
+  else if (!connected.has(role)) state = "offline";
+  else if (speakingRole === role) state = "onair";
+  else state = "standby";
+
+  [mon, tag, cap].forEach(function (el) {
+    STATE_CLASSES.forEach(function (c) { el.classList.remove(c); });
+    el.classList.add(state);
+  });
+  tag.textContent = TALLY_TEXT[state];
+}
+
+// ── 침묵 대기 시간 설정 — 감독의 snapshot.question_wait_total_s 가 정본(null 이면 자동 진행 끔) ──
+var WAIT_MIN = 3, WAIT_MAX = 60, WAIT_DEFAULT = 8;
+var waitNow = WAIT_DEFAULT;      // 지금 값(null = 끔)
+var waitLastOn = WAIT_DEFAULT;   // 껐다 켤 때 되돌아갈 값
+function renderWaitSetting(total) {
+  if (total === undefined) return;             // 구버전 감독 — 건드리지 않는다
+  waitNow = typeof total === "number" ? Math.round(total) : null;
+  if (waitNow !== null) waitLastOn = waitNow;
+  document.getElementById("wait-value").textContent = waitNow === null ? "끔" : waitNow + "초";
+  document.getElementById("wait-off").textContent = waitNow === null ? "켜기" : "끄기";
+  document.getElementById("wait-dec").disabled = waitNow === null || waitNow <= WAIT_MIN;
+  document.getElementById("wait-inc").disabled = waitNow === null || waitNow >= WAIT_MAX;
+}
+document.getElementById("wait-dec").addEventListener("click", function () {
+  if (waitNow !== null && waitNow > WAIT_MIN) sendCmd("w " + (waitNow - 1));
+});
+document.getElementById("wait-inc").addEventListener("click", function () {
+  if (waitNow !== null && waitNow < WAIT_MAX) sendCmd("w " + (waitNow + 1));
+});
+document.getElementById("wait-off").addEventListener("click", function () {
+  sendCmd(waitNow === null ? "w " + waitLastOn : "w 끄기");
+});
+
+function applyAutoProgress(wait, total, mode) {
+  var text = document.getElementById("auto-text");
+  var bar = document.getElementById("auto-bar");
+  renderWaitSetting(total);
+  if (mode === "solo") {
+    // 단독에는 넘길 큐가 없다 — 침묵 기한을 걸지 않는다(감독 `_arm_question_deadline`). "대기 전" 으로
+    // 두면 운영자가 곧 자동 진행이 시작될 줄 안다(2026-09-25 리뷰).
+    text.textContent = "단독 — 자동 진행 없음";
+    bar.style.width = "0%";
+    return;
+  }
+  if (total === null) {
+    text.textContent = "꺼짐 — 다음을 눌러 넘긴다";
+    bar.style.width = "0%";
+    return;
+  }
+  if (wait === null || wait === undefined) {
+    text.textContent = "대기 전";
+    bar.style.width = "0%";
+    return;
+  }
+  var seconds = Math.max(0, Math.round(wait));
+  text.textContent = "침묵 " + seconds + "초 뒤 다음 큐로";
+  var t = typeof total === "number" && total > 0 ? total : wait;
+  var ratio = t > 0 ? Math.min(1, Math.max(0, 1 - wait / t)) : 0;
+  bar.style.width = Math.round(ratio * 100) + "%";
+}
+
+// ── 시안 가: 진행 데크(지금·다음) · 로봇 알약 · '고급' 서랍 ─────────────────────
+function shortTitle(t) { var k = String(t).indexOf(" — "); return k > 0 ? String(t).slice(0, k) : String(t); }
+function nextCueIndex(idx) {
+  // '다음' 이 실제로 밟는 큐 — 코스 밖은 건너뛴다(감독 n 과 같은 규칙).
+  for (var i = idx + 1; i < rundownRows.length; i++) if (inCourse(rundownRows[i].id)) return i;
+  return -1;
+}
+function renderNowNext(s) {
+  var idx = indexOfCue(s.cue_id, s.cue_index);
+  var nx = idx >= 0 ? nextCueIndex(idx) : -1;
+  var nextEl = document.getElementById("cue-next");
+  nextEl.textContent = nx >= 0 ? pad2(nx + 1) + " " + rundownRows[nx].title : "— 마지막 큐";
+  nextEl.title = nextEl.textContent;
+  var tag = document.getElementById("now-tag"), text, cls = "";
+  if (s.mode === "solo") { text = "단독"; cls = "listen"; }
+  else if (!s.show_running) { text = "READY"; }
+  else if (s.state === "speaking") { text = "ON AIR · " + (s.speaking_role === "docent" ? "도슨트" : "사회자"); cls = "onair"; }
+  else { text = "질문 대기"; cls = "listen"; }
+  tag.textContent = text;
+  tag.className = "now-tag" + (cls ? " " + cls : "");
+}
+var ROBOT_TEXT = { offline: "끊김", rejected: "거부됨", onair: "말하는 중", standby: "연결", paused: "대기모드" };
+function renderRobots(s) {
+  var connected = Array.isArray(s.connected) ? s.connected : [];
+  var rejected = Array.isArray(s.rejected) ? s.rejected : [];
+  var paused = Array.isArray(s.standby) ? s.standby : [];
+  ["mc", "docent"].forEach(function (role) {
+    var el = document.getElementById("robot-" + role);
+    if (!el) return;
+    var state = rejected.indexOf(role) !== -1 ? "rejected"
+      : connected.indexOf(role) === -1 ? "offline"
+      : s.speaking_role === role ? "onair"
+      : paused.indexOf(role) !== -1 ? "paused" : "standby";
+    el.className = "robot " + state;
+    el.querySelector("b").textContent = ROBOT_TEXT[state];
+  });
+}
+function markRobotsUnknown() {
+  ["mc", "docent"].forEach(function (role) {
+    var el = document.getElementById("robot-" + role);
+    if (!el) return;
+    el.className = "robot unknown";
+    el.querySelector("b").textContent = "모름";
+  });
+}
+var hiddenAlerts = 0;
+var lastCamReason = { mc: "", docent: "" };
+function markHiddenProblem(text) {
+  if (document.getElementById("advanced").open) return;
+  hiddenAlerts += 1;
+  var el = document.getElementById("adv-alert");
+  el.textContent = "경고 " + hiddenAlerts + " · " + text;   // 서버 문자열 — textContent 로만
+  el.title = el.textContent;
+  el.hidden = false;
+}
+function clearHiddenAlert() {
+  hiddenAlerts = 0;
+  var el = document.getElementById("adv-alert");
+  if (el) { el.hidden = true; el.textContent = ""; }
+}
+document.getElementById("advanced").addEventListener("toggle", function () {
+  if (this.open) clearHiddenAlert();
+});
+// 떠오른 서랍의 자리 = 시연 화면 칸의 사각형. 띠(단독·1인 모드)가 뜨거나 창 크기가 바뀌면 칸이 움직이므로 다시 잰다.
+function placeAdvanced() {
+  var d = document.getElementById("advanced"), body = d.querySelector(".adv-body");
+  var panel = document.querySelector(".core .stage-panel");
+  if (!d.open || !panel) return;
+  var r = panel.getBoundingClientRect();
+  body.style.setProperty("--adv-l", Math.round(r.left) + "px");
+  body.style.setProperty("--adv-t", Math.round(r.top) + "px");
+  body.style.setProperty("--adv-w", Math.round(r.width) + "px");
+  body.style.setProperty("--adv-h", Math.round(r.height) + "px");
+}
+document.getElementById("advanced").addEventListener("toggle", placeAdvanced);
+window.addEventListener("resize", placeAdvanced);
+if (window.ResizeObserver) new ResizeObserver(placeAdvanced).observe(document.querySelector(".core"));
+// Esc 로 서랍을 닫는다 — 떠오른 서랍이 시연 화면을 덮고 있을 때 빨리 걷어 내려고. 진행 단축키(P R N S E A)와 겹치지 않는다.
+document.addEventListener("keydown", function (ev) {
+  if (ev.key === "Escape") { var d = document.getElementById("advanced"); if (d.open) d.open = false; }
+});
+
+connect();
+</script>
+
+<!-- 시안 전용 상태 막대 — 실제 조정실에는 없다. 경고 띠·연결 배지가 어느 상태에서도 보이는지 바꿔 본다(?s=… 와 같다). -->
+<div id="mock-bar" class="mock-bar" hidden>
+  <span>시안 상태</span>
+  <button type="button" data-mock-s="normal">정상</button>
+  <button type="button" data-mock-s="one-robot">1인 모드</button>
+  <button type="button" data-mock-s="solo">단독</button>
+  <button type="button" data-mock-s="down">연결 끊김</button>
+  <button type="button" data-mock-s="warn">가린 곳 경고</button>
+  <button type="button" id="mock-bar-close" aria-label="시안 막대 닫기">×</button>
+</div>
+
+</body>
+</html>

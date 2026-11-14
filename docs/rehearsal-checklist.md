@@ -5,7 +5,7 @@
 "로그에서 볼 줄" 은 코드의 문구를 그대로 옮겼다(2026-11-14 기준) — 문구가 다르게 찍히면 그것도 실패로 적는다(코드가 바뀐 것이다).
 
 로그 읽는 법: `./reachy.sh logs` — 감독(`.demo-logs/start-director.log`, 마지막 세션)·게이트웨이·TTS 프록시 경고를 한 번에.
-로봇 앱 로그는 `REACHY_ROBOT_HOST=<주소> ./reachy.sh robot logs`. 조정실 이벤트 로그는 관람객 말을 `관람객> …` 으로 보인다.
+로봇 앱 로그는 `REACHY_ROBOT_HOST=<주소> ./reachy.sh robot logs`. 조정실 '고급' 서랍의 이벤트 로그는 관람객 말을 `관람객> …` 으로 보인다.
 
 ---
 
