@@ -52,6 +52,8 @@ class Harness:
         # `clear()` 뒤에도 남는 누적 목록 — 발화 seq 를 되찾는 데 쓴다
         self.all_sent: list[tuple[str, str, dict]] = []
         self.warnings: list[str] = []
+        # 감독 로그에만 남는 기록(`note` — 조정실 경고로 가지 않는다, 2026-11-14 답한 관람객 질문)
+        self.notes: list[str] = []
         self.clock = Clock()
         self.gen_calls: list[tuple[str, int]] = []
         # 생성 콜백이 실제로 받은 role 을 호출 순서대로 남긴다(리뷰 Important 1).
@@ -116,6 +118,7 @@ class Harness:
             now=self.clock,
             expect_units=expect_units,
             warn=self.warnings.append,
+            note=self.notes.append,
             level_name=level_name,
             **kw,
         )
@@ -3865,3 +3868,68 @@ def test_단독_모드는_되묻지_않는다():
     h.clear()
     h.d.on_heard("안녕하세요")
     assert h.gen_roles == ["solo"]
+
+
+# ── 답한 관람객 질문을 감독 로그에 한 줄(2026-11-14 사용자 결정 — 리허설 뒤 되묻기 문턱을 다시 재는 표본) ──────────
+# 녹음은 없고 글만, 관람객 말 외에는 아무것도 싣지 않는다. **조정실 경고(warn)로 보내지 않는다** — 질문마다 경고 줄이
+# 생기면 진짜 경고가 묻힌다(조정실은 이미 `관람객> …` 로 들은 말을 보여 준다). 감독 로그 파일은 감독의 표준출력을
+# `reachy.sh::start_director` 가 tee 로 받은 것이라 기록 채널의 기본은 print 다.
+def test_답한_관람객_질문은_감독_로그에_한_줄_남긴다():
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.warnings.clear()
+    h.d.on_heard("전파가 뭐예요?")
+    assert h.notes == ["관람객 질문: '전파가 뭐예요?'"]
+    assert not any("관람객 질문" in w for w in h.warnings)        # 조정실 경고로는 가지 않는다
+
+
+def test_답하지_않은_말은_질문으로_남기지_않는다():
+    """되묻기·진행어·잡음·듣는 중이 아닐 때 — 답하지 않았으니 '답한 질문' 표본이 아니다(되묻기는 따로 경고에 남는다)."""
+    h = Harness(qa_reprompt=True)
+    h.d.start()
+    h.d.on_heard("전파가 뭐예요?")                              # 말하는 중 — 버린다
+    h.ended("mc", "c1")
+    h.ended("docent", "c1:docent")
+    h.d.on_heard("아")                                         # 잡음
+    h.d.on_heard("와 신기하다")                                 # 되묻기
+    h.ended("mc", "c1:reask")
+    h.d.on_heard("다음")                                       # 진행어
+    assert h.notes == []
+    assert any("되묻는다: '와 신기하다'" in w for w in h.warnings)
+
+
+def test_되묻기_뒤_연달아_답한_말도_남긴다():
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.d.on_heard("와 신기하다")
+    h.ended("mc", "c1:reask")
+    h.d.on_heard("대박")
+    assert h.notes == ["관람객 질문: '대박'"]
+
+
+def test_단독_답도_단독이라고_구분해_남긴다():
+    h = Harness(generate=lambda r, b, hist: "반가워요.")
+    _단독(h)
+    h.d.on_heard("마르코니가 누구예요?")
+    assert h.notes == ["관람객 질문(단독): '마르코니가 누구예요?'"]
+
+
+def test_질문_줄은_언제나_한_줄이다():
+    """전사에 줄바꿈이 섞여도 로그 한 줄 — 다음 줄이 감독 출력처럼 보이면 로그를 읽는 사람이 속는다(repr 로 감싼다)."""
+    h = Harness(qa_reprompt=True)
+    _관람객_차례(h)
+    h.d.on_heard("전파가\n뭐예요?")
+    assert h.notes == ["관람객 질문: '전파가\\n뭐예요?'"] and "\n" not in h.notes[0]
+
+
+def test_질문_기록은_기본으로_감독_표준출력에_찍힌다(capsys):
+    """`reachy.sh::start_director` 가 감독 표준출력을 `.demo-logs/start-director.log` 에 tee 한다 — 기본 채널이 print 여야 파일에 남는다."""
+    d = Director(CueSheet([Cue("c1", "첫째", "사회자 첫 대사", "첫 지시", "partner",
+                                points=(Turn("", _모든_수준("첫 해설")),))]),
+                 generate=lambda *a: "답이에요.", send=lambda *a: None, warn=lambda m: None, qa_reprompt=True)
+    d.start()
+    d.on_speaking_ended("mc", "c1", 1)
+    d.on_speaking_ended("docent", "c1:docent", 2)
+    capsys.readouterr()
+    d.on_heard("전파가 뭐예요?")
+    assert "관람객 질문: '전파가 뭐예요?'" in capsys.readouterr().out.splitlines()

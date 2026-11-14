@@ -147,6 +147,19 @@ def _reprompt_switch(warn, env=None) -> bool:
     return True
 
 
+def _print_note(message: str) -> None:
+    print(message, flush=True)
+
+
+def _question_note(text: str, solo: bool = False) -> str:
+    """답한 관람객 질문의 감독 로그 한 줄(2026-11-14 사용자 결정 — 리허설 뒤 되묻기 문턱을 다시 재는 표본).
+
+    **관람객 말 글만** 싣는다(녹음·키·그 밖의 정보 없음). repr 로 감싸 언제나 한 줄이다 — 전사에 줄바꿈이 섞여도 다음 줄이
+    감독 출력처럼 보이지 않는다. 단독 답은 `(단독)` 으로 가른다(되묻기는 팟캐스트에만 걸린다 — 문턱 표본은 팟캐스트 줄이다).
+    """
+    return f"관람객 질문{'(단독)' if solo else ''}: {text!r}"
+
+
 # 무대 연출에 필요한 로봇 앱 능력(설계 §12.5). hello 의 `caps` 에 없으면 감독은 그
 # 기능을 보내지 않고 접속 때 한 번 알린다 — 재배포가 반쯤만 된 상태가 로그에 보여야 한다.
 STAGE_CAPS = ("emotion", "react", "gaze")
@@ -285,6 +298,7 @@ class Director:
         on_level_change: Callable[[str], None] | None = None,
         courses: dict[str, tuple[str, ...] | None] | None = None,
         qa_reprompt: bool | None = None,
+        note: Callable[[str], None] | None = None,
     ) -> None:
         self._sheet = sheet
         self._generate = generate
@@ -292,6 +306,10 @@ class Director:
         self._now = now
         self._expect_units = expect_units or {}
         self._warn = warn
+        # **기록 전용 채널**(2026-11-14) — 감독 로그에만 남기고 조정실 경고(`warn` → 허브)로는 보내지 않는 줄. 지금은 답한
+        # 관람객 질문 하나다(`_answer`·`_solo_answer`). 기본이 print 인 이유: 감독 로그 파일은 감독 표준출력을
+        # `reachy.sh::start_director` 가 tee 로 받은 것이다(`stage/__main__.py` 의 "정보성 출력은 print 그대로" 와 같은 결).
+        self._note = note if note is not None else _print_note
         # 반응 시점용 보통 말 속도 — 기동 때 한 번 정한다(공연 중에 엔진이 바뀌지 않는다).
         self._react_cps, problem = typical_chars_per_sec()
         if problem:
@@ -1704,6 +1722,7 @@ class Director:
         (지연 은닉). 멘트가 끝나면 `on_speaking_ended` 의 단독 갈래가 답을 **사회자로** 말하게 한다.
         말하는 동안 마이크는 닫혀 있다(불변식 ①) — 관람객이 끼어들면 운영자가 `a` 로 멈춘다.
         """
+        self._note(_question_note(question, solo=True))
         self._remember(f"관람객: {question}")
         self._spawn_generate("solo", "solo", self._solo_brief(question), SOLO_FALLBACK, SOLO_QA_ID)
         if not looks_like_question(question):
@@ -2140,6 +2159,9 @@ class Director:
     def _answer(self, question: str) -> None:
         cue = self._sheet.current()
         self._reprompted = False      # 답을 했다 — 다음 짧은 말은 다시 되물을 수 있다
+        # 답하는 질문의 글을 감독 로그에 남긴다 — 조정실 경고로는 보내지 않는다(질문마다 경고 줄이면 진짜 경고가 묻힌다).
+        # 되묻기·진행어·잡음은 여기까지 오지 않으므로 이 줄은 "답한 말" 표본이다.
+        self._note(_question_note(question))
         self._remember(f"관람객: {question}")
         # **분량 지시를 여기 박지 않는다.** 분량은 섹션이 아니라 수준의
         # 함수다(설계 §5, Task 3) — 시스템 프롬프트가 `level.min_sentences`
