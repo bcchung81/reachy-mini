@@ -1,4 +1,4 @@
-"""분해도 무대(전문가 교육자료) 만들기 — 01·02 시안.
+"""분해도 무대(전문가 교육자료) 만들기 — 하이라이트 코스(U7 ①, 2026-11-14)를 앞에서부터 늘린다.
 
     TTS_CACHE_DIR=~/.local/share/reachy-mini-tts/cache-elevenlabs .venv/bin/python -m scripts.handout_exploded.build
     # → docs/design/exploded-stage.html
@@ -35,7 +35,10 @@ VENDOR = HERE / "vendor"
 OUT = ROOT / "docs" / "design" / "exploded-stage.html"
 # 공연 모드(?live) 모듈 — 조율자가 만든다. 세 교육자료가 같은 파일을 인라인한다(접속·배지 모양이 같게). 없으면 경고하고 자리만 둔다
 LIVE_JS = ROOT / "scripts" / "handout_live" / "live_follow.js"
-CUE_IDS = ("01-intro", "02-history")      # 시안 범위 — 19큐 확장은 사용자가 시안을 본 뒤에 정한다
+# 빌드 범위 = 하이라이트 코스(`data/courses.yaml`)를 **큐시트 순서로 앞에서부터**(U7 ①). 공연이 그 순서로 돌기 때문에 중간을 비우면
+# 전용 화면 → 카드 화면 → 전용 화면으로 오간다. 03 은 사용자 확인(U8 ①)을 받은 뒤 04·07·14·17·18·19 를 잇는다.
+# 나머지 10큐는 카드 화면(`/stage/hud`)이 잇는다 — 감독이 빌드된 페이지에서 큐를 읽으므로(`/stage/manifest`) 여기만 늘리면 된다
+CUE_IDS = ("01-intro", "02-history", "03-theory", "04-morse", "07-maritime", "14-mobile", "17-rover", "18-science", "19-closing")
 LEVEL_KEY, LEVEL_NAME = "l4", "전문가"
 RATE = 24000
 # 발화 표(utt)의 시각 계산은 종이 무대 빌더와 **같아야** 한다(GAP_SENT·GAP_UTT·LEAD) — 공연 모드에서 감독의 발화 라벨(턴 이름)을
@@ -166,6 +169,19 @@ def check_table(cid: str, table: dict, cue: dict) -> list[str]:
                 bad.append(f"{cid}: links 의 {k} {ln.get(k)!r} 가 표에 없다")
         if ln.get("say") and ln["say"] not in docent:
             bad.append(f"{cid}: links 의 낱말 {ln['say']!r} 가 도슨트 대사에 없다")
+    # 포인트 카드가 뜨는 낱말(선택). 없으면 카드 i = 도슨트 i턴(01·02 는 둘이 맞는다). 03 처럼 카드와 턴이 어긋나는 큐는 카드마다 그 포인트를
+    # 말하기 시작하는 도슨트 낱말을 적는다 — 카드 수와 같고, 도슨트가 말하는 순서대로여야 한다(화면은 앞 카드 시각 뒤에서 찾는다)
+    if "cards" in table:
+        cw = table["cards"] or []
+        if len(cw) != len(cue["lv"][LEVEL_KEY]["items"]):
+            bad.append(f"{cid}: cards 개수 {len(cw)} 가 카드(items) 개수 {len(cue['lv'][LEVEL_KEY]['items'])} 와 다르다")
+        pos = 0
+        for w in cw:
+            k = docent.find(w, pos)
+            if k < 0:
+                bad.append(f"{cid}: cards 낱말 {w!r} 가 " + ("도슨트 대사에 없다" if w not in docent else "앞 카드 낱말보다 먼저 나온다(순서)"))
+            else:
+                pos = k + len(w)
     # 포인트마다 강조: 도슨트 턴마다 그 턴에서 강조되는 부품이 하나 이상
     for r, turn, t, _ in turns(cue):
         if r == "docent" and not any(w in t for p in parts for w in (p.get("say") or [])):
@@ -264,7 +280,8 @@ def main() -> None:
         table = tables[cid]
         out_cues.append({"id": cid, "no": cue["no"], "title": cue["title"], "headline": L["headline"], "items": L["items"],
                          "remember": L["remember"], "card": card_strings(L), "dur": round(dur, 3), "utt": utt, "audio": audio,
-                         "view": table["view"], "parts": table["parts"], "links": table.get("links") or []})
+                         "view": table["view"], "parts": table["parts"], "links": table.get("links") or [],
+                         "cards": table.get("cards")})
         print(f"  {cid}: {dur:.1f}s · 문장 {sum(len(u['s']) for u in utt)}개 · 부품 {len(table['parts'])}개")
 
     OUT.write_text(assemble({"level": LEVEL_NAME, "cues": out_cues}))

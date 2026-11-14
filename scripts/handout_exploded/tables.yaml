@@ -16,6 +16,8 @@
 #   ghost   강조가 끝난 뒤에도 흐리게 남는다(대사가 "아니다" 라고 한 것)
 # 큐 단위: view.az [분해 동안 처음, 끝](카메라 방위각, 천천히 돈다) · view.el 앙각 · view.yaw0 처음 들어올 때 조립체가 돌아 있는 양
 #          links  두 부품의 점을 잇는 점선(say 낱말부터 그어진다)
+#          cards  (선택) 포인트 카드마다 뜨는 도슨트 낱말 — 카드 수와 같게, 말하는 순서대로. 카드는 그 낱말에 뜨고 그 도슨트 턴이 끝나면
+#                 내려간다. 없으면 카드 i = 도슨트 i턴(턴 번호와 포인트 번호가 같을 때만 맞다 — docs/lessons.md)
 
 01-intro:
   view: {az: [0.36, 0.56], el: 0.30, yaw0: -1.5}
@@ -50,6 +52,9 @@
 
 02-history:
   view: {az: [0.30, 0.52], el: 0.26, yaw0: -1.4}
+  # 0턴은 도입("발명이 아니라 발견") — 카드 셋(맥스웰·헤르츠·마르코니)은 1턴(맥스웰·헤르츠)과 2턴(마르코니)에서 말한다. 카드 i = 도슨트 i턴이면
+  # 도입에 '맥스웰', 맥스웰을 말하는 1턴 처음에 '헤르츠' 가 떴다(2026-11-14 조율자·사용자 결정으로 고침)
+  cards: [맥스웰 방정식이, 헤르츠가, 마르코니의]
   parts:
     - {id: plate, shape: plate, parent: null, rest: [0, 0, 0], dir: [1, -0.3, 0.6], dist: 3.0, order: 0, delay: 0,
        spin: 0.9, tilt: [0.2, 0.07], phi: 1.0, over: 1.3, anchor: [0, 2.5], side: R, leave: 1785년, ghost: true,
@@ -76,3 +81,229 @@
        label: 세인트존스 (뉴펀들랜드), sub: "약 3,500km (2,200마일) · 지금도 논쟁거리", say: [세인트존스에서, 논쟁거리]}
   links:
     - {from: mast, from_at: [0, 1.4, 0], to: receiver, to_at: [0.3, 1.7, 0], say: 세인트존스에서}
+
+# 03 — 주파수 다이얼 한 대를 "정의의 층" 으로(카드 그림이 주파수 다이얼이다). 가운데 축(눈금 막대)은 움직이지 않는 기준 부품이다 —
+# 대사의 결론("c 는 측정값이 아니라 미터의 정의가 고정한 값")을 "혼자 제자리에 남는 축" 으로 보인다. 축 강조는 카드와 같은 "진공에서" 부터. 물결은 하우징 안에 들어 있다가
+# "파장은" 에서 떠오르고(leave), 마루 사이 점선이 한 파장이다. 라벨 낱말은 전문가 대사·카드에서만(전기장·자기장은 대사에 없어 쓰지 않는다)
+# ⚠ "299,792,458…" 처럼 쉼표가 든 글은 흐름 매핑·흐름 목록 안에서 반드시 따옴표(lessons — 쉼표가 값을 자른다)
+03-theory:
+  view: {az: [0.36, 0.56], el: 0.30, yaw0: -1.5}
+  # 카드 셋(정의 · ITU · 빛의 속도)과 도슨트 턴 셋(정의+ITU · 주파수·헤르츠 · 파장+c)이 어긋난다 — 1턴(주파수·헤르츠)에는 맞는 카드가 없어
+  # 비운다(그 동안은 설명선 '주파수'·'헤르츠' 가 강조된다). '빛의 속도 c' 는 "빛의 속도를"(파장 정의 안)이 아니라 "진공에서" 부터
+  cards: [전파법은, ITU 전파규칙이, 진공에서]
+  parts:
+    - {id: spindle, shape: spindle, parent: null, rest: [0, 1.64, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0.96, 0.09], side: R, hull: 0.025,
+       label: 빛의 속도 c, sub: "299,792,458m/s · 미터의 정의가 고정", say: [진공에서, 미터의 정의가]}
+    - {id: housing, shape: housing, parent: null, rest: [0, 0.4, 0], dir: [0, -1, 0], dist: 1.6, order: 2, delay: 0.04,
+       spin: 0.2, tilt: [0.08, 0.015], phi: 0.4, over: 1.3, anchor: [0, 2.35], side: L,
+       label: 전파법상 정의, sub: 인공적인 유도 없이 공간에 퍼져 나가는 전자파, say: [전파법은]}
+    - {id: wave, shape: wave, parent: housing, rest: [0, 0.07, 0.95], dir: [0, 1, 0.55], dist: 2.7, order: 3, delay: 0,
+       spin: 0.12, tilt: [0.12, 0.02], phi: 1.2, over: 1.5, anchor: [0, 1.55], side: L, leave: 파장은, hull: 0.03,
+       label: 파장, sub: 빛의 속도를 주파수로 나눈 값, say: [파장은]}
+    - {id: scale, shape: scale, parent: null, rest: [0, 0.87, 0], dir: [0, 1, 0], dist: 1.35, order: 2, delay: 0,
+       spin: -0.3, tilt: [0.1, 0.02], phi: 3.0, over: 1.5, anchor: [0, 2.45], side: R,
+       label: ITU 전파규칙, sub: "3,000GHz보다 낮은 주파수", say: [국제전기통신연합이, ITU 전파규칙이]}
+    - {id: face, shape: face, parent: null, rest: [0, 0.85, 0], dir: [0, 1, -0.25], dist: 2.45, order: 1, delay: 0.03,
+       spin: 0.2, tilt: [0.14, 0.03], phi: 5.0, over: 1.6, anchor: [0, 1.9], side: L}
+    - {id: knob, shape: knob, parent: null, rest: [0, 1.25, 0], dir: [0, 1, 0], dist: 3.4, order: 0, delay: 0,
+       spin: 0.6, tilt: [0.12, 0.025], phi: 2.0, over: 1.5, anchor: [0.05, 0.74], side: R,
+       label: 주파수, sub: 단위시간당 반복 횟수, say: [단위시간당 반복 횟수]}
+    - {id: cap, shape: cap, parent: knob, rest: [0, 0.37, 0], dir: [0, 1, 0], dist: 0.75, order: 1, delay: 0.05,
+       spin: -0.8, tilt: [0.1, 0.02], phi: 4.2, over: 1.8, anchor: [0, 0.5], side: L, hull: 0.04,
+       label: 헤르츠 · SI 단위, sub: 초의 역수 · 주기적인 현상에만, say: [SI 단위로, 하인리히 헤르츠]}
+  links:
+    # 한 파장 — 물결의 이웃한 두 마루(x = −0.75, 0.25)를 잇는다(같은 부품의 두 점이라 물결이 떠올라도 같이 간다)
+    - {from: wave, from_at: [-0.75, 0.27, 0], to: wave, to_at: [0.25, 0.27, 0], say: 파장은}
+
+# 04 — 체험대 한 판 위의 세 장치: 전건(모양만 — 라벨은 대사의 "국제 모스 부호 송신") · 라이덴 병 · 룸코르프 유도코일 + 1미터 쌍극자(02 의 모양).
+# 0턴은 세 장치를 한 번씩 부르며 지나가고(1.4초 간격), 1턴은 전건 위로 점·선 판 → 점 타일이 사다리처럼 올라간다(표준화의 경로).
+# 2턴 "룸코르프 유도코일의" 에서 코일 단자 → 쌍극자 점선(고전압으로 불꽃 간극을 때렸다). 카드 셋은 도슨트 턴 셋과 맞아 cards 를 안 쓴다.
+# 분해는 거의 위로만(옆으로 벌리면 체험대 폭에 맞춰 화면이 작아진다) — 세 장치 층 위에 쌍극자. 납작한 판(전건·점·선 판)은 phi −0.5(카메라 오른쪽 축)로
+# 기울여 윗면이 카메라를 보게 한다(안 그러면 앙각 0.32 에서 모서리만 보인다). 병의 설명선 기준점은 꼭지 구 — 몸통 옆이면 지시선이 코일을 가로지른다
+04-morse:
+  view: {az: [0.40, 0.60], el: 0.32, yaw0: -1.4}
+  parts:
+    - {id: bench, shape: bench, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 1.6, order: 2, delay: 0.04,
+       spin: 0.15, tilt: [0.06, 0.012], phi: 0.5, over: 1.3, anchor: [0, 3.2], side: L,
+       label: 전파 기술의 출발점, sub: 이론이 실험 장치로 내려오는 지점, say: [전파 기술의 출발점]}
+    - {id: key, shape: key, parent: null, rest: [-2.2, 0.23, 0.5], dir: [-0.25, 1, 0.3], dist: 1.3, order: 1, delay: 0.03,
+       spin: 0, tilt: [0.12, 0.25], phi: -0.5, over: 1.6, anchor: [0, 0.8], side: L,
+       label: 국제 모스 부호 송신, sub: 현행 표준 ITU-R 권고 M.1677-1, say: [국제 모스 부호, M.1677-1이고]}
+    - {id: code, shape: code, parent: key, rest: [1.75, -0.04, 0.25], dir: [-0.15, 1, 0.05], dist: 2.0, order: 2, delay: 0.05,
+       spin: 0, tilt: [0.2, 0.45], phi: -0.5, over: 1.7, anchor: [0, 1.0], side: L,
+       label: 베일 · 알파벳 부호, sub: 1848년 게르케의 개량 · 1865년 파리 국제전신협약, say: [베일이, 1865년 5월 17일]}
+    - {id: dots, shape: dots, parent: code, rest: [0, 0.08, 0], dir: [0, 1, 0.1], dist: 1.3, order: 3, delay: 0.06,
+       spin: 0, tilt: [0.1, 0], phi: -0.5, over: 1.8, anchor: [0, 0.95], side: L,
+       label: 선은 점 셋, sub: 낱말 사이 간격은 점 일곱, say: [점 셋]}
+    - {id: jar, shape: jar, parent: null, rest: [1.0, 0.85, 0.55], dir: [0.25, 1, 0.35], dist: 1.5, order: 1, delay: 0,
+       spin: 0.3, tilt: [0.12, 0.03], phi: 3.4, over: 1.5, anchor: [1.48, 0.14], side: R,
+       label: 라이덴 병 방전, sub: 1886년 가을 리스 나선, say: [라이덴 병 방전, 1886년 가을]}
+    - {id: coil, shape: coil, parent: null, rest: [2.35, 0.69, 0.3], dir: [0.4, 1, 0.25], dist: 1.0, order: 1, delay: 0.05,
+       spin: -0.25, tilt: [0.1, 0.02], phi: 5.0, over: 1.5, anchor: [0.1, 0.9], side: R,
+       label: 룸코르프 유도코일, sub: 고전압, say: [룸코르프 유도코일의]}
+    - {id: dipole, shape: dipole, parent: null, rest: [0, 0.93, -0.85], dir: [0, 1, -0.1], dist: 3.6, order: 0, delay: 0,
+       spin: -0.4, tilt: [0.12, 0.025], phi: 2.4, over: 1.6, anchor: [0.55, 2.2], side: R,
+       label: 헤르츠의 불꽃간극 실험, sub: 1미터 쌍극자의 불꽃 간극, say: [불꽃간극 실험, 1미터 쌍극자의]}
+  links:
+    # 코일의 고전압 단자 → 쌍극자 가운데(불꽃 간극) — "룸코르프 유도코일의 고전압으로 … 불꽃 간극을 때려"
+    - {from: coil, from_at: [0.78, 1.0, 0], to: dipole, to_at: [0.15, 0.55, 0], say: 룸코르프 유도코일의}
+
+# 07 — 선박 무선국 한 척, 사고에서 제도까지. 선체가 움직이지 않는 기준(dist 0) — 0턴의 숫자(보고서)를 선체에 단다.
+# 받침판 = 1914년 협약(01 의 기초 = 전파법과 같은 자리) · 무선실 = 권고 제20항(당직) · 두 돛대 사이 안테나 줄 = 1912년 런던 회의 ·
+# 무선실 앞으로 나오는 콘솔 = GMDSS · 지붕의 원통·막대 = 406MHz 비상위치표지·수색구조 트랜스폰더. 구명정은 "카르파티아호가" 에서 떨어져 나간다.
+# 해역 4구간(조율자 결정: 모양만, 라벨 없음) = 받침 위 동심 고리 넷 — "네 구간으로" 에서 네 층으로 갈라져 내려간다(부품 넷, leave 같은 낱말·거리만 다르게).
+# 카메라는 뱃머리 쪽(az ≈ 0.95) — 옆에서 보면 선체 길이에 맞춰 화면 전체가 작아진다. 이 방위에서 +z 는 화면 왼쪽이다(구명정이 왼쪽으로 나간다)
+07-maritime:
+  view: {az: [0.85, 1.05], el: 0.30, yaw0: -1.3}
+  parts:
+    - {id: hull, shape: hull, parent: null, rest: [0, 0.575, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0.1, 1.9], side: R,
+       label: 영국 난파위원회 보고서, sub: "승선 2,201명 중 711명이 살아남았다", say: [영국 난파위원회]}
+    - {id: boat, shape: boat, parent: hull, rest: [-1.4, 0.55, 0.98], dir: [0, 0.25, 1], dist: 1.8, order: 1, delay: 0,
+       spin: 0.3, tilt: [0.14, 0.03], phi: 1.0, over: 1.5, anchor: [0, 0.7], side: L, leave: 카르파티아호가,
+       label: 카르파티아호, sub: 구명정에서 712명 · 정선 4시 5분, say: [카르파티아호가]}
+    - {id: slab, shape: slab, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 1.55, order: 2, delay: 0.04,
+       spin: 0.12, tilt: [0.06, 0.012], phi: 0.6, over: 1.3, anchor: [0, 3.0], side: L,
+       label: 1914년 최초 해상인명안전협약, say: [1914년 최초]}
+    - {id: zone1, shape: zone1, parent: null, rest: [0, 0.09, 0], dir: [0, -1, 0], dist: 0.3, order: 3, delay: 0, leave: 네 구간으로,
+       spin: 0.2, tilt: [0.04, 0], phi: 0, over: 1.4, anchor: [0, 1.3], side: L}
+    - {id: zone2, shape: zone2, parent: null, rest: [0, 0.09, 0], dir: [0, -1, 0], dist: 0.6, order: 3, delay: 0.05, leave: 네 구간으로,
+       spin: -0.2, tilt: [0.04, 0], phi: 1.5, over: 1.4, anchor: [0, 2.0], side: L}
+    - {id: zone3, shape: zone3, parent: null, rest: [0, 0.09, 0], dir: [0, -1, 0], dist: 0.9, order: 3, delay: 0.1, leave: 네 구간으로,
+       spin: 0.2, tilt: [0.04, 0], phi: 3.0, over: 1.4, anchor: [0, 2.7], side: L}
+    - {id: zone4, shape: zone4, parent: null, rest: [0, 0.09, 0], dir: [0, -1, 0], dist: 1.2, order: 3, delay: 0.15, leave: 네 구간으로,
+       spin: -0.2, tilt: [0.04, 0], phi: 4.5, over: 1.4, anchor: [0, 3.4], side: L}
+    - {id: house, shape: house, parent: null, rest: [-0.4, 1.625, 0], dir: [0, 1, 0], dist: 2.0, order: 1, delay: 0.03,
+       spin: -0.2, tilt: [0.1, 0.02], phi: 2.2, over: 1.5, anchor: [0.3, 1.0], side: R,
+       label: 권고 제20항, sub: 훈련된 통신사 · 밤낮 끊기지 않는 당직, say: [권고 제20항이]}
+    - {id: console, shape: console, parent: house, rest: [0.2, -0.1, 0], dir: [1, -0.15, 0.45], dist: 1.5, order: 2, delay: 0.05,
+       spin: 0.25, tilt: [0.12, 0.03], phi: 4.0, over: 1.6, anchor: [-0.05, 0.55], side: R,
+       label: 국제해상조난안전시스템, sub: 1992년 2월 1일 단계 도입 · 1999년 2월 1일 전면 시행, say: [국제해상조난안전시스템은]}
+    - {id: epirb, shape: epirb, parent: house, rest: [-0.55, 0.78, 0.2], dir: [-0.3, 1, 0.5], dist: 1.3, order: 2, delay: 0.08,
+       spin: 0.4, tilt: [0.14, 0.03], phi: 5.0, over: 1.7, anchor: [0.1, 0.25], side: L,
+       label: 406메가헤르츠 비상위치표지, say: [406메가헤르츠]}
+    - {id: sart, shape: sart, parent: house, rest: [0.6, 0.83, -0.15], dir: [0.5, 1, -0.2], dist: 1.3, order: 2, delay: 0.1,
+       spin: -0.4, tilt: [0.14, 0.03], phi: 2.8, over: 1.7, anchor: [0.1, 0.2], side: R,
+       label: 수색구조 트랜스폰더, say: [수색구조 트랜스폰더를]}
+    - {id: rig, shape: rig, parent: null, rest: [-0.2, 2.675, 0], dir: [0, 1, 0], dist: 3.2, order: 0, delay: 0,
+       spin: 0.15, tilt: [0.08, 0.015], phi: 3.6, over: 1.5, anchor: [1.45, 0.12], side: L,
+       label: 1912년 런던 국제무선전신회의, sub: 공통 조난파장과 청취 의무, say: [1912년 런던]}
+
+# 14 — 세대별 단말 다섯 대가 계단 받침(라벨 없음)에서 떠오른다. 위 세대일수록 높은 계단·긴 거리 → 떠오른 뒤에도 계단 모양이 남아
+# 왼쪽 설명선들의 지시선이 아래 단말 위로 지나간다(기준점은 단말 위쪽). 20배의 근거인 두 막대(높이 1.4 : 0.07 = 20:1, 대사의 수 그대로 — 1.6 으로 했더니 계단 위로 5cm 삐져나와 미리 보였다)는
+# 가장 높은 계단(높이 1.5) 속에 숨어 있다가 "20배는" 에서 솟아 같은 바닥선에 선다(받침의 자식 — 받침이 내려가도 숨은 채 따라간다)
+14-mobile:
+  view: {az: [0.38, 0.58], el: 0.28, yaw0: -1.4}
+  parts:
+    - {id: stand, shape: stand, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 1.4, order: 3, delay: 0,
+       spin: 0, tilt: [0.05, 0], phi: 0.5, over: 1.3, anchor: [0.5, 3.0], side: L}
+    - {id: car, shape: car, parent: null, rest: [-2.4, 0.47, 0], dir: [0, 1, 0.15], dist: 1.2, order: 2, delay: 0.04,
+       spin: 0.2, tilt: [0.12, 0.02], phi: 2.0, over: 1.5, anchor: [0.34, 0.6], side: L,
+       label: 1984년 차량전화, sub: 총비용 약 400만 원 · 포니2 347만 원, say: [1984년 차량전화로]}
+    - {id: g2, shape: g2, parent: null, rest: [-1.2, 1.31, 0], dir: [0, 1, 0.15], dist: 1.45, order: 2, delay: 0,
+       spin: -0.15, tilt: [0.12, 0.02], phi: 3.0, over: 1.6, anchor: [0.57, 0.38], side: L,
+       label: 1996년 CDMA 상용화, sub: 1991년 퀄컴과 공동개발, say: [1996년 CDMA를]}
+    - {id: g3, shape: g3, parent: null, rest: [0, 1.64, 0], dir: [0, 1, 0.15], dist: 1.7, order: 1, delay: 0.04,
+       spin: 0.15, tilt: [0.12, 0.02], phi: 4.0, over: 1.6, anchor: [0.6, 0.4], side: L,
+       label: 2003년 12월 W-CDMA, sub: 국내 3세대, say: [2003년 12월]}
+    - {id: g4, shape: g4, parent: null, rest: [1.2, 1.98, 0], dir: [0, 1, 0.15], dist: 1.95, order: 1, delay: 0,
+       spin: -0.15, tilt: [0.12, 0.02], phi: 5.0, over: 1.6, anchor: [0.65, 0.45], side: L,
+       label: 2011년 7월 LTE, sub: 국내 4세대, say: [2011년 7월 LTE고요]}
+    - {id: g5, shape: g5, parent: null, rest: [2.4, 2.38, 0], dir: [0, 1, 0.15], dist: 2.2, order: 0, delay: 0,
+       spin: 0.15, tilt: [0.12, 0.02], phi: 1.0, over: 1.6, anchor: [0.74, 0.48], side: R,
+       label: 2019년 4월 3일 · 세계 최초, sub: 스마트폰 기반 5G 상용화, say: [2019년 4월 3일]}
+    - {id: bar20, shape: bar20, parent: stand, rest: [2.65, 0.74, -0.42], dir: [1.0, 3.66, 0.42], dist: 3.82, order: 3, delay: 0, leave: 20배는,
+       spin: 0, tilt: [0.1, 0], phi: 0, over: 1.2, anchor: [0.7, 0.16], side: R,
+       label: 하향 피크 초당 20기가비트, say: [20기가비트와]}
+    - {id: bar1, shape: bar1, parent: stand, rest: [2.2, 0.74, -0.42], dir: [0.85, 3.035, 0.42], dist: 3.18, order: 3, delay: 0.08, leave: 20배는,
+       spin: 0, tilt: [0.1, 0], phi: 0, over: 1.2, anchor: [0.035, 0.16], side: R,
+       label: 4세대 피크 초당 1기가비트, say: [1기가비트의]}
+
+# 17 — 탐사 로버 한 대(차체 · 마스트 카메라 · 접시 안테나 · 양쪽 바퀴 묶음)를 전시 받침(라벨 없음) 위에서 분해. 받침 속에 두 차가 숨어 있다가
+# 2턴에서 제 낱말에 받침 양 끝 위로 올라선다 — 루노호트 1호(원격 조종)는 왼쪽, 아폴로 월면차(승무원이 탑승해 조종 — "구분이 중요")는 오른쪽에
+# 서서 흐리게 남는다(ghost — 02 의 1785년 판과 같은 "아니다" 표시). 처음엔 지면판 위에 세워 두었더니(옆 → 화면이 작아짐, 뒤 → 차체에 가려짐)
+# 둘 다 안 됐다. 받침의 자식이라 받침이 내려가도 숨은 채 따라간다(14 의 막대와 같은 방식).
+# 이 방위(az ≈ 0.5)에서 −x(로버 뒤)는 화면 왼쪽, +z 는 화면 왼쪽 앞이다 — 접시(뒤)는 왼쪽 열, 마스트 카메라(앞)는 오른쪽 열.
+# 바퀴 묶음은 위·옆으로 뺀다(아래로 빼면 앞쪽 묶음이 받침 왼쪽 끝의 루노호트를 가렸다)
+17-rover:
+  view: {az: [0.42, 0.62], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: ground, shape: ground, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 1.4, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.05, 0], phi: 0.4, over: 1.3, anchor: [0, 3.0], side: L}
+    - {id: body, shape: body, parent: null, rest: [0, 1.75, 0], dir: [0, 1, 0], dist: 1.3, order: 1, delay: 0,
+       spin: -0.25, tilt: [0.1, 0.02], phi: 2.4, over: 1.5, anchor: [0, 1.25], side: R,
+       label: 증강현실 기반 탐사차, sub: 체험 코너, say: [증강현실 기반으로]}
+    - {id: mastcam, shape: mastcam, parent: body, rest: [0.75, 0.9, 0.35], dir: [0.3, 1, 0.2], dist: 1.2, order: 0, delay: 0.04,
+       spin: 0.4, tilt: [0.12, 0.02], phi: 4.0, over: 1.7, anchor: [0.62, 0.32], side: R,
+       label: 자율항법, sub: 전방 지형도를 만들어 경로를 스스로 계획, say: [자율항법으로]}
+    - {id: dish, shape: dish, parent: body, rest: [-0.7, 0.6, -0.3], dir: [-0.4, 1, -0.2], dist: 1.2, order: 0, delay: 0,
+       spin: -0.4, tilt: [0.12, 0.02], phi: 1.2, over: 1.7, anchor: [0.35, 0.6], side: L,
+       label: 통신 지연, sub: 편도 약 3분에서 22.4분, say: [통신 지연이, 광행시간이]}
+    - {id: wheelsL, shape: wheels, parent: null, rest: [0, 1.22, 0.78], dir: [0, 0.35, 1], dist: 1.2, order: 2, delay: 0.03,
+       spin: 0.15, tilt: [0.1, 0.02], phi: 0, over: 1.5, anchor: [0, 1.05], side: L,
+       label: 주행 속도, sub: 그 대가로 아주 느리다, say: [주행 속도가]}
+    - {id: wheelsR, shape: wheels, parent: null, rest: [0, 1.22, -0.78], dir: [0, 0.35, -1], dist: 1.2, order: 2, delay: 0.06,
+       spin: -0.15, tilt: [0.1, 0.02], phi: 0, over: 1.5, anchor: [0, 1.05], side: R}
+    - {id: luno, shape: luno, parent: ground, rest: [-1.3, 0, 0], dir: [-0.6, 0.83, 0.5], dist: 1.1, order: 1, delay: 0, leave: 루노호트 1호는,
+       spin: 0.5, tilt: [0.12, 0.02], phi: 3.0, over: 1.4, anchor: [0.1, 0.7], side: L,
+       label: 루노호트 1호, sub: 1970년 11월 착륙 · 5인 관제팀, say: [루노호트 1호는]}
+    - {id: lrv, shape: lrv, parent: ground, rest: [1.3, -0.05, 0], dir: [0.6, 0.83, 0.5], dist: 1.1, order: 1, delay: 0, leave: 아폴로 월면차는, ghost: true,
+       spin: -0.5, tilt: [0.12, 0.02], phi: 5.0, over: 1.4, anchor: [0.15, 0.78], side: R,
+       label: 아폴로 월면차, sub: 승무원이 탑승해 조종, say: [아폴로 월면차는]}
+
+# 18 — 실험 도구 선반 + 테레민 한 대. 0턴은 앞줄 세 도구(고리 · 원뿔 코일 · 화면 상자)를 연도 순으로, 1턴은 테레민 속 — 뚜껑(라벨 없음)이 가장
+# 위로, 발진기 둘이 얹힌 판이 상자 밖으로 떠오르고("헤테로다인"), 세운 막대가 올라간다("커패시터 극판"). 볼륨 고리는 상자 모양에 붙여 둔다
+# (따로 떼면 왼쪽 앞줄의 고리와 같은 자리에 와 겹쳤다). 발진기 판의 설명선은 왼쪽 열 — 오른쪽이면 같은 높이의 세운 막대를 가로지른다. 점등은 판·화면만, 전파 고리는 **없다** — 이 큐의 '기억해 두기' 가 "안테나는 전파용이
+# 아니라 커패시터 극판" 이라 막대에서 전파가 퍼지는 그림은 대사와 반대다. 카드 둘은 도슨트 턴 둘과 맞는다
+18-science:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: shelf, shape: shelf, parent: null, rest: [0, 0, 0], dir: [0, -1, 0], dist: 1.4, order: 2, delay: 0.04,
+       spin: 0.12, tilt: [0.05, 0.01], phi: 0.6, over: 1.3, anchor: [0, 3.0], side: L,
+       label: 원리별 구성, sub: 정전기 · 전자기 유도 · 전자기 회전 · 공진 · 검파 · 표시, say: [원리별로]}
+    - {id: cabinet, shape: cabinet, parent: null, rest: [0, 0.46, -0.55], dir: [0, 1, 0], dist: 1.0, order: 1, delay: 0,
+       spin: -0.2, tilt: [0.08, 0.015], phi: 2.0, over: 1.4, anchor: [0, 1.2], side: R}
+    - {id: lid, shape: lid, parent: cabinet, rest: [0, 0.35, 0], dir: [0, 1, 0], dist: 2.9, order: 0, delay: 0,
+       spin: 0.3, tilt: [0.12, 0.02], phi: 4.5, over: 1.5, anchor: [0, 1.2], side: L}
+    - {id: board, shape: board, parent: cabinet, rest: [0, -0.05, 0], dir: [0, 1, 0.1], dist: 2.1, order: 1, delay: 0.05,
+       spin: -0.3, tilt: [0.12, 0.25], phi: -0.5, over: 1.6, anchor: [0.2, 0.85], side: L,
+       label: 헤테로다인 원리, sub: 발진기 두 개의 주파수 차를 가청음으로, say: [헤테로다인 원리예요, 500킬로헤르츠]}
+    - {id: rod, shape: rod, parent: cabinet, rest: [1.0, 1.11, -0.15], dir: [0.3, 1, 0], dist: 1.0, order: 1, delay: 0.08,
+       spin: 0, tilt: [0.08, 0.015], phi: 1.0, over: 1.5, anchor: [0.75, 0.1], side: R, hull: 0.03,
+       label: 커패시터 극판, sub: 손의 거리를 정전용량으로, say: [커패시터 극판으로]}
+    - {id: ring, shape: ring, parent: null, rest: [-2.2, 0.7, 0.6], dir: [-0.3, 1, 0.2], dist: 1.1, order: 1, delay: 0.03,
+       spin: 0.4, tilt: [0.12, 0.02], phi: 3.4, over: 1.6, anchor: [0, 0.6], side: L,
+       label: 1831년 패러데이의 전자기 유도, say: [1831년 패러데이의]}
+    - {id: tesla, shape: tesla, parent: null, rest: [2.25, 0.85, 0.45], dir: [0.3, 1, 0.2], dist: 1.1, order: 1, delay: 0.06,
+       spin: -0.4, tilt: [0.12, 0.02], phi: 5.2, over: 1.6, anchor: [0.6, 0.45], side: R,
+       label: 1891년 테슬라 코일, say: [1891년 테슬라 코일]}
+    - {id: scope, shape: scope, parent: null, rest: [-0.6, 0.4, 0.75], dir: [-0.1, 1, 0.5], dist: 0.6, order: 2, delay: 0.05,
+       spin: 0.25, tilt: [0.1, 0.02], phi: 0.8, over: 1.5, anchor: [0.1, 0.48], side: L,
+       label: 코히러 검파기 · 오실로스코프, say: [코히러 검파기, 오실로스코프까지]}
+
+# 19 — 계보 위에 관리 체계(조율자 결정 ㉮). 대사 "계보가 방송과 이동통신으로 이어졌고, 그 위에 … 관리 체계가 놓였죠" 를 쌓인 구조 그대로:
+# 맨 아래 판(02 의 받침·쌍극자·송신 장치 축소판, 움직이지 않는 기준) → 가운데 판(방송탑 + 단말) → 열린 틀(관리 체계 — 앞의 방패판·계측기) →
+# 틀 위의 선 상자(속이 빈 철사 상자 — "아직 연구가 계속")가 "장기 영향은" 에서 떠올라 흐리게 남는다(leave + ghost). 도슨트 턴이 하나뿐이라
+# 여섯 강조가 19초 안에 지나간다(첫 강조를 "이론과 실증" 으로 당겨 분해 직후부터 채운다)
+19-closing:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: lineage, shape: lineage, parent: null, rest: [0, 0, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0.1, 2.6], side: L,
+       label: 발견의 계보, sub: 이론 · 실증 · 실용화, say: [이론과 실증, 발견의 계보가]}
+    - {id: bcast, shape: bcast, parent: null, rest: [0, 1.15, 0], dir: [0, 1, 0], dist: 1.1, order: 2, delay: 0.03,
+       spin: -0.2, tilt: [0.08, 0.015], phi: 2.0, over: 1.5, anchor: [0, 2.3], side: R,
+       label: 방송과 이동통신, sub: 발견의 계보가 이어졌다, say: [방송과 이동통신으로]}
+    - {id: frame, shape: frame, parent: null, rest: [0, 2.1, 0], dir: [0, 1, 0], dist: 2.2, order: 1, delay: 0,
+       spin: 0.2, tilt: [0.08, 0.015], phi: 4.0, over: 1.5, anchor: [0.75, 2.3], side: L,
+       label: 관리 체계, say: [관리 체계가]}
+    - {id: guard, shape: guard, parent: frame, rest: [-1.3, -0.25, 1.25], dir: [-0.5, 0.2, 1], dist: 0.9, order: 2, delay: 0.04,
+       spin: 0.3, tilt: [0.1, 0.02], phi: 1.0, over: 1.7, anchor: [0.1, 0.45], side: L,
+       label: 인체보호기준, say: [인체보호기준과]}
+    - {id: insp, shape: insp, parent: frame, rest: [1.3, -0.4, 1.2], dir: [0.5, 0.2, 1], dist: 0.9, order: 2, delay: 0.07,
+       spin: -0.3, tilt: [0.1, 0.02], phi: 5.0, over: 1.7, anchor: [0.05, 0.42], side: R,
+       label: 무선국 검사, say: [무선국 검사라는]}
+    - {id: open, shape: open, parent: frame, rest: [0, 1.3, 0], dir: [0, 1, 0], dist: 1.5, order: 0, delay: 0, leave: 장기 영향은, ghost: true,
+       spin: 0.5, tilt: [0.1, 0.02], phi: 3.0, over: 1.4, anchor: [0.2, 0.62], side: R, hull: 0.025,
+       label: 기준 이하 노출의 장기 영향, sub: 아직 연구가 계속, say: [장기 영향은]}

@@ -1,8 +1,9 @@
 """분해도 무대(전문가 교육자료, `scripts/handout_exploded`) — 틀·부품 표·빌더의 불변식. 브라우저 없이 도는 것만 둔다.
 
-화면 확인은 `docs/design/exploded-stage.html?cue=NN&t=초`(한 순간 멈춤)와 `?check=1`(두 장을 모두 지어 '대사에 없는 낱말'
+화면 확인은 `docs/design/exploded-stage.html?cue=NN&t=초`(한 순간 멈춤)와 `?check=1`(모든 장을 지어 '대사에 없는 낱말'
 경고를 body[data-warn] 에 적는다)로 한다. 캐시 음성이 필요한 실제 빌드는 여기서 하지 않는다(캐시는 저장소 밖).
 """
+import contextlib
 import hashlib
 import json
 import pathlib
@@ -23,6 +24,32 @@ _EXTERNAL = re.compile(r"""(src|href)\s*=\s*["']?https?:|url\(\s*["']?https?:|fr
 
 def _cues():
     return {c["id"]: c for c in build.load_hud()["cues"]}
+
+
+def _highlight():
+    courses = yaml.safe_load((ROOT / "data" / "courses.yaml").read_text())["courses"]
+    return next(c["cues"] for c in courses if c["name"] == "하이라이트")
+
+
+def test_빌드_범위는_하이라이트_코스를_앞에서부터_순서대로_늘린다():
+    # U7 ①(2026-11-14): 하이라이트 9큐를 큐시트 순서로 늘린다 — 공연이 그 순서로 도니 앞에서부터 채워야 끊김 없이 이어 본다.
+    # U8 ①: 03 을 먼저 끝내 사용자에게 보인다 — 그래서 03 까지는 반드시 있다
+    assert build.CUE_IDS == tuple(_highlight()[:len(build.CUE_IDS)])
+    assert "03-theory" in build.CUE_IDS
+
+
+def test_하이라이트_코스의_모든_큐가_있다():
+    # 2026-11-14 7큐(04·07·14·17·18·19)를 다 넣어 strict xfail 표시를 지웠다 — 하이라이트 코스가 분해도로 끝까지 간다
+    assert set(_highlight()) <= set(build.CUE_IDS)
+
+
+def test_생성물의_큐는_빌드_범위와_같다():
+    # 표만 늘리고 다시 빌드하지 않으면 /stage/manifest 가 옛 생성물의 큐로 화면을 고른다(빌드된 페이지에서 읽는다) — 여기서 잡는다
+    if not build.OUT.exists():
+        pytest.skip("생성물이 없다 — TTS_CACHE_DIR=… python -m scripts.handout_exploded.build")
+    data = json.loads(re.search(r'<script type="application/json" id="data">(.*?)</script>', build.OUT.read_text(), re.S)
+                      .group(1).replace("<\\/", "</"))
+    assert [c["id"] for c in data["cues"]] == list(build.CUE_IDS)
 
 
 def test_외부_리소스_검사는_심어_둔_외부_주소를_잡는다():
@@ -104,6 +131,19 @@ def test_흐름_매핑의_쉼표가_값을_자르면_모르는_키로_잡는다(
     assert any("모르는 키" in b for b in build.check_table("02-history", t, cues["02-history"]))
 
 
+def test_카드_낱말이_도슨트_대사에_없거나_순서가_어긋나거나_수가_다르면_잡는다():
+    # 03 은 카드 셋(정의·ITU·빛의 속도)이 도슨트 턴 셋(정의+ITU·주파수·파장+c)과 맞지 않는다 — 카드 i 를 docent i 에 묶으면 헤르츠를
+    # 말하는 동안 'ITU 전파규칙' 카드가 떴다(docs/lessons.md "턴 번호와 포인트 번호는 같지 않다"). 그래서 표에 카드마다 뜨는 낱말을 적는다
+    tables, cues = build.load_tables(), _cues()
+    assert build.check_table("03-theory", tables["03-theory"], cues["03-theory"]) == []
+    for cards, want in ((["전파법은", "전기장이", "진공에서"], "'전기장이'"),          # 대사에 없는 낱말
+                        (["전파법은", "진공에서", "ITU 전파규칙이"], "순서"),          # 말하는 순서와 다르다
+                        (["전파법은", "ITU 전파규칙이"], "개수")):                     # 카드 수와 다르다
+        t = json.loads(json.dumps(tables["03-theory"]))
+        t["cards"] = cards
+        assert any(want in b for b in build.check_table("03-theory", t, cues["03-theory"])), cards
+
+
 def test_도슨트_턴에_강조가_하나도_없으면_잡는다():
     tables, cues = build.load_tables(), _cues()
     t = json.loads(json.dumps(tables["01-intro"]))
@@ -119,7 +159,8 @@ def test_표의_모양_이름이_모두_scenes_js_에_있다():
     src = (EX / "scenes.js").read_text()
     for cid in build.CUE_IDS:
         block = re.search(r"SHAPES\['" + re.escape(cid) + r"'\]\s*=\s*\{(.*?)\n  \};", src, re.S).group(1)
-        have = set(re.findall(r"^\s{4}(\w+):\s*function", block, re.M))
+        # 모양 = 함수 직접(`name: function`) 또는 함수를 만드는 호출(`name: zoneRing(1.8)` — 07 해역 고리). 한 줄에 하나씩 쓴다
+        have = set(re.findall(r"^\s{4}(\w+):\s*(?:function\b|\w+\()", block, re.M))
         need = {p["shape"] for p in build.load_tables()[cid]["parts"]}
         assert need <= have, (cid, need - have)
 
@@ -219,31 +260,18 @@ BADGE = "(document.querySelector('[data-live-badge]')||{}).textContent"
 UTT = "JSON.parse(document.getElementById('data').textContent).cues[{c}].utt[{k}]"
 
 
-@pytest.fixture(scope="module")
-def stage():
+@contextlib.contextmanager
+def _chrome(url, ready_timeout=40.0):
+    """헤드리스 Chrome 으로 url 을 열고 data-ready 를 기다린 뒤 {js, wait, errors, sleep} 를 준다. 끝나면 Chrome 을 내린다.
+    공연 통합 시험(대시보드가 준 /stage/exploded)과 `?check=1` 시험(file://)이 같이 쓴다."""
     import socket
-    import sys
     import tempfile
-    import threading
     import time
     import urllib.request
 
     from websockets.sync.client import connect
-    from websockets.sync.server import serve
 
-    sys.path.insert(0, str(ROOT / "scripts" / "handout_live"))
-    import fake_show
-    from stage.cues import load_cues
-    from stage.dashboard import DashboardServer
-    from stage.dashboard_hub import DashboardHub
-
-    hub, director, warned = DashboardHub(), fake_show.FakeDirector(load_cues(), "전문가"), []
-    director.running = True
-    ds = DashboardServer(hub, director, interval=0.1, warn=warned.append, motion_pages={"exploded": build.OUT})
-    srv = serve(ds.handler, "127.0.0.1", 0, process_request=ds.process_request)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    port = srv.socket.getsockname()[1]
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="exploded-live-"))
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="exploded-chrome-"))
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0)); dport = s.getsockname()[1]
     # WebGL 이 있어야 한다 — GPU 없는 헤드리스에서는 SwiftShader 를 명시적으로 허용한다
@@ -262,20 +290,24 @@ def stage():
         cdp = connect(ws_url, max_size=None)
         n, errors = [0], []
 
+        def brief(d, where):
+            # 예외 JSON 을 앞 300자로 자르면 정작 메시지(description)가 잘린다 — 무엇이·어디서만 남긴다
+            return f"{where}: {(d.get('exception') or {}).get('description') or d.get('text')} @ {d.get('url', '')}:{d.get('lineNumber')}"[:400]
+
         def call(method, **params):
             n[0] += 1
             cdp.send(json.dumps({"id": n[0], "method": method, "params": params}))
             while True:
                 m = json.loads(cdp.recv(timeout=60))
                 if m.get("method") == "Runtime.exceptionThrown":
-                    errors.append(json.dumps(m["params"]["exceptionDetails"], ensure_ascii=False)[:300])
+                    errors.append(brief(m["params"]["exceptionDetails"], "페이지"))
                 if m.get("id") == n[0]:
                     return m.get("result", {})
 
         def js(expr):
             r = call("Runtime.evaluate", expression=expr, returnByValue=True)
             if "exceptionDetails" in r:
-                errors.append(json.dumps(r["exceptionDetails"], ensure_ascii=False)[:300])
+                errors.append(brief(r["exceptionDetails"], f"평가 {expr[:60]!r}"))
             return r.get("result", {}).get("value")
 
         def wait(expr, timeout=8.0):
@@ -289,13 +321,95 @@ def stage():
 
         call("Runtime.enable"); call("Page.enable")
         call("Emulation.setDeviceMetricsOverride", width=1280, height=720, deviceScaleFactor=1, mobile=False)
-        call("Page.navigate", url=f"http://127.0.0.1:{port}/stage/exploded")
-        wait("document.documentElement.getAttribute('data-ready') === '1'", 40)
-        yield {"hub": hub, "js": js, "wait": wait, "errors": errors, "director": director, "sleep": time.sleep}
+        call("Page.navigate", url=url)
+        # 탐색 중에는 document.documentElement 가 잠깐 null 이다 — 그때 기다리기 식 자체가 TypeError 를 내 errors 에 쌓이고, 뒤의
+        # "오류 0" 단언이 가끔(새로 빌드한 직후 첫 회차에 잘) 빨개졌다. 식을 null 에 안전하게 쓴다
+        wait("!!document.documentElement && (document.documentElement.getAttribute('data-ready') === '1' || "
+             "document.documentElement.hasAttribute('data-error'))", ready_timeout)
+        yield {"js": js, "wait": wait, "errors": errors, "sleep": time.sleep}
     finally:
         proc.terminate()
-        srv.shutdown()
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def stage():
+    import sys
+    import threading
+
+    from websockets.sync.server import serve
+
+    sys.path.insert(0, str(ROOT / "scripts" / "handout_live"))
+    import fake_show
+    from stage.cues import load_cues
+    from stage.dashboard import DashboardServer
+    from stage.dashboard_hub import DashboardHub
+
+    hub, director, warned = DashboardHub(), fake_show.FakeDirector(load_cues(), "전문가"), []
+    director.running = True
+    ds = DashboardServer(hub, director, interval=0.1, warn=warned.append, motion_pages={"exploded": build.OUT})
+    srv = serve(ds.handler, "127.0.0.1", 0, process_request=ds.process_request)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.socket.getsockname()[1]
+    try:
+        with _chrome(f"http://127.0.0.1:{port}/stage/exploded") as page:
+            yield {**page, "hub": hub, "director": director}
+    finally:
+        srv.shutdown()
+
+
+# 모든 장을 짓고(?check=1), 장마다 분해 직후·설명 중간·재조립 직전·점등 뒤를 실제로 그린다 — 낱말 대조 경고뿐 아니라 그리는 동안에만
+# 나오는 경고(설명선 열이 넘친다·모양이 없다)와 예외까지 잡는다. 시각은 페이지가 지은 장면의 사건 시각(T_EXP·T_RE·T_ON)에서 고른다
+_DRAW_ALL = """(function(){var S=window.explodedStage,n=JSON.parse(document.getElementById('data').textContent).cues.length;
+  for(var i=0;i<n;i++){var sc=S.getScene(i);[sc.T_EXP+2,(sc.T_EXP+sc.T_RE)/2,sc.T_RE-.3,sc.T_ON+1].forEach(function(t){S.draw(i,t);});}
+  return n;})()"""
+
+
+@pytest.fixture(scope="module")
+def checked():
+    with _chrome(build.OUT.as_uri() + "?check=1") as page:
+        yield page
+
+
+# 03 의 포인트 카드 — 카드는 표의 `cards` 낱말을 도슨트가 말할 때 뜨고, 그 도슨트 턴이 끝나면 내려간다(카드가 없는 턴에는 비어 있다)
+_CARD_AT = """(function(ci,t){var S=window.explodedStage;S.draw(ci,t);var p=document.querySelector('#point');
+  return p.style.visibility==='hidden'?null:document.querySelector('#p-no').textContent+' '+document.querySelector('#p-t').textContent;})"""
+
+
+@_live
+def test_포인트_카드는_그_포인트를_말하는_도슨트_낱말에_뜨고_카드_없는_턴에는_비운다(checked):
+    js, ci = checked["js"], build.CUE_IDS.index("03-theory")
+    sc = f"window.explodedStage.getScene({ci})"
+    at = js(f"{sc}.cardAt.map(function(c){{return [c.t0, c.t1];}})")
+    utt = {u["turn"]: u for u in js(f"{sc}.cue.utt")}
+    assert len(at) == 3 and at[0][0] < at[1][0] < at[2][0]
+    assert utt["docent0"]["t0"] - 0.3 <= at[1][0] <= utt["docent0"]["t1"]          # ITU 는 0턴 안에서(ITU 전파규칙이)
+    assert utt["docent2"]["t0"] <= at[2][0] <= utt["docent2"]["t1"]                # 빛의 속도 c 는 2턴(진공에서)
+    show = lambda t: js(f"{_CARD_AT}({ci},{t})")
+    assert show(at[0][0] + 0.8) == "01 / 03 전파법상 정의"
+    assert show(at[1][0] + 0.8) == "02 / 03 ITU 전파규칙"
+    assert show((utt["docent1"]["t0"] + utt["docent1"]["t1"]) / 2) is None         # 주파수·헤르츠를 말하는 동안 — 맞는 카드가 없다
+    assert show(at[2][0] + 0.8) == "03 / 03 빛의 속도 c"
+    assert checked["errors"] == []
+
+
+@_live
+def test_투명_재질에는_껍질_외곽선을_붙이지_않는다(checked):
+    # 뒷면 껍질이 유리를 통해 비쳐 강조될 때 꽉 찬 파란 상자로 보였다(19 선 상자 — 2026-11-14 헤드리스 캡처로 찾음). 대조: 유리 메시가 실제로 있다
+    r = checked["js"]("""(function(){var S=window.explodedStage,n=JSON.parse(document.getElementById('data').textContent).cues.length,glass=0,bad=0;
+      for(var i=0;i<n;i++)S.getScene(i).parts.forEach(function(p){p.shape.traverse(function(o){if(o.isMesh&&o.material&&o.material.transparent&&o.material.type!=='ShaderMaterial')glass++;});
+        p.hulls.forEach(function(h){if(h.parent.material.transparent)bad++;});});return [glass,bad];})()""")
+    assert r[0] > 0 and r[1] == 0, r
+
+
+@_live
+def test_모든_큐가_check_에서_경고와_오류가_없다(checked):
+    js = checked["js"]
+    assert js("document.documentElement.getAttribute('data-error')") is None          # WebGL 이 열렸다(SwiftShader)
+    assert json.loads(js("document.body.getAttribute('data-warn')")) == []             # 장면을 다 지을 때의 낱말 대조
+    assert js(_DRAW_ALL) == len(build.CUE_IDS)
+    assert js("window.explodedStage.warn") == []                                       # 그리는 동안의 경고(열 넘침 등)
+    assert checked["errors"] == []
 
 
 def _ev(hub, kind, role, label, seq):
@@ -341,7 +455,9 @@ def test_공연_발화가_끝나면_턴_끝으로_맞추고_다음_턴_앞에서
 
 @_live
 def test_공연_도슨트_턴은_그_턴의_장면과_포인트_카드를_보인다(stage):
-    # 감독 라벨 "02-history:pt1:docent" → 턴 docent1 — 분해된 기둥, 포인트 카드 02/03, 도슨트 말풍선에 대본 문장
+    # 감독 라벨 "02-history:pt1:docent" → 턴 docent1 — 분해된 기둥, 도슨트 말풍선에 대본 문장, 포인트 카드 01/03 '맥스웰'.
+    # 1턴은 "맥스웰 방정식이 …" 로 시작한다 — 예전에는 카드 i = 도슨트 i턴이라 여기서 '02/03 헤르츠' 가 떴다(2026-11-14 `cards` 로 고침:
+    # 도입 턴은 카드 없음, 맥스웰 카드는 1턴 시작, 헤르츠 카드는 "헤르츠가" 부터)
     hub, js, wait = stage["hub"], stage["js"], stage["wait"]
     _ev(hub, "say", "docent", "02-history:pt1:docent", 202)
     _ev(hub, "speaking_started", "docent", "02-history:pt1:docent", 202)
@@ -349,7 +465,8 @@ def test_공연_도슨트_턴은_그_턴의_장면과_포인트_카드를_보인
     assert js(UTT.format(c=1, k=3) + ".turn") == "docent1"
     stage["sleep"](1.2)
     assert js("window.explodedStage.clock()") == pytest.approx(t0 - 0.3 + 1.2, abs=0.35)
-    wait("document.querySelector('#p-no').textContent.indexOf('02 / 03') === 0")
+    wait("document.querySelector('#p-no').textContent.indexOf('01 / 03') === 0 && "
+         "document.querySelector('#p-t').textContent.indexOf('맥스웰') === 0")
     wait("document.querySelector('#b-docent').className.indexOf('bubble on') === 0")
     assert js("document.querySelector('#b-docent').textContent").startswith("맥스웰")
 

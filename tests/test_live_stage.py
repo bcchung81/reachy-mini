@@ -177,7 +177,8 @@ def test_자바스크립트_오류가_없다(stage):
 
 def test_자동_선택_화면은_수준과_지금_큐로_화면을_고른다(stage):
     """운영자가 연 /stage/auto 하나가 (수준, 큐)로 화면을 고른다(2026-11-13).
-    ① 교육자료 화면을 안 열어 '시연영상이 안 보인다' ② 웹툰·분해도엔 01·02큐뿐이라 06큐에서 수준을 바꾸면 01큐에 멈췄다."""
+    ① 교육자료 화면을 안 열어 '시연영상이 안 보인다' ② ~~웹툰·분해도엔 01·02큐뿐이라~~ 06큐에서 수준을 바꾸면 01큐에 멈췄다.
+    (2026-11-14 웹툰·분해도가 하이라이트 9큐로 늘었다 — 06 은 하이라이트 밖이라 여전히 카드 화면이고, 이 시험의 단언은 그대로 맞다.)"""
     js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
     SA = "(window.stageAuto||{})"
     director.level, director.cue_id = "일반", "01-intro"
@@ -249,4 +250,23 @@ def test_조정실_안의_시연_화면이_고른_화면을_머리에_알린다(
            "f=document.getElementById('stage-frame').getBoundingClientRect();"
            "return [f.width<=v.width+1, f.height<=v.height+1, f.left>=v.left-1, f.top>=v.top-1]})()")
     assert r == [True, True, True, True], r
+    assert _errors_but_webgl(stage["errors"]) == []
+
+
+
+def test_하이라이트_큐는_수준별_전용_화면으로_간다(stage):
+    """2026-11-14 갈래 C·D — 초등·중고등 웹툰, 전문가 분해도가 하이라이트 9큐(01·02·03·04·07·14·17·18·19)로 늘었다.
+    하이라이트 코스는 처음부터 끝까지 수준별 전용 화면이고, 하이라이트 밖(06)은 카드 화면이 잇는다. 빌드된 페이지를 그대로 읽는다(매니페스트)."""
+    js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
+    SA = "(window.stageAuto||{})"
+    director.level, director.cue_id = "초등", "03-theory"
+    js("location.href = '/stage/auto'")
+    seq = 970
+    for lv, cue, want in (("초등", "03-theory", "webtoon"), ("중고등", "19-closing", "webtoon"),
+                          ("전문가", "03-theory", "exploded"), ("전문가", "14-mobile", "exploded"),
+                          ("전문가", "06-bands", "hud"), ("일반", "17-rover", "paper")):
+        director.level, director.cue_id = lv, cue
+        seq += 1
+        say(hub, "mc", cue, seq)
+        wait(f"{SA}.screen === '{want}' && {SA}.cue === '{cue}'", 15)
     assert _errors_but_webgl(stage["errors"]) == []

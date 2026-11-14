@@ -22,7 +22,7 @@
   import map 의 data: URL 로 내장했다. 외부 리소스를 부르지 않는다(전시장은 오프라인).
 
   글자는 캔버스에 그리지 않고 DOM textContent 로만 넣는다(라벨·말풍선·카드). 2D 캔버스에는 지시선·점·전파 고리만.
-  그림은 t 의 순수 함수다 — `?cue=02&t=40` 으로 한 순간을 멈춰 볼 수 있다. `?check=1` 은 두 장을 모두 지어
+  그림은 t 의 순수 함수다 — `?cue=02&t=40` 으로 한 순간을 멈춰 볼 수 있다. `?check=1` 은 모든 장을 지어
   '대사에 없는 낱말' 경고를 body[data-warn] 에 적는다. `?bench=1` 은 프레임 시간을 재서 body[data-bench] 에 적는다.
   `?live`(또는 `?live=ws://…`)는 공연 모드 — 로봇 2대가 말하고 화면은 LiveFollow(scripts/handout_live/live_follow.js)의 시계를 따라간다.
 -->
@@ -209,7 +209,8 @@ function getScene(ci) {
     p.mats = Object.keys(M).map(function (k) { return M[k]; });
     p.hullMat = hullMaterial(); p.hullMat.uniforms.uW.value = row.hull || .06; p.hulls = [];
     // 메시를 먼저 모으고 나서 껍질을 붙인다 — 순회 도중에 자식을 붙이면 그 껍질(Mesh)을 다시 만나 끝없이 껍질을 붙인다(스택 넘침)
-    var meshes = []; p.shape.traverse(function (o) { if (o.isMesh) meshes.push(o); });
+    // 투명 재질(유리)에는 껍질을 붙이지 않는다 — 뒷면 껍질이 유리를 통해 비쳐, 강조될 때 꽉 찬 파란 상자로 보였다(19 선 상자·04 라이덴 병)
+    var meshes = []; p.shape.traverse(function (o) { if (o.isMesh && !(o.material && o.material.transparent)) meshes.push(o); });
     meshes.forEach(function (o) { o.receiveShadow = false;
       var hn = hullCache.get(o.geometry); if (!hn) { hn = hullNormals(o.geometry); hullCache.set(o.geometry, hn); o.geometry.setAttribute('hullN', new THREE.BufferAttribute(hn, 3)); }
       var h = new THREE.Mesh(o.geometry, p.hullMat); h.renderOrder = 2; h.castShadow = false; h.visible = false; o.add(h); p.hulls.push(h); });
@@ -250,6 +251,16 @@ function getScene(ci) {
     d.style.display = 'none'; d.style.visibility = ''; labelsEl.removeChild(d);
   });
   sc.labeled = lab;
+  // ── 포인트 카드 시각: 표에 cards(카드마다 뜨는 도슨트 낱말)가 있으면 그 낱말에 뜨고, 그 낱말이 든 도슨트 턴이 끝나면(+0.5초) 내려간다.
+  // 카드 i 를 도슨트 i턴에 묶으면 카드와 턴이 어긋나는 큐(03)에서 그 포인트를 말하지 않는 동안 카드가 뜬다(docs/lessons.md). 없으면 예전대로
+  sc.cardAt = null;
+  if (cue.cards && cue.cards.length) {
+    var prev = T_EXP - .5;
+    sc.cardAt = cue.cards.map(function (w) { var t0 = wordTime(cue, w, prev, 'docent'); if (t0 == null) t0 = prev; prev = t0; return { t0: t0 }; });
+    sc.cardAt.forEach(function (c, i) {
+      var u = cue.utt.filter(function (x) { return x.role === 'docent' && c.t0 >= x.t0 - .3 && c.t0 <= x.t1; })[0];
+      c.t1 = Math.min(i + 1 < sc.cardAt.length ? sc.cardAt[i + 1].t0 : 1e9, u ? u.t1 + .5 : 1e9, T_RE - .05); });
+  }
   sc.links = (cue.links || []).map(function (l) { return { from: sc.byId[l.from], to: sc.byId[l.to], a: new THREE.Vector3().fromArray(l.from_at), b: new THREE.Vector3().fromArray(l.to_at),
     t: l.say ? wordTime(cue, l.say, T_EXP - .5, 'docent') : T_EXP }; });
   // 점등 대상
@@ -459,6 +470,14 @@ function dom(sc, t) {
   cue.utt.forEach(function (u2) { if (u2.role === 'docent' && t >= u2.t0 - .1) cur = +u2.turn.slice(6); });
   var rem = t >= sc.T_RE - .05;
   if (rem) { pt.className = 'point rem'; $('#p-no').textContent = '기억해 두기'; $('#p-t').textContent = ''; $('#p-b').textContent = cue.remember; pt.style.visibility = 'visible'; pt.style.opacity = smooth((t - sc.T_RE) / .4).toFixed(3); }
+  else if (sc.cardAt) { var k = -1; sc.cardAt.forEach(function (c, i) { if (t >= c.t0 - .1 && t < c.t1) k = i; });
+    if (k < 0) pt.style.visibility = 'hidden';
+    else { var ck = sc.cardAt[k], ik = cue.items[k]; pt.className = 'point'; $('#p-no').textContent = ('0' + (k + 1)).slice(-2) + ' / ' + ('0' + cue.items.length).slice(-2);
+      $('#p-t').textContent = ik.t; $('#p-b').textContent = ik.b; pt.style.visibility = 'visible';
+      // 앞 카드가 끊김 없이 이어지면(같은 턴 안에서 다음 포인트) 0 에서 다시 떠오르지 않고(깜빡임) 0.4 에서 올라오고, 뒤 카드가 바로 이어지면 내려가지 않는다
+      var pc = sc.cardAt[k - 1], nc = sc.cardAt[k + 1], joinIn = pc && pc.t1 >= ck.t0 - .01, joinOut = nc && ck.t1 >= nc.t0 - .01;
+      var fin = smooth((t - ck.t0 + .1) / .4), fout = joinOut ? 0 : smooth((t - ck.t1 + .3) / .3);
+      pt.style.opacity = ((joinIn ? .4 + .6 * fin : fin) * (1 - fout)).toFixed(3); } }
   else if (cur >= 0 && cue.items[cur]) { var it = cue.items[cur], st = U(cue, 'docent' + cur).t0; pt.className = 'point'; $('#p-no').textContent = ('0' + (cur + 1)).slice(-2) + ' / ' + ('0' + cue.items.length).slice(-2);
     $('#p-t').textContent = it.t; $('#p-b').textContent = it.b; pt.style.visibility = 'visible'; pt.style.opacity = smooth((t - st + .1) / .4).toFixed(3); }
   else pt.style.visibility = 'hidden';
@@ -535,7 +554,8 @@ if (LIVE) {
   $('#scrub').addEventListener('input', function () { audios[cur].currentTime = parseFloat(this.value); });
   document.addEventListener('keydown', function (ev) { if (ev.repeat || /^(SELECT|INPUT)$/.test((ev.target || {}).tagName || '')) return;
     if (ev.code === 'Space') { ev.preventDefault(); toggle(); } else if (ev.code === 'ArrowRight' && cur + 1 < CUES.length) setCue(cur + 1, !audios[cur].paused); else if (ev.code === 'ArrowLeft' && cur > 0) setCue(cur - 1, !audios[cur].paused); });
-  $('#note').textContent = DATA.level + ' 수준 · 캐시 음성 재활용 · 01·02 시안';
+  // 장 번호는 데이터에서 — 빌드 범위가 늘 때마다 틀을 고치지 않게(손으로 적은 '01·02 시안' 이 범위가 늘어도 남아 있었다)
+  $('#note').textContent = DATA.level + ' 수준 · 캐시 음성 재활용 · ' + CUES.map(function (c) { return c.no; }).join('·');
 }
 
 resize();
