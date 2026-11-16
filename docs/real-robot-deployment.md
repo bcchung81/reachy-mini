@@ -815,6 +815,9 @@ REACHY_STT_ENGINE=openai REACHY_LOCAL_MODELS=off ./reachy.sh start --robot`. 로
 - 로봇은 수준을 모른다(감독이 고른 문장만 받는다) — 재배포 없음. 되돌리려면 `stage/levels.py` 의 `OFFERED_LEVELS` 에 "초등" 을 다시 넣고 `LEVEL_LABELS`·`LEVEL_ALIASES` 를 비운다.
 - 시험: `tests/test_stage_main.py::test_main_에서_감독까지_초중등_수준이_이어진다`, `tests/test_levels.py::test_기동_수준이_초등이면_중고등_대본으로_뜬다`,
   `tests/test_stage_director.py::test_별칭은_목록에_없는_이름에만_쓴다`, `tests/test_audience.py::test_교육자료는_보이는_이름을_쓰고_별칭_주소도_받는다`.
+- **수준별 화면 범위(2026-11-16, §15.12 갱신)**: 전문가 분해도는 **19큐 전부** — 카드 화면으로 이어지는 큐가 없다. 생성물 12.7 MB, 처음 뜨는 시간 1.2초(GPU 없는 PC)·0.2초(GPU),
+  GPU 없는 PC 에서 13~23 fps(SwiftShader 실측), 19장을 다 지으면 형상 약 55 MB. 초중등 웹툰은 하이라이트 밖 10큐를 중고등 한 수준으로 채우는 중(계획
+  `docs/superpowers/plans/2026-11-16-level-screens-rest.md`). 로봇 재배포 없음 — PC 의 정적 HTML 이고 조정실이 빌드된 페이지에서 큐 목록을 읽는다.
 
 ## 적용한 수정 (2026-07-30)
 

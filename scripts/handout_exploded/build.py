@@ -1,4 +1,4 @@
-"""분해도 무대(전문가 교육자료) 만들기 — 하이라이트 코스(U7 ①, 2026-11-14)를 앞에서부터 늘린다.
+"""분해도 무대(전문가 교육자료) 만들기 — 19큐 전부(하이라이트 9큐 2026-11-14, 나머지 10큐 2026-11-16).
 
     TTS_CACHE_DIR=~/.local/share/reachy-mini-tts/cache-elevenlabs .venv/bin/python -m scripts.handout_exploded.build
     # → docs/design/exploded-stage.html
@@ -35,10 +35,13 @@ VENDOR = HERE / "vendor"
 OUT = ROOT / "docs" / "design" / "exploded-stage.html"
 # 공연 모드(?live) 모듈 — 조율자가 만든다. 세 교육자료가 같은 파일을 인라인한다(접속·배지 모양이 같게). 없으면 경고하고 자리만 둔다
 LIVE_JS = ROOT / "scripts" / "handout_live" / "live_follow.js"
-# 빌드 범위 = 하이라이트 코스(`data/courses.yaml`)를 **큐시트 순서로 앞에서부터**(U7 ①). 공연이 그 순서로 돌기 때문에 중간을 비우면
-# 전용 화면 → 카드 화면 → 전용 화면으로 오간다. 03 은 사용자 확인(U8 ①)을 받은 뒤 04·07·14·17·18·19 를 잇는다.
-# 나머지 10큐는 카드 화면(`/stage/hud`)이 잇는다 — 감독이 빌드된 페이지에서 큐를 읽으므로(`/stage/manifest`) 여기만 늘리면 된다
-CUE_IDS = ("01-intro", "02-history", "03-theory", "04-morse", "07-maritime", "14-mobile", "17-rover", "18-science", "19-closing")
+# 빌드 범위 — **큐시트 순서**로 적는다(생성물의 장 순서 = 미리보기에서 '다음 장' 으로 이어 듣는 순서). 하이라이트 9큐는 2026-11-14 에
+# 다 채웠고(갈래 D), 2026-11-16 하이라이트 밖 10큐를 채워(계획 `2026-11-16-level-screens-rest.md` §4 칸 X — 06 을 먼저 사용자에게 보이고
+# 05·08·09·10·11·12·13·15·16 을 이었다) 19큐 전부다. 감독은 빌드된 페이지에서 큐를 읽는다(`/stage/manifest`) — 큐를 빼면 그 큐는
+# 카드 화면(`/stage/hud`)이 잇는다
+CUE_IDS = ("01-intro", "02-history", "03-theory", "04-morse", "05-donor", "06-bands", "07-maritime",
+           "08-aviation", "09-special-exhibit", "10-ham", "11-iot", "12-multimedia", "13-chromakey", "14-mobile",
+           "15-emf", "16-inspection", "17-rover", "18-science", "19-closing")
 LEVEL_KEY, LEVEL_NAME = "l4", "전문가"
 RATE = 24000
 # 발화 표(utt)의 시각 계산은 종이 무대 빌더와 **같아야** 한다(GAP_SENT·GAP_UTT·LEAD) — 공연 모드에서 감독의 발화 라벨(턴 이름)을

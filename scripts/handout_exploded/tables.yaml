@@ -149,6 +149,92 @@
     # 코일의 고전압 단자 → 쌍극자 가운데(불꽃 간극) — "룸코르프 유도코일의 고전압으로 … 불꽃 간극을 때려"
     - {from: coil, from_at: [0.78, 1.0, 0], to: dipole, to_at: [0.15, 0.55, 0], say: 룸코르프 유도코일의}
 
+# 05 — 아마추어 무선국 한 벌(사용자 결정 ㉮, 2026-11-16): 받침(라벨 없음) 위 책상(움직이지 않는 기준) · 송수신기 · 전건(모양만) · 안테나 돛대.
+# 0턴은 사람(책상 = 의사와 무선 통신사)과 1963년 무선국(송수신기), 1턴은 떨어져 나가는 셋 — 진료 가방("1972년 미국" — 책상 왼쪽 밖으로),
+# QST 잡지 판(위로, 카메라 쪽으로 기울어 표지가 보인다), 기증 상자(받침 속에 숨어 있다가 "4천5백여 점을" 에서 오른다 — 17 의 두 차와 같은 방식).
+# 기기는 일반형이다 — HM4DF 무선국의 실제 장비는 조사 자료에 없어 기종을 지어 그리지 않는다. 카드 둘은 도슨트 턴 둘과 맞아 cards 를 안 쓴다.
+# 받침은 3.8 × 2.0 — 처음 4.6 × 2.4 로 지었더니 받침 상자가 가로 맞춤을 정해 무선국이 작았다(돛대를 책상 뒤로 붙이고 받침을 줄였다)
+05-donor:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: stage, shape: stage, parent: null, rest: [0, 0.35, 0], dir: [0, -1, 0], dist: 0.7, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.05, 0], phi: 0.4, over: 1.3, anchor: [0, 3.0], side: L}
+    - {id: desk, shape: desk, parent: null, rest: [-0.5, 1.66, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 1.15], side: L,
+       label: 의사와 무선 통신사, sub: 전남의대 약리학교실 석사과정, say: [전남의과대학을]}
+    - {id: rig, shape: rig, parent: null, rest: [-0.35, 2.0, -0.2], dir: [0, 1, 0], dist: 1.1, order: 1, delay: 0.03,
+       spin: -0.2, tilt: [0.1, 0.02], phi: 2.0, over: 1.5, anchor: [0.1, 0.55], side: L,
+       label: 1963년 전남 최초, sub: 아마추어 무선 통신사 · 호출부호 HM4DF, say: [1963년 전남 최초의]}
+    - {id: key, shape: key, parent: null, rest: [0.4, 1.77, 0.42], dir: [0.2, 1, 0.4], dist: 0.9, order: 2, delay: 0.05,
+       spin: 0.3, tilt: [0.12, 0.03], phi: 0.6, over: 1.7, anchor: [0, 0.3], side: R}
+    - {id: mast, shape: mast, parent: null, rest: [1.35, 2.4, -0.55], dir: [0, 1, 0], dist: 1.0, order: 0, delay: 0,
+       spin: 0.3, tilt: [0.06, 0.01], phi: 3.0, over: 1.5, anchor: [1.2, 0.2], side: R, say: [호출부호]}
+    - {id: bag, shape: bag, parent: null, rest: [-1.45, 1.93, 0.3], dir: [-0.8, 0.8, 0.25], dist: 1.1, order: 1, delay: 0, leave: 1972년 미국,
+       spin: -0.3, tilt: [0.12, 0.02], phi: 1.0, over: 1.5, anchor: [0, 0.4], side: L,
+       label: 1972년 뉴욕주 뉴어크, sub: 내과를 개업 · 의사협회장, say: [1972년 미국, 의사협회장을]}
+    - {id: qst, shape: qst, parent: null, rest: [0.45, 1.74, -0.35], dir: [0.1, 1, -0.15], dist: 1.7, order: 1, delay: 0, leave: QST에,
+       spin: 0.2, tilt: [0.1, 0.45], phi: -0.5, over: 1.6, anchor: [0, 0.35], side: R,
+       label: QST, sub: 아마추어 무선 잡지 · 기술 기사, say: [QST에]}
+    - {id: crate, shape: crate, parent: stage, rest: [1.3, 0, 0.4], dir: [0, 1, 0.15], dist: 1.9, order: 1, delay: 0, leave: 4천5백여 점을,
+       spin: 0.25, tilt: [0.1, 0.02], phi: 2.5, over: 1.4, anchor: [0, 0.5], side: R,
+       label: 4천5백여 점 · 조선대학교, sub: 2014년 9월 30일 장황남정보통신박물관 개관, say: [4천5백여 점을, 2014년 9월 30일]}
+
+# 06 — ITU 대역 표를 쌓은 탑(대역 탑). 대역 4(VLF)~11(EHF) 여덟 층이 받침(ITU-R 권고 V.431-8 표) 위에 축을 꿰고 쌓여 있다.
+# 높이 = 대역번호(로그 주파수) — 층마다 두께·간격이 같다(대역번호 N 은 0.3×10^N ~ 3×10^N Hz, 대역마다 정확히 10배). 층 반지름은 위로 갈수록
+# 곧게 줄고(로그-로그에서 반비례는 곧은 기울기), 층 테두리의 물결은 위로 갈수록 촘촘하다(파장이 짧아진다). 분해는 아코디언 — 위 층이 먼저,
+# 아래 층으로 갈수록 덜 올라가 간격이 고르게 벌어지고(시험이 같은 간격을 박는다), 축 속에 접혀 있던 가는 막대(주파수 축)가 위로 뽑혀 나온다.
+# 층마다 이름 칸 둘 — 왼쪽 앞(어두운 칸) = 주파수 기준 이름 열, 오른쪽 앞(은색 칸) = 파장 기준 이름 열(표 Table 1 의 두 열). 2턴에서
+# 맨 아래 층의 왼쪽 칸(초장파 — 주파수 기준)과 맨 위 층의 오른쪽 칸(밀리미터파 — 파장 기준)이 제 낱말에 서랍처럼 빠지고, "두 계열이" 에서
+# 두 칸을 잇는 점선 — 제목 '초장파에서 밀리미터파까지' 가 서로 다른 두 열을 잇는다.
+# 전시품(기증품) 목록과 대역별 구성은 조사 자료의 확인 불가 항목이라 기기 모양을 그리지 않는다 — 탑은 대역 표만 말한다.
+# 층은 돌지 않는다(spin 0) — 이름 칸이 화면 왼쪽·오른쪽 열에 남아야 한다. 카드 셋(파장과 주파수 · 전파 방식 · V.431-8)은 도슨트 턴 셋과 맞아 cards 를 안 쓴다
+06-bands:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: base, shape: base, parent: null, rest: [0, 0.2, 0], dir: [0, -1, 0], dist: 1.2, order: 3, delay: 0.04,
+       spin: 0.15, tilt: [0.06, 0.012], phi: 0.5, over: 1.3, anchor: [0, 2.2], side: L,
+       label: ITU-R 권고 V.431-8, sub: 대역번호 N은 0.3×10^N Hz에서 3×10^N Hz, say: [ITU-R 권고 V.431-8의]}
+    - {id: axis, shape: axis, parent: null, rest: [0, 1.675, 0], dir: [0, 1, 0], dist: 0, order: 4, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 0.15], side: R, hull: 0.03, say: [반비례해서]}
+    # 주파수 막대 두 마디 — 망원 안테나처럼 축 속에 접혀 있다가 마디마다 뽑힌다(마디끼리 0.15 이상 겹쳐 끊겨 보이지 않는다). 한 마디로는
+    # 축(2.55) 길이만큼밖에 못 뽑아 맨 위 층(분해 높이 6.35)에 못 닿았다
+    - {id: mast, shape: mast, parent: axis, rest: [0, 0, 0], dir: [0, 1, 0], dist: 2.3, order: 0, delay: 0.05,
+       spin: 0.4, tilt: [0.04, 0], phi: 2.0, over: 1.4, anchor: [0.5, 0.1], side: R, hull: 0.03,
+       label: 파장과 주파수, sub: 파장은 주파수에 반비례, say: [반비례해서]}
+    - {id: mast2, shape: mast2, parent: mast, rest: [0, 0, 0], dir: [0, 1, 0], dist: 2.2, order: 0, delay: 0,
+       spin: -0.4, tilt: [0.04, 0], phi: 3.0, over: 1.4, anchor: [0.5, 0.08], side: R, hull: 0.025, say: [반비례해서]}
+    - {id: b4, shape: b4, parent: null, rest: [0, 0.55, 0], dir: [0, 1, 0], dist: 0.2, order: 4, delay: 0.03,
+       spin: 0, tilt: [0.07, 0], phi: 0.0, over: 1.4, anchor: [0, 1.9], side: R,
+       label: VLF, sub: 3kHz · 100km, say: [3킬로헤르츠에서, 100킬로미터에서, VLF에서 MF까지는, 대역번호 N을]}
+    - {id: b5, shape: b5, parent: null, rest: [0, 0.85, 0], dir: [0, 1, 0], dist: 0.7, order: 3, delay: 0.06,
+       spin: 0, tilt: [0.07, 0], phi: 0.8, over: 1.45, anchor: [0, 1.75], side: L,
+       label: VLF에서 MF까지, sub: 회절로 장애물을 넘는 지표파, say: [VLF에서 MF까지는, 대역번호 N을]}
+    - {id: b6, shape: b6, parent: null, rest: [0, 1.15, 0], dir: [0, 1, 0], dist: 1.2, order: 3, delay: 0,
+       spin: 0, tilt: [0.07, 0], phi: 1.6, over: 1.45, anchor: [0, 1.6], side: R, say: [VLF에서 MF까지는, 중파와 단파는, 대역번호 N을]}
+    - {id: b7, shape: b7, parent: null, rest: [0, 1.45, 0], dir: [0, 1, 0], dist: 1.7, order: 2, delay: 0.06,
+       spin: 0, tilt: [0.07, 0], phi: 2.4, over: 1.5, anchor: [0, 1.4], side: R,
+       label: 중파와 단파, sub: 전리층 굴절로 대륙 간 거리까지, say: [중파와 단파는, 대역번호 N을]}
+    - {id: b8, shape: b8, parent: null, rest: [0, 1.75, 0], dir: [0, 1, 0], dist: 2.2, order: 2, delay: 0,
+       spin: 0, tilt: [0.07, 0], phi: 3.2, over: 1.5, anchor: [0, 1.2], side: L, say: [VHF 이상은, 대역번호 N을]}
+    - {id: b9, shape: b9, parent: null, rest: [0, 2.05, 0], dir: [0, 1, 0], dist: 2.7, order: 1, delay: 0.06,
+       spin: 0, tilt: [0.07, 0], phi: 4.0, over: 1.55, anchor: [0, 1.05], side: L,
+       label: VHF 이상, sub: 가시선 전파가 주를 이룬다, say: [VHF 이상은, 대역번호 N을]}
+    - {id: b10, shape: b10, parent: null, rest: [0, 2.35, 0], dir: [0, 1, 0], dist: 3.2, order: 1, delay: 0,
+       spin: 0, tilt: [0.07, 0], phi: 4.8, over: 1.55, anchor: [0, 0.9], side: L, say: [VHF 이상은, 대역번호 N을]}
+    - {id: b11, shape: b11, parent: null, rest: [0, 2.65, 0], dir: [0, 1, 0], dist: 3.7, order: 0, delay: 0.04,
+       spin: 0, tilt: [0.07, 0], phi: 5.6, over: 1.6, anchor: [0, 0.7], side: R,
+       label: EHF, sub: 300GHz · 1mm, say: [300기가헤르츠는, 1밀리미터예요, VHF 이상은, 대역번호 N을]}
+    # 이름 칸 둘 — 층 좌표계 안에서 그 층의 칸 자리(반지름 + 0.18, 각 2.15 / −0.03 — scenes.js 의 B06)에 있다가 제 낱말에 바깥·위로 빠진다(0.6 — 더 빼면 마지막 단계 맞춤이 넓어져 탑이 작아진다)
+    - {id: f4, shape: ftab, parent: b4, rest: [-1.1932, 0, 1.8244], dir: [-0.547, 0.25, 0.837], dist: 0.6, order: 1, delay: 0,
+       spin: 0, tilt: [0.12, 0], phi: 0.6, over: 1.8, anchor: [0, 0.22], side: L, leave: 초장파는, hull: 0.04,
+       label: 초장파 · 주파수 기준, sub: VLF·LF·MF·HF·VHF·UHF·SHF·EHF, say: [초장파는]}
+    - {id: w11, shape: wtab, parent: b11, rest: [0.9196, 0, -0.0276], dir: [0.9996, 0.25, -0.03], dist: 0.6, order: 1, delay: 0,
+       spin: 0, tilt: [0.12, 0], phi: 2.2, over: 1.8, anchor: [0, 0.22], side: R, leave: 밀리미터파는, hull: 0.04,
+       label: 밀리미터파 · 파장 기준, sub: 미리어미터파 ~ 밀리미터파, say: [밀리미터파는]}
+  links:
+    # 제목의 두 끝 — 맨 아래 층 주파수 기준 칸(초장파)의 끝 → 맨 위 층 파장 기준 칸(밀리미터파)의 끝: 서로 다른 두 열을 잇는다
+    - {from: f4, from_at: [-0.126, 0, 0.192], to: w11, to_at: [0.23, 0, -0.007], say: 두 계열이}
+
 # 07 — 선박 무선국 한 척, 사고에서 제도까지. 선체가 움직이지 않는 기준(dist 0) — 0턴의 숫자(보고서)를 선체에 단다.
 # 받침판 = 1914년 협약(01 의 기초 = 전파법과 같은 자리) · 무선실 = 권고 제20항(당직) · 두 돛대 사이 안테나 줄 = 1912년 런던 회의 ·
 # 무선실 앞으로 나오는 콘솔 = GMDSS · 지붕의 원통·막대 = 406MHz 비상위치표지·수색구조 트랜스폰더. 구명정은 "카르파티아호가" 에서 떨어져 나간다.
@@ -189,6 +275,279 @@
     - {id: rig, shape: rig, parent: null, rest: [-0.2, 2.675, 0], dir: [0, 1, 0], dist: 3.2, order: 0, delay: 0,
        spin: 0.15, tilt: [0.08, 0.015], phi: 3.6, over: 1.5, anchor: [1.45, 0.12], side: L,
        label: 1912년 런던 국제무선전신회의, sub: 공통 조난파장과 청취 의무, say: [1912년 런던]}
+
+# 08 — 항공기 앞 동체 한 토막(기종은 그리지 않는다 — 조사 자료 '확인 불가'). 아래 껍데기(바닥·계기판)가 움직이지 않는 기준이고 위 껍데기가
+# 가장 먼저 높이 올라가 객실이 열린다 — 속의 부품(좌석·요크·페달·송수신기 둘·트랜스폰더·비상표지)이 아래 껍데기와 위 껍데기 사이의 빈자리로
+# 떠오른다. 받침판 = 시카고 협약 부속서 10(01 의 기초 = 전파법, 07 의 받침판 = 협약과 같은 자리). 위 껍데기의 날개 안테나가 공대지 음성.
+# 카메라는 앞 왼쪽(az ≈ 0.9) — 옆에서 보면 동체 길이에 맞춰 화면이 작아진다. 이 방위에서 뱃머리(+x)는 화면 오른쪽 → 앞쪽 부품(요크·페달)은 오른쪽 열,
+# 뒤쪽 부품(송수신기·트랜스폰더·비상표지)은 왼쪽 열. 카드 셋은 도슨트 턴 셋과 맞아 cards 를 안 쓴다
+08-aviation:
+  view: {az: [0.80, 1.00], el: 0.32, yaw0: -1.4}
+  parts:
+    - {id: slab, shape: slab, parent: null, rest: [0.3, 0.13, 0], dir: [0, -1, 0], dist: 0.9, order: 3, delay: 0.04,
+       spin: 0.1, tilt: [0.05, 0.01], phi: 0.6, over: 1.3, anchor: [0, 2.2], side: L,
+       label: 시카고 협약 부속서 10, sub: 통신과 항법 · 감시를 규율, say: [시카고 협약 부속서 10]}
+    - {id: belly, shape: belly, parent: null, rest: [0, 1.6, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [-0.5, 0.95], side: L,
+       label: 시뮬레이터, sub: 조종사 교육용 장비를 개조한, say: [시뮬레이터로]}
+    - {id: roof, shape: roof, parent: null, rest: [0, 1.6, 0], dir: [0, 1, 0], dist: 2.0, order: 0, delay: 0,
+       spin: -0.1, tilt: [0.08, 0.015], phi: 2.0, over: 1.4, anchor: [0.6, 0.8], side: R,
+       label: 항공기 통신 안테나 배치, say: [안테나 배치도]}
+    - {id: blade, shape: blade, parent: roof, rest: [-0.2, 0.92, 0], dir: [0, 1, 0], dist: 0.55, order: 1, delay: 0.05,
+       spin: 0.2, tilt: [0.1, 0.02], phi: 3.0, over: 1.7, anchor: [0.3, 0.1], side: R,
+       label: 공대지 음성, sub: 117.975에서 137메가헤르츠, say: [공대지 음성은]}
+    - {id: seat, shape: seat, parent: null, rest: [-0.2, 1.62, 0], dir: [0, 1, 0], dist: 0.5, order: 2, delay: 0.06,
+       spin: 0.15, tilt: [0.1, 0.02], phi: 1.0, over: 1.5, anchor: [0, 0.3], side: L}
+    - {id: yoke, shape: yoke, parent: null, rest: [0.75, 1.55, 0], dir: [0, 1, 0], dist: 1.1, order: 1, delay: 0.04,
+       spin: 0.2, tilt: [0.12, 0.02], phi: 4.0, over: 1.6, anchor: [0.3, 0.25], side: R,
+       label: 요크 · 피치와 롤, say: [요크가]}
+    - {id: pedals, shape: pedals, parent: null, rest: [1.1, 1.38, 0], dir: [0.35, 1, 0.5], dist: 0.8, order: 2, delay: 0.05,
+       spin: -0.2, tilt: [0.12, 0.02], phi: 5.0, over: 1.6, anchor: [0.1, 0.3], side: R,
+       label: 페달 · 요, say: [페달이]}
+    - {id: radios, shape: radios, parent: null, rest: [-1.0, 1.55, 0.25], dir: [0, 1, 0.2], dist: 1.3, order: 1, delay: 0,
+       spin: 0.2, tilt: [0.1, 0.02], phi: 0.5, over: 1.5, anchor: [0.1, 0.35], side: L,
+       label: 무선전화 송수신기 두 대, sub: 항공안전법 제51조 · 시행규칙 제107조, say: [항공안전법 제51조와, 무선전화 송수신기 두 대]}
+    - {id: xpdr, shape: xpdr, parent: null, rest: [-0.45, 1.4, 0.45], dir: [0.1, 1, 0.45], dist: 1.0, order: 2, delay: 0.03,
+       spin: -0.2, tilt: [0.1, 0.02], phi: 2.5, over: 1.6, anchor: [0, 0.3], side: L,
+       label: 트랜스폰더, say: [트랜스폰더]}
+    - {id: elt, shape: elt, parent: null, rest: [-1.2, 1.75, -0.3], dir: [-0.5, 1, -0.2], dist: 1.2, order: 1, delay: 0.05,
+       spin: 0.3, tilt: [0.12, 0.02], phi: 4.5, over: 1.5, anchor: [0, 0.3], side: L,
+       label: 비상위치지시용 무선표지설비, sub: 121.5메가헤르츠와 406메가헤르츠, say: [비상위치지시용, 406메가헤르츠로, 비상주파수는]}
+
+# 09 — 진열장 한 대(사용자 결정 ㉮): 상자(바닥·뒤판)는 남고 속이 바뀐다. 유리 덮개가 가장 먼저 위로 걷히고, "소장과 대여의" 에서 속 받침대 둘이
+# 양옆으로 갈린다(주체가 갈린다), 빈 명판 틀이 앞으로 나온다(목록은 시기마다 달라진다), "지금 놓인 실물을" 에서 받침대 위 물건 둘만 강조된다(눈앞의 것이 기준).
+# 도슨트 턴이 하나뿐이라 네 강조가 17초 안에 지나간다. 속 물건은 이름 없는 덩어리 — 전시품 목록은 조사 자료 '확인 불가'. 카드 하나 = 턴 하나
+09-special-exhibit:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: plinth, shape: plinth, parent: null, rest: [0, 0.5, 0], dir: [0, -1, 0], dist: 0.9, order: 2, delay: 0.04,
+       spin: 0.1, tilt: [0.05, 0.01], phi: 0.5, over: 1.3, anchor: [0, 1.4], side: L,
+       label: 특별교류전시, sub: 상설전시와 달리 기간 한정, say: [기간 한정이라]}
+    - {id: case, shape: case, parent: null, rest: [0, 1.04, 0], dir: [0, 1, 0], dist: 0, order: 2, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 1.2], side: L}
+    - {id: glass, shape: glass, parent: null, rest: [0, 1.78, 0], dir: [0, 1, 0], dist: 1.9, order: 0, delay: 0,
+       spin: 0.15, tilt: [0.08, 0.015], phi: 2.0, over: 1.4, anchor: [0.5, 1.2], side: R}
+    - {id: standA, shape: standA, parent: null, rest: [-0.55, 1.31, 0.05], dir: [-1, 0.25, 0.3], dist: 1.2, order: 1, delay: 0, leave: 소장과 대여의,
+       spin: -0.3, tilt: [0.1, 0.02], phi: 1.0, over: 1.5, anchor: [0.1, 0.4], side: L,
+       label: 소장, say: [소장과 대여의]}
+    - {id: standB, shape: standB, parent: null, rest: [0.55, 1.31, 0.05], dir: [1, 0.25, 0.3], dist: 1.2, order: 1, delay: 0.05, leave: 소장과 대여의,
+       spin: 0.3, tilt: [0.1, 0.02], phi: 4.0, over: 1.5, anchor: [0.1, 0.35], side: R,
+       label: 대여, sub: 소장과 대여의 주체가 갈린다, say: [소장과 대여의]}
+    - {id: objA, shape: objA, parent: standA, rest: [0, 0.38, 0], dir: [0, 1, 0], dist: 0.15, order: 0, delay: 0.06,
+       spin: 0.4, tilt: [0.1, 0.02], phi: 2.0, over: 1.7, anchor: [0, 0.2], side: L, say: [지금 놓인 실물을]}
+    - {id: objB, shape: objB, parent: standB, rest: [0, 0.41, 0], dir: [0, 1, 0], dist: 0.15, order: 0, delay: 0.1,
+       spin: -0.4, tilt: [0.1, 0.02], phi: 5.0, over: 1.7, anchor: [0.05, 0.16], side: R,
+       label: 지금 놓인 실물을 기준으로, say: [지금 놓인 실물을]}
+    - {id: plate, shape: plate, parent: null, rest: [0, 1.25, 0.5], dir: [0, -0.2, 1], dist: 0.9, order: 1, delay: 0.04,
+       spin: 0.1, tilt: [0.1, 0.02], phi: 3.0, over: 1.6, anchor: [0, 0.35], side: R,
+       label: 전시품 목록과 교류 기관, sub: 시기마다 달라진다, say: [전시품 목록과]}
+
+# 10 — 아마추어무선국 한 벌: 05 와 같은 무선국 모양(받침 · 책상 · 송수신기 · 돛대)에 제도의 부품을 더한다. 0턴 = 정의(책상 = 제1.56조)와 운용 규칙
+# (송수신기 = 제25조), 1턴 = 자격과 출력 — 자격 판 받침(제25.6조 · 전파법 제70조) · 출력계(제25.7조) · 자격증 판 넷이 "네 등급이" 에서 네 층으로
+# 갈라져 오른다(07 해역 고리와 같은 방식 — 같은 leave 낱말, 거리만 다르게; 맨 위가 제1급). 2턴 = 비상 — 받침 속 비상 가방이 "제25.9A조가" 에서 오르고,
+# 돛대가 "제25.3조는" 에서 강조된다. 카드 셋은 도슨트 턴 셋과 맞아 cards 를 안 쓴다
+10-ham:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: stage, shape: stage, parent: null, rest: [0, 0.35, 0], dir: [0, -1, 0], dist: 0.7, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.05, 0], phi: 0.4, over: 1.3, anchor: [0, 3.0], side: L}
+    - {id: desk, shape: desk, parent: null, rest: [-0.5, 1.66, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 1.15], side: L,
+       label: 전파규칙 제1.56조, sub: 금전적 이익 없는 자기훈련 · 상호통신 · 기술연구, say: [제1.56조가]}
+    - {id: rig, shape: rig, parent: null, rest: [-0.35, 2.0, -0.2], dir: [0, 1, 0], dist: 1.1, order: 1, delay: 0.03,
+       spin: -0.2, tilt: [0.1, 0.02], phi: 2.0, over: 1.5, anchor: [0.1, 0.55], side: L,
+       label: 운용 규칙 · 제25조, say: [제25조가]}
+    - {id: meter, shape: meter, parent: null, rest: [0.5, 1.88, -0.25], dir: [0.2, 1, -0.1], dist: 1.0, order: 2, delay: 0.05,
+       spin: 0.3, tilt: [0.12, 0.02], phi: 4.0, over: 1.6, anchor: [0, 0.3], side: R,
+       label: 출력 상한 · 제25.7조, say: [제25.7조에]}
+    - {id: tray, shape: tray, parent: null, rest: [-1.2, 1.74, 0.35], dir: [-0.2, 1, 0.3], dist: 0.6, order: 2, delay: 0,
+       spin: 0.2, tilt: [0.1, 0.02], phi: 1.5, over: 1.5, anchor: [0, 0.4], side: L,
+       label: 자격검정 · 전파법 제70조, sub: 제25.6조 자격 검증 의무 · 한국방송통신전파진흥원에 위탁, say: [제25.6조가, 제70조의]}
+    - {id: lic1, shape: lic1, parent: tray, rest: [0, 0.150, 0], dir: [0, 1, 0.15], dist: 1.64, order: 2, delay: 0.00, leave: 네 등급이,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.6, anchor: [0, 0.3], side: L,
+       label: 시행령 별표 17의 네 등급, sub: 제1급 1kW 이하 · 제4급 10W 이하, say: [네 등급이]}
+    - {id: lic2, shape: lic2, parent: tray, rest: [0, 0.115, 0], dir: [0, 1, 0.15], dist: 1.26, order: 2, delay: 0.04, leave: 네 등급이,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.6, anchor: [0, 0.3], side: L, say: [네 등급이]}
+    - {id: lic3, shape: lic3, parent: tray, rest: [0, 0.080, 0], dir: [0, 1, 0.15], dist: 0.88, order: 2, delay: 0.08, leave: 네 등급이,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.6, anchor: [0, 0.3], side: L, say: [네 등급이]}
+    - {id: lic4, shape: lic4, parent: tray, rest: [0, 0.045, 0], dir: [0, 1, 0.15], dist: 0.50, order: 2, delay: 0.12, leave: 네 등급이,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.6, anchor: [0, 0.3], side: L, say: [네 등급이]}
+    - {id: mast, shape: mast, parent: null, rest: [1.35, 2.4, -0.55], dir: [0, 1, 0], dist: 1.0, order: 0, delay: 0,
+       spin: 0.3, tilt: [0.06, 0.01], phi: 3.0, over: 1.5, anchor: [1.2, 0.2], side: R,
+       label: 제25.3조 · 제3자 대리 국제통신, sub: 비상과 재난구호에 한정, say: [제25.3조는]}
+    - {id: gobag, shape: gobag, parent: stage, rest: [1.3, 0, 0.4], dir: [0, 1, 0.15], dist: 1.9, order: 1, delay: 0, leave: 제25.9A조가,
+       spin: 0.25, tilt: [0.1, 0.02], phi: 2.5, over: 1.4, anchor: [0, 0.4], side: R,
+       label: 재난구호 대비 · 제25.9A조, say: [제25.9A조가]}
+
+# 11 — 표준의 층 모형(ITU-T Y.4000): 받침 위에 사물 판(움직이지 않는 기준) · 기기 판 · 사물 간 통신 판 · 서비스 계층 판을 쌓았다가 위로 벌린다
+# ("그 위의 서비스 계층" — 층이 쌓인 순서 그대로). 가상 사물은 사물과 같은 모양의 반투명 쌍둥이로 사물 위에 떠오른다. 사람은 옆에 서 있다가
+# "사람의 개입 없이" 에서 옆으로 빠져 흐리게 남는다(ghost — 02 의 1785년 판처럼 대사가 '없다' 고 한 것). 2턴의 두 수치는 받침 속에서 나온다
+# (점 격자 판 = 연결밀도, 짧은 구간 막대 = 지연 1밀리초 — 둘 다 앞으로 빠져 사물 판 아래 높이에 선다; 위로 올리면 사물 판에 막힌다).
+# 카드 셋은 도슨트 턴 셋과 맞아 cards 를 안 쓴다
+11-iot:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: base, shape: base, parent: null, rest: [0, 0.25, 0], dir: [0, -1, 0], dist: 0.9, order: 3, delay: 0.04,
+       spin: 0.1, tilt: [0.05, 0.01], phi: 0.5, over: 1.3, anchor: [0, 1.8], side: L,
+       label: ITU-T Y.4000, sub: 정보사회를 위한 글로벌 인프라, say: [ITU-T Y.4000이]}
+    - {id: things, shape: things, parent: null, rest: [0, 0.6, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 1.5], side: L,
+       label: 물리적 사물과 가상 사물, say: [물리적 사물과]}
+    - {id: virt, shape: virt, parent: null, rest: [0, 0.6, 0], dir: [0, 1, 0], dist: 0.55, order: 2, delay: 0.08,
+       spin: 0.25, tilt: [0.06, 0.01], phi: 1.0, over: 1.6, anchor: [0, 1.2], side: L, say: [물리적 사물과]}
+    - {id: devices, shape: devices, parent: null, rest: [0, 1.15, 0], dir: [0, 1, 0], dist: 1.1, order: 2, delay: 0,
+       spin: -0.15, tilt: [0.07, 0.01], phi: 2.0, over: 1.5, anchor: [0, 1.3], side: R,
+       label: 기기, sub: 통신 기능을 가진 장치, say: [기기는, 대규모 기기 연결과]}
+    - {id: comm, shape: comm, parent: null, rest: [0, 1.6, 0], dir: [0, 1, 0], dist: 1.75, order: 1, delay: 0.04,
+       spin: 0.15, tilt: [0.07, 0.01], phi: 3.0, over: 1.5, anchor: [0, 1.15], side: L,
+       label: 사물 간 통신, say: [사물 간 통신과]}
+    - {id: service, shape: service, parent: null, rest: [0, 1.95, 0], dir: [0, 1, 0], dist: 2.4, order: 0, delay: 0,
+       spin: -0.15, tilt: [0.07, 0.01], phi: 4.0, over: 1.5, anchor: [0, 1.0], side: R,
+       label: 서비스 계층, sub: 그 위의 서비스 계층, say: [서비스 계층으로]}
+    - {id: person, shape: person, parent: null, rest: [1.75, 0.6, 0.1], dir: [1, 0.15, 0.3], dist: 1.0, order: 1, delay: 0, leave: 사람의 개입 없이, ghost: true,
+       spin: -0.3, tilt: [0.08, 0.01], phi: 5.0, over: 1.4, anchor: [0.3, 0.2], side: R,
+       label: 사람의 개입 없이, sub: 사물이 상태를 보고하고 제어되는 구조, say: [사람의 개입 없이]}
+    - {id: grid, shape: grid, parent: base, rest: [-0.7, 0, 0.3], dir: [-0.5, 0.4, 1], dist: 1.95, order: 1, delay: 0, leave: 연결밀도,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.5, anchor: [0, 0.4], side: L,
+       label: 연결밀도 1제곱킬로미터당 백만 대, sub: 대규모 기기 연결, say: [연결밀도]}
+    - {id: bar, shape: bar, parent: base, rest: [0.7, 0, 0.3], dir: [0.5, 0.4, 1], dist: 1.95, order: 1, delay: 0, leave: 사용자평면 지연,
+       spin: 0, tilt: [0.1, 0.45], phi: -0.5, over: 1.5, anchor: [0, 0.4], side: R,
+       label: 사용자평면 지연 1밀리초, sub: 무부하 단일 사용자 가정의 무선 구간 값, say: [사용자평면 지연]}
+
+# 12 — 기관 판 갈래 모형(사용자 결정 ㉮): 받침(전파법 제66조) 위의 기관 판이 두 칸(왼쪽 관리 · 오른쪽 진흥)으로 갈라지고, 진흥 칸에서
+# 갈래 기둥 셋이 선다 — 가운데 갈래 위에 기금 상자, 그 위에 빈 화면 판(지원작은 확인 전이라 화면을 비운다 — 대사 그대로), 왼쪽 갈래 위에 촬영 슬레이트
+# (콘텐츠 제작). 1턴 "콘텐츠 제작을" 에서 기금 → 슬레이트 점선(기금을 운용해 제작을 지원), "전파 관리와 진흥이" 에서 두 칸이 같이 강조되고 재조립 때
+# 다시 한 판으로 붙는다(한 기관 안에 함께). 01 의 바닥판(한국방송통신전파진흥원)을 키운 자리다. 카드 둘은 도슨트 턴 둘과 맞아 cards 를 안 쓴다
+12-multimedia:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: base, shape: base, parent: null, rest: [0, 0.25, 0], dir: [0, -1, 0], dist: 0.8, order: 3, delay: 0.04,
+       spin: 0.1, tilt: [0.05, 0.01], phi: 0.5, over: 1.3, anchor: [0, 1.7], side: L,
+       label: 전파법 제66조, sub: 진흥 사업, say: [전파법 제66조가]}
+    - {id: mgmt, shape: mgmt, parent: null, rest: [-0.78, 0.68, 0], dir: [-1, 0.4, 0], dist: 0.45, order: 2, delay: 0.03,
+       spin: 0, tilt: [0.06, 0.01], phi: 1.0, over: 1.4, anchor: [0, 0.8], side: L, say: [전파 관리와 진흥이]}
+    - {id: promo, shape: promo, parent: null, rest: [0.78, 0.68, 0], dir: [1, 0.4, 0], dist: 0.45, order: 2, delay: 0,
+       spin: 0, tilt: [0.06, 0.01], phi: 4.0, over: 1.4, anchor: [0, 0.8], side: R,
+       label: 전파 관리와 진흥, sub: 한 기관 안에 함께, say: [전파 관리와 진흥이]}
+    - {id: branch, shape: branch, parent: promo, rest: [0, 0.15, 0], dir: [0, 1, 0], dist: 0.4, order: 1, delay: 0.04,
+       spin: 0.1, tilt: [0.06, 0.01], phi: 2.0, over: 1.5, anchor: [0.55, 0.12], side: R,
+       label: 진흥 사업의 한 갈래, say: [한 갈래라고]}
+    - {id: fund, shape: fund, parent: branch, rest: [0, 1.12, 0], dir: [0, 1, 0], dist: 0.45, order: 1, delay: 0.08,
+       spin: -0.3, tilt: [0.1, 0.02], phi: 3.0, over: 1.6, anchor: [0, 0.4], side: L,
+       label: 방송통신발전기금 운용, say: [방송통신발전기금, 운용해]}
+    - {id: screen, shape: screen, parent: fund, rest: [0, 0.6, 0], dir: [0, 1, 0], dist: 0.55, order: 0, delay: 0,
+       spin: 0, tilt: [0.08, 0.01], phi: 5.0, over: 1.6, anchor: [0.2, 0.45], side: R,
+       label: 진흥 사업의 결과물, say: [결과물을, 지원작은]}
+    - {id: clapper, shape: clapper, parent: branch, rest: [-0.45, 0.66, 0.1], dir: [-0.5, 1, 0.3], dist: 0.6, order: 1, delay: 0.1,
+       spin: 0.3, tilt: [0.12, 0.02], phi: 0.8, over: 1.7, anchor: [0, 0.25], side: L,
+       label: 콘텐츠 제작 지원, say: [콘텐츠 제작을]}
+  links:
+    # 기금 → 슬레이트 — "방송통신발전기금을 운용해 콘텐츠 제작을 지원하는 구조"
+    - {from: fund, from_at: [-0.3, 0.1, 0.1], to: clapper, to_at: [0.1, 0.1, 0], say: 콘텐츠 제작을}
+
+# 13 — 합성 세 겹(사용자 결정 ㉮): 합성 화면 틀 안에 눌려 있던 세 겹 — 전경(사람 오린 판) · 키 막(바둑판 = 투명하게 처리된 자리) · 배경 판 —
+# 이 촬영 축을 따라 벌어진다(배경은 뒤·위로, 전경은 앞으로 — 계단처럼 위로 엇갈려 겹이 다 보인다. 처음엔 옆으로도 벌렸더니 가로 맞춤에 걸려 판이 작았다). 1턴에 배경 판 뒤에 겹쳐 있던 두 판
+# (날씨 지도 · 영화 장면 — 이름 없는 일반 무늬)이 제 낱말에 위로 빠진다(배경을 바꿔 끼운다). 촬영 카메라는 오른쪽 앞(모양만, 라벨 없음).
+# 키 색은 팔레트에 없는 초록을 쓰지 않고 '투명' 의 관용 표시(바둑판)로 그린다 — 강조색(파랑)과도 겹치지 않는다. 카드 둘 = 턴 둘
+13-chromakey:
+  view: {az: [0.22, 0.42], el: 0.26, yaw0: -1.4}
+  parts:
+    - {id: stand, shape: stand, parent: null, rest: [0, 0.1, 0], dir: [0, -1, 0], dist: 0.6, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.05, 0], phi: 0.5, over: 1.3, anchor: [0, 1.5], side: L}
+    - {id: frame, shape: frame, parent: null, rest: [0, 1.2, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [-0.75, 1.25], side: L,
+       label: 배경 교체가 자유롭다, sub: 촬영이 끝난 뒤에도 장면을 바꿀 수 있다, say: [바꿔 끼우기가, 배경 교체가]}
+    - {id: key, shape: key, parent: null, rest: [0, 1.2, -0.03], dir: [0.2, 0.45, -1], dist: 0.85, order: 1, delay: 0.03,
+       spin: 0, tilt: [0.06, 0], phi: 1.5, over: 1.5, anchor: [0.4, 1.1], side: R,
+       label: 색상 키잉, sub: 특정 색 영역을 투명하게 처리, say: [색상 키잉으로]}
+    - {id: bg, shape: bg, parent: null, rest: [0, 1.2, -0.07], dir: [0.2, 0.55, -1], dist: 1.6, order: 0, delay: 0,
+       spin: 0, tilt: [0.06, 0], phi: 3.0, over: 1.4, anchor: [0.45, 1.1], side: R,
+       label: 다른 영상을 합성, say: [다른 영상을]}
+    - {id: bg2, shape: bg2, parent: bg, rest: [0, 0, -0.05], dir: [-0.95, 1, -0.15], dist: 1.75, order: 1, delay: 0, leave: 방송 날씨예보와,
+       spin: 0, tilt: [0.08, 0], phi: 4.0, over: 1.4, anchor: [0.4, 1.0], side: L,
+       label: 방송 날씨예보, say: [방송 날씨예보와]}
+    - {id: bg3, shape: bg3, parent: bg, rest: [0, 0, -0.1], dir: [0.95, 1, -0.15], dist: 1.75, order: 1, delay: 0, leave: 영화 시각효과에서,
+       spin: 0, tilt: [0.08, 0], phi: 5.0, over: 1.4, anchor: [0.4, 1.0], side: R,
+       label: 영화 시각효과, say: [영화 시각효과에서]}
+    - {id: fg, shape: fg, parent: null, rest: [0, 1.05, 0.04], dir: [-0.35, -0.1, 1], dist: 1.1, order: 1, delay: 0,
+       spin: 0, tilt: [0.06, 0], phi: 0.5, over: 1.5, anchor: [0.2, 0.3], side: L,
+       label: 전경과 배경을 따로 촬영, say: [전경과 배경을]}
+    - {id: camera, shape: camera, parent: null, rest: [1.3, 0.95, 1.3], dir: [0.6, 0, 0.6], dist: 0.4, order: 2, delay: 0.05,
+       spin: 0, tilt: [0.06, 0.01], phi: 2.0, over: 1.5, anchor: [0, 0.3], side: R, say: [전경과 배경을]}
+
+# 15 — 기지국 한 기와 둘레: 둥근 받침(전파법 제47조의2 제1항) 위 기지국 돛대(움직이지 않는 기준 — 보고대상 무선국) · 둘레 울타리(제2항 안전시설) ·
+# 돛대를 감싼 등급 고리 넷. 고리는 받침 위에 겹쳐 있다가 "등급 경계는" 에서 오르는데, **안쪽일수록 높이** 오른다(경고 → 주의 → 2등급 → 1등급):
+# 전자파 세기는 발생원에서 가장 크고 멀어질수록 빠르게 준다(조사 자료 A — WHO, 받아치기 대사도 이 말이다) — 고리 높이가 세기의 계단이다.
+# 울타리는 주의·경고 고리(일반인 기준 초과)를 둘러싼 반지름 0.91 — "기준을 넘는 장소에 출입을 막는" 자리 그대로다. 2턴의 판 둘(두 칸짜리)은 받침 속에서
+# 바깥·위로 빠진다 — 세계보건기구 정리와 국제암연구소 2B 를 한 판에 나란히(함께 놓고 본다), 2020년 개정과 2019년판을 한 판에 엇갈려(시차).
+# 수치·기종은 그리지 않는다(체험관 측정 장비는 조사 자료 '확인 불가'). 카드 셋 = 턴 셋
+15-emf:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: slab, shape: slab, parent: null, rest: [0, 0.2, 0], dir: [0, -1, 0], dist: 0.6, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.04, 0], phi: 0.5, over: 1.3, anchor: [0, 1.6], side: L,
+       label: 전파법 제47조의2 제1항, sub: 인체보호기준 · 등급기준 · 측정기준, say: [제47조의2 제1항이]}
+    - {id: mast, shape: mast, parent: null, rest: [0, 2.4, 0], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [1.6, 0.3], side: R,
+       label: 보고대상 무선국, sub: 표시 대상, say: [보고대상 무선국이고요]}
+    - {id: fence, shape: fence, parent: slab, rest: [0, 0.45, 0], dir: [0, 1, 0], dist: 0.15, order: 1, delay: 0,
+       spin: 0, tilt: [0.03, 0], phi: 2.0, over: 1.4, anchor: [0.1, 0.91], side: L,
+       label: 제2항 · 안전시설, sub: 기준을 넘는 장소에 출입을 막는, say: [안전시설을]}
+    - {id: ring1, shape: ring1, parent: slab, rest: [0, 0.23, 0], dir: [0, 1, 0], dist: 1.0, order: 2, delay: 0.05, leave: 등급 경계는,
+       spin: 0, tilt: [0.05, 0], phi: 1.3, over: 1.4, anchor: [0, 1.45], side: L,
+       label: 1등급, sub: 일반인 기준의 50% 이하, say: [1등급이]}
+    - {id: ring2, shape: ring2, parent: slab, rest: [0, 0.23, 0], dir: [0, 1, 0], dist: 1.7, order: 2, delay: 0.10, leave: 등급 경계는,
+       spin: 0, tilt: [0.05, 0], phi: 2.6, over: 1.4, anchor: [0, 1.12], side: R,
+       label: 2등급, sub: 50% 초과~일반인 기준 이하, say: [2등급이]}
+    - {id: ring3, shape: ring3, parent: slab, rest: [0, 0.23, 0], dir: [0, 1, 0], dist: 2.4, order: 2, delay: 0.15, leave: 등급 경계는,
+       spin: 0, tilt: [0.05, 0], phi: 3.9, over: 1.4, anchor: [0, 0.74], side: L,
+       label: 주의등급, sub: 일반인 기준 초과~직업인 기준 이하, say: [주의등급이]}
+    - {id: ring4, shape: ring4, parent: slab, rest: [0, 0.23, 0], dir: [0, 1, 0], dist: 3.1, order: 2, delay: 0.20, leave: 등급 경계는,
+       spin: 0, tilt: [0.05, 0], phi: 5.2, over: 1.4, anchor: [0, 0.4], side: R,
+       label: 경고등급, sub: 직업인 기준 초과, say: [경고등급이]}
+    - {id: who, shape: who, parent: slab, rest: [0, 0.07, 0.8], dir: [-0.25, 0.85, 0.5], dist: 2.3, order: 1, delay: 0, leave: 세계보건기구의,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.4], side: L,
+       label: 세계보건기구의 정리 · 국제암연구소 2B 분류, sub: 함께 놓고 봐야, say: [세계보건기구의, 2B 분류를]}
+    - {id: guide, shape: guide, parent: slab, rest: [0, -0.07, 0.8], dir: [0.9, 0.85, 0.1], dist: 2.3, order: 1, delay: 0, leave: 2020년에,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.4], side: R,
+       label: 국제 가이드라인 2020년 · 국내 고시 2019년판, sub: 그 시차를 단정하지 않는다, say: [2020년에, 2019년판이라]}
+
+# 16 — 무선국 한 곳을 검사 항목으로(사용자 결정 ㉮). 무선국 = 무선설비 + 그것을 조작하는 사람(전파법 정의, 조사 자료 A) — 무선설비 함(움직이지 않는
+# 기준, 위에 안테나) = 기술기준·제45조, 운용자 자리(책상·의자·헤드셋) = 무선종사자 자격·정원 배치기준·제71조, 앞의 검사증명서 판 = 제25조 제1항
+# (준공검사를 받은 뒤에 운용). 받침(제24조) 속에 다섯이 숨어 있다가 제 낱말에 빠진다: 1턴 달력 고리(5년 범위의 정기검사 — 다섯 마디) · 배·비행기
+# 작은 모형(외국 출항 수시검사), 2턴 판 둘(위임 · 위탁 — 검사 주체가 둘로 갈린다)과 명판(1981년 수탁 · 2011년부터 지금 이름). 2턴 판들은 받침 앞 띠
+# (무선국 부품이 없는 자리)에 숨어 있다가 위·바깥으로 오른다 — 위임·위탁 판은 무선국보다 높은 줄로(낮으면 1턴의 달력 고리·운용자 자리와 겹쳤다),
+# 명판은 무선국 앞 가운데로. 처음엔 앞으로 내보냈더니 받침 앞에 낮게 내려앉아 서로 겹쳤다. 검사 장비 기종은 그리지 않는다(조사 자료 '확인 불가'). 카드 셋 = 턴 셋
+16-inspection:
+  view: {az: [0.40, 0.60], el: 0.30, yaw0: -1.4}
+  parts:
+    - {id: base, shape: base, parent: null, rest: [0, 0.3, 0], dir: [0, -1, 0], dist: 0.6, order: 3, delay: 0.04,
+       spin: 0, tilt: [0.04, 0], phi: 0.5, over: 1.3, anchor: [0, 1.7], side: L,
+       label: 전파법 제24조, sub: 준공검사, say: [전파법 제24조예요]}
+    - {id: equip, shape: equip, parent: null, rest: [0, 1.25, -0.4], dir: [0, 1, 0], dist: 0, order: 3, delay: 0,
+       spin: 0, tilt: [0, 0], phi: 0, over: 1.5, anchor: [0, 0.55], side: L,
+       label: 기술기준 · 제45조, say: [기술기준과, 제45조]}
+    - {id: operator, shape: operator, parent: null, rest: [0.75, 0.95, 0.15], dir: [0.4, 1, 0.2], dist: 0.9, order: 1, delay: 0.03,
+       spin: -0.2, tilt: [0.1, 0.02], phi: 3.0, over: 1.5, anchor: [0.2, 0.45], side: R,
+       label: 무선종사자 자격 · 제71조, sub: 정원 배치기준, say: [무선종사자 자격, 제71조]}
+    - {id: cert, shape: cert, parent: null, rest: [-0.85, 0.85, 0.2], dir: [-0.5, 0.6, 0.6], dist: 0.8, order: 1, delay: 0,
+       spin: 0, tilt: [0.08, 0.01], phi: 1.0, over: 1.5, anchor: [0, 0.3], side: L,
+       label: 제25조 제1항, sub: 준공검사를 받은 뒤에 운용, say: [제25조 제1항이]}
+    - {id: cal, shape: cal, parent: base, rest: [-0.95, 0, -0.45], dir: [-0.4, 1, 0.2], dist: 2.1, order: 1, delay: 0, leave: 5년 범위의,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.35], side: L,
+       label: 제24조 제4항 · 정기검사, sub: 5년 범위, say: [5년 범위의]}
+    - {id: trip, shape: trip, parent: base, rest: [0.95, 0, -0.55], dir: [0.4, 1, -0.1], dist: 2.1, order: 1, delay: 0, leave: 선박과 항공기의,
+       spin: 0.3, tilt: [0.1, 0.02], phi: 4.0, over: 1.4, anchor: [0, 0.35], side: R,
+       label: 제5항 · 수시검사, sub: 선박과 항공기의 외국 출항, say: [선박과 항공기의]}
+    - {id: deleg, shape: deleg, parent: base, rest: [-0.85, 0, 0.72], dir: [-0.45, 1, 0.25], dist: 3.4, order: 1, delay: 0, leave: 중앙전파관리소장에게,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.35], side: L,
+       label: 중앙전파관리소장에게 위임, say: [중앙전파관리소장에게]}
+    - {id: entrust, shape: entrust, parent: base, rest: [0.85, 0, 0.72], dir: [0.45, 1, 0.25], dist: 3.4, order: 1, delay: 0, leave: 한국방송통신전파진흥원에,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.35], side: R,
+       label: 한국방송통신전파진흥원에 위탁, sub: 고시된 무선국의 준공검사, say: [한국방송통신전파진흥원에]}
+    - {id: plaque, shape: plaque, parent: base, rest: [0, 0, 0.75], dir: [0, 1, 0.6], dist: 2.3, order: 1, delay: 0, leave: 1981년 5월 18일인데,
+       spin: 0, tilt: [0.1, 0.95], phi: -0.5, over: 1.4, anchor: [0, 0.3], side: L,
+       label: 1981년 5월 18일 수탁, sub: 당시 한국무선종사자협회 · 지금 이름은 2011년부터, say: [1981년 5월 18일인데]}
 
 # 14 — 세대별 단말 다섯 대가 계단 받침(라벨 없음)에서 떠오른다. 위 세대일수록 높은 계단·긴 거리 → 떠오른 뒤에도 계단 모양이 남아
 # 왼쪽 설명선들의 지시선이 아래 단말 위로 지나간다(기준점은 단말 위쪽). 20배의 근거인 두 막대(높이 1.4 : 0.07 = 20:1, 대사의 수 그대로 — 1.6 으로 했더니 계단 위로 5cm 삐져나와 미리 보였다)는

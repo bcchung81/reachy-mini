@@ -263,6 +263,581 @@
     }
   };
 
+  // ── 05 기증자 — 아마추어 무선국 한 벌(받침 · 책상 · 송수신기 · 전건 · 안테나 돛대) + 1턴에 떨어지는 셋(진료 가방 · QST 잡지 판 · 기증 상자)
+  // 기기는 일반형이다(HM4DF 무선국의 실제 장비는 조사 자료에 없다 — 기종을 지어 그리지 않는다). 송수신기·돛대·책상은 10(아마추어 무선)이 다시 쓴다
+  function hamDesk(K, M) {                  // 책상 — 상판 2.6 × 0.12 × 1.4(원점 = 상판 가운데), 다리 넷(0.9), 앞 가림판
+    var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.6, .12, 1.4, .04), M.slate));
+    [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(function (s) { var l = K.mesh(K.rbox(.1, .9, .1, .03), M.ink); l.position.set(1.18 * s[0], -.51, .6 * s[1]); g.add(l); });
+    var pan = K.mesh(K.rbox(2.3, .45, .04, .02), M.muted); pan.position.set(0, -.32, .6); g.add(pan);
+    return g;
+  }
+  function hamRig(K, M) {                   // 송수신기 1.2 × 0.55 × 0.75 — 앞판 · 큰 다이얼(점등) · 계기 창 · 손잡이 셋 · 옆 손잡이 둘
+    var g = new THREE.Group(); g.userData.lamp = true;
+    g.add(K.mesh(K.rbox(1.2, .55, .75, .05), M.slate));
+    var face = K.mesh(K.rbox(1.1, .45, .03, .02), M.ink); face.position.set(0, 0, .38); g.add(face);
+    var dial = K.mesh(K.cyl(.14, .14, .05, 32), M.lamp); dial.rotation.x = Math.PI / 2; dial.position.set(-.25, .02, .41); g.add(dial);
+    var meter = K.mesh(K.rbox(.3, .16, .02, .01), M.mist, false); meter.position.set(.25, .1, .405); g.add(meter);
+    [.12, .25, .38].forEach(function (x) { var k = K.mesh(K.cyl(.035, .035, .05, 12), M.steel, false); k.rotation.x = Math.PI / 2; k.position.set(x, -.12, .41); g.add(k); });
+    [-1, 1].forEach(function (s) { var h = K.mesh(K.rbox(.04, .3, .04, .015), M.steel); h.position.set(.62 * s, 0, .3); g.add(h); });
+    return g;
+  }
+  function hamMast(K, M) {                  // 안테나 돛대 — 높이 3.4, 위 가로 붐과 소자 셋(야기 모양). 끝에서 전파 고리
+    var g = new THREE.Group();
+    g.add(K.mesh(K.lathe([[0, -1.7], [.12, -1.7, .02], [.06, -1.55], [.045, 1.6], [0, 1.6]], 16), M.steel));
+    var boom = K.mesh(K.rbox(1.4, .05, .05, .015), M.steel); boom.position.y = 1.55; g.add(boom);
+    [-.55, 0, .55].forEach(function (x, i) { var e = K.mesh(K.cyl(.018, .018, 1.1 - i * .15, 8), M.ink); e.rotation.x = Math.PI / 2; e.position.set(x, 1.55, 0); g.add(e); });
+    g.userData.emit = new THREE.Vector3(0, 1.6, 0);
+    return g;
+  }
+  function hamStage(K, M) {                 // 받침 3.8 × 0.7 × 2.0 — 닫힌 상자(떨어져 나갈 부품이 속에 숨는다), 앞 띠
+    var g = new THREE.Group(); g.add(K.mesh(K.rbox(3.8, .7, 2.0, .06), M.porcelain));
+    var strip = K.mesh(K.rbox(3.6, .06, .03, .01), M.rule, false); strip.position.set(0, .15, 1.01); g.add(strip);
+    return g;
+  }
+  SHAPES['05-donor'] = {
+    stage: hamStage,
+    desk: hamDesk,
+    rig: hamRig,
+    key: function (K, M) { var g = SHAPES['02-history'].key(K, M); g.scale.setScalar(.75); return g; },   // 02 의 전건 모양을 0.75 배로
+    mast: hamMast,
+    bag: function (K, M) {                  // 진료 가방 — 둥근 몸통 0.7 × 0.42 × 0.36, 여밈 띠, 반원 손잡이
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.7, .42, .36, .1), M.ink));
+      var band = K.mesh(K.rbox(.72, .04, .38, .01), M.steel, false); band.position.y = .12; g.add(band);
+      var h = K.mesh(new THREE.TorusGeometry(.13, .025, 8, 24, Math.PI), M.slate); h.position.y = .21; g.add(h);
+      return g;
+    },
+    qst: function (K, M) {                  // 잡지 — 0.55 × 0.03 × 0.75 판, 위 표지 띠와 본문 줄(글자 없음)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.55, .03, .75, .01), M.porcelain));
+      var band = K.mesh(K.rbox(.5, .012, .18, .004), M.ink, false); band.position.set(0, .02, -.25); g.add(band);
+      for (var i = 0; i < 4; i++) { var l = K.mesh(K.rbox(.42, .008, .03, .003), M.muted, false); l.position.set(0, .02, -.02 + i * .1); g.add(l); }
+      return g;
+    },
+    crate: function (K, M) {                // 기증 상자 0.7 × 0.5 × 0.6(받침 높이 0.7 안에 숨는다) — 널판 띠 둘
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.7, .5, .6, .03), M.rule));
+      [-.12, .12].forEach(function (y) { var s = K.mesh(K.rbox(.72, .05, .62, .01), M.muted, false); s.position.y = y; g.add(s); });
+      return g;
+    }
+  };
+
+  // ── 06 주파수 대역별 기증품 — ITU 대역 표를 쌓은 탑(받침 = V.431-8 표 · 축 · 접힌 주파수 막대 · 대역 4~11 여덟 층 · 이름 칸 둘)
+  // 층 k(0 = 대역 4 VLF … 7 = 대역 11 EHF): 반지름 R(k) 가 위로 곧게 준다 — 높이가 로그 주파수, 반지름이 로그 파장이면 반비례(λ = c/f)는
+  // 곧은 기울기다. 크기: 처음엔 맨 아래 2.3·받침 2.75 로 지었더니 둥근 받침의 경계 상자 대각선이 가로 맞춤을 정해 탑이 화면 가운데 열의
+  // 3분의 2 폭으로 작아졌다 — 맨 아래 2.0·받침 2.3 으로 줄이고 그만큼 세로로 벌린다(tables.yaml 의 간격).
+  // 테두리 물결은 둘레에 3(k+1) 주기 — 위로 갈수록 반지름은 줄고 주기는 늘어 물결 한 마루의 길이가 약 22배 짧아진다
+  // (실제는 대역마다 10배 — 그림은 '위로 갈수록 짧다' 만 말하고 비율은 말하지 않는다). 이름 칸은 각 AL(주파수 기준 열, 어두운 칸)·AR(파장 기준
+  // 열, 은색 칸)에 — 카메라 방위 0.4~0.6 에서 AL 은 화면 왼쪽 앞, AR 은 오른쪽 앞이다(오른쪽 = (cos az, 0, −sin az) 와 내적으로 정했다).
+  // 맨 아래 층의 왼쪽 칸과 맨 위 층의 오른쪽 칸은 따로 빠지는 부품(ftab·wtab)이라 그 층 모양에서는 뺀다. 글자는 없다
+  var B06 = { R: function (k) { return 2.0 - .18 * k; }, AL: 2.15, AR: -.03, TAB: [.46, .16, .26] };
+  function bandTab(K, M, mat, a) {           // 이름 칸 하나 — 긴 변이 반지름 방향(각 a)을 향한다(rotation.y = −a 면 자기 x 축이 (cos a, 0, sin a))
+    // 칸 끝 손잡이 테(둥근 상자)는 뺐다 — 칸 열넷에 하나씩이면 삼각형만 8천 개 늘고 화면에서는 거의 안 보였다(아래 물결 관 주석의 프레임 시간)
+    var g = new THREE.Group(), t = K.mesh(K.rbox(B06.TAB[0], B06.TAB[1], B06.TAB[2], .04), mat); t.rotation.y = -a; g.add(t);
+    return g;
+  }
+  function bandTier(k) {
+    return function (K, M) {
+      var g = new THREE.Group(), r = B06.R(k), n = 3 * (k + 1); g.userData.lamp = true;
+      g.add(K.mesh(K.lathe([[.2, -.13], [r, -.13, .05], [r, .13, .05], [.2, .13, .03], [.2, -.13]], 48), k % 2 ? M.rule : M.porcelain));
+      // 윗면 장식 고리는 모서리 다듬기 없이(점 넷) — 다듬기 넷이면 이 가는 고리 하나가 삼각형 3.8천 개였다
+      var top = K.mesh(K.lathe([[r * .55, -.012], [r * .72, -.012], [r * .72, .012], [r * .55, .012], [r * .55, -.012]], 48), k % 2 ? M.porcelain : M.rule, false);
+      top.position.y = .135; g.add(top);
+      // 테두리 물결 — 옆면에 붙은 닫힌 사인 관(점등 때 켜진다). 처음 한 주기 24점·마디 2배·둘레 8, 몸통 96분할로 지었더니 06 한 장이 삼각형 11만 개(07 은
+      // 1.6만)라 GPU 없는 PC(SwiftShader)에서 프레임이 다른 큐의 세 배(평균 142 ms)였다 → 한 주기 12점·둘레 5·몸통 48분할. 사인이 꺾여 보이지 않는다(캡처로 확인)
+      var pts = [], N = Math.max(72, 12 * n);
+      for (var i = 0; i < N; i++) { var a = i / N * Math.PI * 2; pts.push(new THREE.Vector3((r + .012) * Math.cos(a), .065 * Math.sin(n * a), (r + .012) * Math.sin(a))); }
+      g.add(K.mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), N, .026, 5, true), M.lamp, false));
+      if (k > 0) { var L = bandTab(K, M, M.ink, B06.AL); L.position.set((r + .18) * Math.cos(B06.AL), 0, (r + .18) * Math.sin(B06.AL)); g.add(L); }
+      if (k < 7) { var Rt = bandTab(K, M, M.steel, B06.AR); Rt.position.set((r + .18) * Math.cos(B06.AR), 0, (r + .18) * Math.sin(B06.AR)); g.add(Rt); }
+      return g;
+    };
+  }
+  SHAPES['06-bands'] = {
+    base: function (K, M) {                 // 받침 — 지름 4.6, 높이 0.4. 윗면에 표 무늬(여덟 줄 × 세 칸: 대역번호 · 주파수 기준 · 파장 기준) — 글자 없음
+      var g = new THREE.Group();
+      g.add(K.mesh(K.lathe([[0, -.2], [2.3, -.2, .06], [2.3, .2, .05], [0, .2]], 64), M.slate));
+      var sheet = K.mesh(K.rbox(2.4, .03, 1.7, .01), M.porcelain, false); sheet.position.y = .215; g.add(sheet);
+      for (var i = 0; i <= 8; i++) { var row = K.mesh(K.rbox(2.3, .012, .014, .004), M.muted, false); row.position.set(0, .235, -.8 + i * .2); g.add(row); }
+      [-1.15, -.6, .3, 1.15].forEach(function (x) { var col = K.mesh(K.rbox(.014, .012, 1.6, .004), M.muted, false); col.position.set(x, .235, 0); g.add(col); });
+      return g;
+    },
+    axis: function (K, M) {                 // 축 — 높이 2.55, 반지름 0.1(속이 빈 관이라 주파수 막대가 접혀 들어간다). 아래 깃
+      var g = new THREE.Group();
+      g.add(K.mesh(new THREE.CylinderGeometry(.1, .1, 2.55, 32, 1, true), M.steel));
+      var collar = K.mesh(K.lathe([[.1, -.06], [.2, -.06, .02], [.2, .06, .02], [.1, .06, .02], [.1, -.06]], 32), M.steel); collar.position.y = -1.2; g.add(collar);
+      var rim = K.mesh(new THREE.TorusGeometry(.1, .018, 8, 32), M.ink); rim.rotation.x = Math.PI / 2; rim.position.y = 1.275; g.add(rim);
+      return g;
+    },
+    mast: function (K, M) {                 // 주파수 막대 아래 마디 — 높이 2.4, 반지름 0.075(속이 빈 관 — 위 마디가 접혀 들어간다). 위 끝 테
+      var g = new THREE.Group();
+      g.add(K.mesh(new THREE.CylinderGeometry(.075, .075, 2.4, 24, 1, true), M.steel));
+      var t = K.mesh(new THREE.TorusGeometry(.075, .015, 8, 24), M.ink); t.rotation.x = Math.PI / 2; t.position.y = 1.2; g.add(t);
+      return g;
+    },
+    mast2: function (K, M) {                // 위 마디 — 높이 2.3, 반지름 0.05. 끝 구슬(점등 · 전파 고리). 접혔을 때 구슬이 축 윗면에 맞닿아 축의 마개로 보인다
+      var g = new THREE.Group(); g.userData.lamp = true;
+      g.add(K.mesh(K.cyl(.05, .05, 2.3, 20), M.steel));
+      var tip = K.mesh(K.ball(.085), M.lamp); tip.position.y = 1.19; g.add(tip);
+      g.userData.emit = new THREE.Vector3(0, 1.21, 0);
+      return g;
+    },
+    b4: bandTier(0),
+    b5: bandTier(1),
+    b6: bandTier(2),
+    b7: bandTier(3),
+    b8: bandTier(4),
+    b9: bandTier(5),
+    b10: bandTier(6),
+    b11: bandTier(7),
+    ftab: function (K, M) { return bandTab(K, M, M.ink, B06.AL); },      // 맨 아래 층(VLF)의 주파수 기준 칸 — 초장파
+    wtab: function (K, M) { return bandTab(K, M, M.steel, B06.AR); }     // 맨 위 층(EHF)의 파장 기준 칸 — 밀리미터파
+  };
+
+  // ── 08 항공무선통신 — 항공기 앞 동체 한 토막(받침 · 아래 껍데기(바닥·계기판) · 위 껍데기(앞유리·안테나 자리) · 좌석 · 요크 · 페달 ·
+  // 무선전화 송수신기 두 대 · 트랜스폰더 · 비상위치지시용 무선표지설비 · 위 날개 안테나). 기종은 그리지 않는다(조사 자료 '확인 불가' — 일반형 동체).
+  // 동체 축은 x(뱃머리 +x). 반원통은 CylinderGeometry 를 z 축으로 90° 돌려 눕힌다 — 돌린 뒤 y = r·sinθ 라 아래 반은 θ π~2π, 위 반은 0~π.
+  // 껍데기는 속이 보여야 해서 양면(DoubleSide) — 이 부품만의 재질이라 다른 부품에 번지지 않는다. 껍데기 색은 rule(옅은 청회색) — 처음 porcelain(흰색)으로
+  // 칠했더니 밝은 바탕에 묻혀 위 껍데기가 떠오른 뒤 어디 있는지 안 보였다. 받침도 4.6 → 3.6, 객실 3.2 → 2.8(동체 길이가 가로 맞춤을 정한다)
+  var F08 = { R: .9, L: 2.8, X0: -1.5, NOSE: 1.33 };
+  function shellHalf(K, mat, lower) {        // 객실 반원통 + 앞 코 반구(길이 1.2 — x 를 1.33 배)
+    var g = new THREE.Group(), cx = F08.X0 + F08.L / 2;
+    var c = new THREE.CylinderGeometry(F08.R, F08.R, F08.L, 48, 1, true, lower ? Math.PI : 0, Math.PI); c.rotateZ(Math.PI / 2); c.translate(cx, 0, 0);
+    g.add(K.mesh(c, mat));
+    var n = new THREE.SphereGeometry(F08.R, 40, 12, Math.PI / 2, Math.PI, lower ? Math.PI / 2 : 0, Math.PI / 2); n.scale(F08.NOSE, 1, 1); n.translate(F08.X0 + F08.L, 0, 0);
+    g.add(K.mesh(n, mat));
+    return g;
+  }
+  SHAPES['08-aviation'] = {
+    slab: function (K, M) {                 // 받침판 3.6 × 0.25 × 2.0 + 동체를 받치는 안장 둘
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(3.6, .25, 2.0, .05), M.porcelain));
+      [-.9, .9].forEach(function (x) { var s = K.mesh(K.rbox(.3, .5, 1.1, .04), M.rule); s.position.set(x, .37, 0); g.add(s); });
+      return g;
+    },
+    belly: function (K, M) {                // 아래 껍데기 — 바닥판 · 계기판(화면 둘은 점등) · 배 아래 작은 안테나
+      var g = new THREE.Group(); g.userData.lamp = true; M.rule.side = THREE.DoubleSide;
+      g.add(shellHalf(K, M.rule, true));
+      var floor = K.mesh(K.rbox(2.6, .06, 1.6, .02), M.porcelain); floor.position.set(-.1, -.3, 0); g.add(floor);
+      var panel = K.mesh(K.rbox(.08, .45, 1.3, .03), M.slate); panel.position.set(1.22, -.02, 0); g.add(panel);
+      [-.3, .3].forEach(function (z) { var s = K.mesh(K.rbox(.02, .2, .38, .01), M.lamp, false); s.position.set(1.17, .03, z); g.add(s); });
+      var fin = K.mesh(K.rbox(.3, .14, .03, .015), M.ink); fin.position.set(.2, -.96, 0); g.add(fin);
+      return g;
+    },
+    roof: function (K, M) {                 // 위 껍데기 — 앞유리 띠(유리) · 뒤쪽 짧은 막대 안테나
+      var g = new THREE.Group(); M.rule.side = THREE.DoubleSide;
+      g.add(shellHalf(K, M.rule, false));
+      var w = new THREE.SphereGeometry(F08.R * 1.012, 32, 8, Math.PI - .9, 1.8, .5, .75); w.scale(F08.NOSE, 1, 1); w.translate(F08.X0 + F08.L, 0, 0);
+      g.add(K.mesh(w, M.glass, false));
+      var whip = K.mesh(K.cyl(.015, .02, .4, 8), M.ink); whip.position.set(-1.2, 1.08, 0); whip.rotation.z = .35; g.add(whip);
+      return g;
+    },
+    blade: function (K, M) {                // 위 날개 안테나(공대지 음성) — 뒤로 젖힌 얇은 날개 + 받침판
+      var g = new THREE.Group(), s = new THREE.Shape();
+      s.moveTo(-.2, 0); s.lineTo(.2, 0); s.lineTo(-.05, .45); s.lineTo(-.22, .45); s.lineTo(-.2, 0);
+      var geo = new THREE.ExtrudeGeometry(s, { depth: .04, bevelEnabled: true, bevelThickness: .01, bevelSize: .01, bevelSegments: 1 }); geo.translate(0, 0, -.02);
+      g.add(K.mesh(geo, M.ink));
+      var foot = K.mesh(K.rbox(.46, .03, .12, .01), M.steel); g.add(foot);
+      g.userData.emit = new THREE.Vector3(-.13, .47, 0);
+      return g;
+    },
+    seat: function (K, M) {                 // 좌석 — 방석 · 등받이 · 기둥
+      var g = new THREE.Group();
+      g.add(K.mesh(K.rbox(.5, .1, .5, .04), M.slate));
+      var back = K.mesh(K.rbox(.1, .6, .5, .04), M.slate); back.position.set(-.25, .3, 0); back.rotation.z = .15; g.add(back);
+      var post = K.mesh(K.cyl(.04, .06, .3, 12), M.steel); post.position.y = -.2; g.add(post);
+      return g;
+    },
+    yoke: function (K, M) {                 // 요크 — 기둥(0.5) 위 가로 손잡이(z 로 0.5)와 양 끝 세운 손잡이
+      var g = new THREE.Group();
+      g.add(K.mesh(K.rbox(.06, .5, .06, .02), M.steel));
+      var bar = K.mesh(K.rbox(.06, .06, .5, .02), M.ink); bar.position.y = .27; g.add(bar);
+      [-1, 1].forEach(function (s) { var h = K.mesh(K.rbox(.07, .18, .07, .03), M.ink); h.position.set(0, .33, .25 * s); g.add(h); });
+      return g;
+    },
+    pedals: function (K, M) {               // 페달 둘 — 가로 막대에 기울여 단 판
+      var g = new THREE.Group();
+      g.add(K.mesh(K.rbox(.05, .05, .6, .02), M.steel));
+      [-1, 1].forEach(function (s) { var p = K.mesh(K.rbox(.05, .28, .16, .02), M.ink); p.position.set(.04, .1, .2 * s); p.rotation.z = -.35; g.add(p); });
+      return g;
+    },
+    radios: function (K, M) {               // 무선전화 송수신기 두 대 — 위아래로 쌓은 두 상자(앞판 +z), 각자 다이얼
+      var g = new THREE.Group();
+      [0, .22].forEach(function (y) { var b = K.mesh(K.rbox(.6, .18, .42, .03), M.slate); b.position.y = y; g.add(b);
+        var f = K.mesh(K.rbox(.5, .12, .02, .01), M.ink, false); f.position.set(0, y, .215); g.add(f);
+        var d = K.mesh(K.cyl(.045, .045, .03, 16), M.steel, false); d.rotation.x = Math.PI / 2; d.position.set(.17, y, .23); g.add(d); });
+      return g;
+    },
+    xpdr: function (K, M) {                 // 트랜스폰더 — 납작한 상자, 숫자 창 하나
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.5, .12, .36, .03), M.slate));
+      var win = K.mesh(K.rbox(.3, .05, .02, .01), M.mist, false); win.position.set(-.05, 0, .185); g.add(win);
+      return g;
+    },
+    elt: function (K, M) {                  // 비상위치지시용 무선표지설비 — 상자 · 손잡이 · 짧은 막대 안테나(점등 뒤 전파 고리)
+      var g = new THREE.Group(); g.userData.lamp = true;
+      g.add(K.mesh(K.rbox(.42, .26, .26, .04), M.porcelain));
+      var band = K.mesh(K.rbox(.44, .06, .28, .01), M.lamp, false); band.position.y = .05; g.add(band);
+      var ant = K.mesh(K.cyl(.012, .012, .35, 8), M.ink); ant.position.set(.12, .3, 0); g.add(ant);
+      g.userData.emit = new THREE.Vector3(.12, .48, 0);
+      return g;
+    }
+  };
+
+  // ── 09 특별교류전시 — 진열장 한 대: 상자(바닥·뒤판)는 남고 속이 바뀐다(받침 · 진열장 · 유리 덮개 · 소장 받침대 · 대여 받침대 · 빈 명판 틀).
+  // 속 물건은 이름 없는 덩어리(상자 하나 · 둥근 병 하나)다 — 지금 놓인 전시품 목록은 조사 자료 '확인 불가' 라 어떤 물건인지 그리지 않는다
+  SHAPES['09-special-exhibit'] = {
+    plinth: function (K, M) {               // 받침 2.6 × 1.0 × 1.6, 앞 띠
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.6, 1.0, 1.6, .06), M.porcelain));
+      var strip = K.mesh(K.rbox(2.4, .06, .03, .01), M.rule, false); strip.position.set(0, .3, .81); g.add(strip);
+      return g;
+    },
+    case: function (K, M) {                 // 진열장 — 바닥판 2.4 × 0.08 × 1.4 와 뒤판(높이 1.3). 움직이지 않는 기준(상설 — 상자는 남는다)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.4, .08, 1.4, .03), M.slate));
+      var back = K.mesh(K.rbox(2.4, 1.3, .06, .03), M.rule); back.position.set(0, .69, -.67); g.add(back);
+      var rail = K.mesh(K.rbox(2.2, .04, .04, .01), M.steel, false); rail.position.set(0, 1.0, -.62); g.add(rail);
+      return g;
+    },
+    glass: function (K, M) {                // 유리 덮개 — 2.4 × 1.4 × 1.4 유리 상자와 쇠 모서리 열둘(모서리만 외곽선을 받는다)
+      var g = new THREE.Group(), w = 1.2, h = .7, d = .7;
+      g.add(K.mesh(K.rbox(2.36, 1.36, 1.36, .02), M.glass, false));
+      for (var a = -1; a <= 1; a += 2) for (var b = -1; b <= 1; b += 2) {
+        var x = K.mesh(K.rbox(2.4, .04, .04, .01), M.steel); x.position.set(0, a * h, b * d); g.add(x);
+        var y = K.mesh(K.rbox(.04, 1.4, .04, .01), M.steel); y.position.set(a * w, 0, b * d); g.add(y);
+        var z = K.mesh(K.rbox(.04, .04, 1.4, .01), M.steel); z.position.set(a * w, b * h, 0); g.add(z);
+      }
+      return g;
+    },
+    standA: function (K, M) {               // 소장 받침대 — 각진 대 0.6 × 0.45 × 0.6
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.6, .45, .6, .04), M.slate)); return g;
+    },
+    standB: function (K, M) {               // 대여 받침대 — 둥근 대(지름 0.6)
+      var g = new THREE.Group(); g.add(K.mesh(K.cyl(.3, .3, .45, 32), M.muted)); return g;
+    },
+    // 실물 둘 — 받침대와 따로 떼어(자식 부품) "지금 놓인 실물을" 에서 물건만 강조한다. 처음엔 받침대 모양에 붙였더니 그 낱말에 강조할 것이
+    // 빈 유리 덮개뿐이었다(덮개는 실물이 아니다)
+    objA: function (K, M) {                 // 이름 없는 상자
+      var g = new THREE.Group(), o = K.mesh(K.rbox(.34, .3, .26, .05), M.rule); o.rotation.y = .3; g.add(o); return g;   // 흰색이면 강조 때 외곽선만 보였다
+    },
+    objB: function (K, M) {                 // 이름 없는 둥근 병
+      var g = new THREE.Group(); g.add(K.mesh(K.lathe([[0, -.18], [.13, -.18, .04], [.16, .02, .06], [.07, .15, .03], [.08, .2, .01], [0, .2]], 32), M.steel)); return g;
+    },
+    plate: function (K, M) {                // 명판 틀 — 비스듬히 세운 빈 판(글자 없음 — 목록은 시기마다 바뀐다)
+      var g = new THREE.Group(), t = K.mesh(K.rbox(.7, .32, .04, .02), M.porcelain); t.rotation.x = -.35; g.add(t);
+      var f = K.mesh(K.rbox(.74, .36, .03, .02), M.ink, false); f.position.z = -.02; f.rotation.x = -.35; g.add(f);
+      var foot = K.mesh(K.rbox(.4, .04, .16, .01), M.ink); foot.position.set(0, -.17, -.04); g.add(foot);
+      return g;
+    }
+  };
+
+  // ── 10 아마추어 무선 — 05 의 무선국(받침 · 책상 · 송수신기 · 안테나 돛대)을 다시 쓰고, 제도의 부품을 더한다: 출력계 · 자격 판 받침 ·
+  // 자격증 판 넷(네 등급) · 비상 가방(받침 속에 숨어 있다가 오른다). 판의 막대 길이는 카드 그림의 안테나공급전력 상한을 로그로 줄인 것이다
+  // (1kW · 200W · 100W · 10W → 0.13 × log10 W) — 그림도 사실 주장이라 비율을 지어내지 않는다. 글자는 없다
+  var LIC10 = [1000, 200, 100, 10];
+  function licPlate(i) {
+    return function (K, M) {
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.5, .03, .36, .01), i % 2 ? M.rule : M.porcelain));
+      var len = .13 * Math.log10(LIC10[i]), bar = K.mesh(K.rbox(len, .014, .07, .004), M.ink, false); bar.position.set(-.2 + len / 2, .02, .06); g.add(bar);
+      var tag = K.mesh(K.rbox(.08, .014, .08, .004), M.slate, false); tag.position.set(-.16, .02, -.1); g.add(tag);
+      return g;
+    };
+  }
+  SHAPES['10-ham'] = {
+    stage: hamStage,
+    desk: hamDesk,
+    rig: hamRig,
+    mast: hamMast,
+    meter: function (K, M) {                // 출력계 — 상자 0.4 × 0.32 × 0.3, 반달 눈금 창과 바늘
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.4, .32, .3, .03), M.slate));
+      var win = K.mesh(K.cyl(.12, .12, .02, 24, 1, false, -Math.PI / 2, Math.PI), M.mist, false); win.rotation.x = Math.PI / 2; win.position.set(0, -.02, .155); g.add(win);
+      var nd = K.mesh(K.rbox(.012, .1, .01, .003), M.ink, false); nd.position.set(.02, .02, .165); nd.rotation.z = -.5; g.add(nd);
+      return g;
+    },
+    tray: function (K, M) {                 // 자격 판 받침 — 낮은 쟁반 0.62 × 0.06 × 0.46(테두리)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.62, .04, .46, .015), M.slate));
+      [[0, .23, .62, .03], [0, -.23, .62, .03]].forEach(function (r) { var e = K.mesh(K.rbox(r[2], .06, r[3], .01), M.ink, false); e.position.set(r[0], .03, r[1]); g.add(e); });
+      return g;
+    },
+    lic1: licPlate(0),
+    lic2: licPlate(1),
+    lic3: licPlate(2),
+    lic4: licPlate(3),
+    gobag: function (K, M) {                // 비상 가방 0.6 × 0.5 × 0.4(받침 높이 0.7 안에 숨는다) — 덮개 · 옆에 꽂은 휴대 무전기와 짧은 안테나
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.6, .5, .4, .1), M.slate));
+      var flap = K.mesh(K.rbox(.62, .12, .42, .05), M.ink, false); flap.position.y = .2; g.add(flap);
+      var hh = K.mesh(K.rbox(.1, .26, .07, .03), M.muted); hh.position.set(.36, .02, 0); g.add(hh);
+      var ant = K.mesh(K.cyl(.012, .012, .2, 8), M.ink); ant.position.set(.36, .25, 0); g.add(ant);
+      return g;
+    }
+  };
+
+  // ── 11 사물인터넷 — 표준의 층 모형: 받침(Y.4000) · 사물 판(물리적 사물 — 이름 없는 상자·원기둥·공·원뿔) · 가상 사물(같은 모양의 반투명 쌍둥이) ·
+  // 기기 판(작은 상자와 안테나) · 사물 간 통신 판(마디와 잇는 막대) · 서비스 계층 판 · 사람(옆에 서 있다가 "개입 없이" 에서 흐리게 빠진다) +
+  // 받침 속에 숨은 둘(점 격자 판 = 연결밀도 · 짧은 구간 막대 = 지연 1밀리초). 기기 종류는 그리지 않는다(조사 자료 '확인 불가')
+  var OBJ11 = [[-.8, -.35, 'box'], [-.2, .4, 'cyl'], [.45, -.25, 'ball'], [.95, .35, 'cone']];
+  function thing11(K, mat, kind, sc) {
+    var m = kind === 'box' ? K.rbox(.32 * sc, .32 * sc, .32 * sc, .05) : kind === 'cyl' ? K.cyl(.15 * sc, .15 * sc, .34 * sc, 24) :
+      kind === 'ball' ? K.ball(.17 * sc) : K.cyl(.001, .19 * sc, .36 * sc, 24);
+    return K.mesh(m, mat, mat.transparent ? false : true);
+  }
+  SHAPES['11-iot'] = {
+    base: function (K, M) {                 // 받침 3.0 × 0.5 × 2.2 — 닫힌 상자(점 격자 판·구간 막대가 속에 숨는다), 앞 띠
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(3.0, .5, 2.2, .06), M.slate));
+      var strip = K.mesh(K.rbox(2.8, .05, .03, .01), M.rule, false); strip.position.set(0, .1, 1.11); g.add(strip);
+      return g;
+    },
+    things: function (K, M) {               // 사물 판 2.6 × 0.1 × 1.8 위에 물리적 사물 넷(움직이지 않는 기준)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.6, .1, 1.8, .03), M.porcelain));
+      var mats = [M.rule, M.slate, M.steel, M.muted];
+      OBJ11.forEach(function (o, i) { var m = thing11(K, mats[i], o[2], 1); m.position.set(o[0], .05 + .17, o[1]); g.add(m); });
+      return g;
+    },
+    virt: function (K, M) {                 // 가상 사물 — 같은 넷의 반투명 쌍둥이(1.05 배). 분해되면 사물 위로 떠오른다
+      var g = new THREE.Group();
+      OBJ11.forEach(function (o) { var m = thing11(K, M.glass, o[2], 1.05); m.position.set(o[0], .05 + .17, o[1]); g.add(m); });
+      return g;
+    },
+    devices: function (K, M) {              // 기기 판 2.4 × 0.08 × 1.6 위에 기기 다섯 — 작은 상자와 짧은 안테나(통신 기능)
+      var g = new THREE.Group(); g.userData.lamp = true; g.add(K.mesh(K.rbox(2.4, .08, 1.6, .03), M.rule));
+      [[-.9, .3], [-.35, -.4], [.15, .35], [.6, -.3], [1.0, .45]].forEach(function (d) {
+        var b = K.mesh(K.rbox(.26, .14, .2, .03), M.slate); b.position.set(d[0], .11, d[1]); g.add(b);
+        var a = K.mesh(K.cyl(.012, .012, .2, 8), M.ink); a.position.set(d[0] + .08, .28, d[1]); g.add(a);
+        var l = K.mesh(K.rbox(.06, .03, .02, .01), M.lamp, false); l.position.set(d[0] - .05, .12, d[1] + .1); g.add(l); });
+      return g;
+    },
+    comm: function (K, M) {                 // 사물 간 통신 판 2.2 × 0.06 × 1.4 — 마디 여섯과 잇는 막대(그물)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.2, .06, 1.4, .02), M.porcelain));
+      var P = [[-.85, .35], [-.4, -.4], [0, .3], [.4, -.35], [.85, .4], [.0, -.05]];
+      P.forEach(function (q) { var n = K.mesh(K.ball(.07), M.ink); n.position.set(q[0], .1, q[1]); g.add(n); });
+      [[0, 1], [0, 2], [1, 5], [2, 5], [2, 4], [3, 5], [3, 4], [1, 3]].forEach(function (e) {
+        var a = P[e[0]], b = P[e[1]], dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz);
+        var r = K.mesh(K.rbox(L, .025, .025, .008), M.steel, false); r.position.set((a[0] + b[0]) / 2, .1, (a[1] + b[1]) / 2); r.rotation.y = -Math.atan2(dz, dx); g.add(r); });
+      return g;
+    },
+    service: function (K, M) {              // 서비스 계층 판 2.0 × 0.14 × 1.2 위에 둥근 타일 셋(점등) — 점등 뒤 가운데서 전파 고리
+      var g = new THREE.Group(); g.userData.lamp = true; g.add(K.mesh(K.rbox(2.0, .14, 1.2, .04), M.slate));
+      [-.6, 0, .6].forEach(function (x) { var t = K.mesh(K.rbox(.44, .06, .44, .08), M.lamp); t.position.set(x, .1, 0); g.add(t); });
+      g.userData.emit = new THREE.Vector3(0, .2, 0);
+      return g;
+    },
+    person: function (K, M) {               // 사람 — 몸통(캡슐)과 머리(높이 1.2). 표정·옷 없음
+      var g = new THREE.Group();
+      var body = K.mesh(K.lathe([[0, -.6], [.16, -.6, .04], [.2, -.1, .1], [.17, .25, .08], [.08, .33, .03], [0, .33]], 32), M.muted); g.add(body);
+      var head = K.mesh(K.ball(.15), M.muted); head.position.y = .5; g.add(head);
+      return g;
+    },
+    grid: function (K, M) {                 // 점 격자 판 0.9 × 0.05 × 0.9 — 6 × 6 점(연결밀도 — 수를 세는 그림이 아니라 '빽빽하다' 만)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.9, .05, .9, .02), M.porcelain));
+      for (var i = 0; i < 6; i++) for (var j = 0; j < 6; j++) { var d = K.mesh(K.cyl(.035, .035, .03, 10), M.ink, false); d.position.set(-.35 + i * .14, .035, -.35 + j * .14); g.add(d); }
+      return g;
+    },
+    bar: function (K, M) {                  // 구간 막대 — 긴 눈금 자(0.9) 위 아주 짧은 구간(양 끝 세운 탭) = 무선 구간 편도 지연
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.9, .05, .18, .02), M.porcelain));
+      for (var i = 0; i <= 8; i++) { var t = K.mesh(K.rbox(.01, .012, .06, .003), M.muted, false); t.position.set(-.4 + i * .1, .03, .05); g.add(t); }
+      [-.4, -.32].forEach(function (x) { var tab = K.mesh(K.rbox(.02, .14, .12, .01), M.ink); tab.position.set(x, .09, -.02); g.add(tab); });
+      var span = K.mesh(K.rbox(.08, .02, .03, .006), M.ink, false); span.position.set(-.36, .14, -.02); g.add(span);
+      return g;
+    }
+  };
+
+  // ── 12 KCA 멀티미디어실 — 기관 판 갈래 모형: 받침(제66조) · 기관 판 두 칸(관리 · 진흥) · 진흥 칸의 갈래 기둥 셋 · 기금 상자 · 빈 화면 판 · 촬영 슬레이트.
+  // 화면은 비운다 — 구체적인 지원작은 확인 전이라는 대사 그대로(키오스크 같은 기기 모양도 조사 자료 '확인 불가' 라 그리지 않는다)
+  SHAPES['12-multimedia'] = {
+    base: function (K, M) {                 // 받침 3.2 × 0.5 × 2.0
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(3.2, .5, 2.0, .06), M.slate));
+      var strip = K.mesh(K.rbox(3.0, .05, .03, .01), M.rule, false); strip.position.set(0, .1, 1.01); g.add(strip);
+      return g;
+    },
+    mgmt: function (K, M) {                 // 관리 칸 — 기관 판의 왼쪽 반(1.5 × 0.3 × 1.8)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(1.5, .3, 1.8, .05), M.rule));
+      var t = K.mesh(K.rbox(1.2, .02, 1.4, .01), M.porcelain, false); t.position.y = .16; g.add(t);
+      return g;
+    },
+    promo: function (K, M) {                // 진흥 칸 — 오른쪽 반
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(1.5, .3, 1.8, .05), M.porcelain));
+      var t = K.mesh(K.rbox(1.2, .02, 1.4, .01), M.rule, false); t.position.y = .16; g.add(t);
+      return g;
+    },
+    branch: function (K, M) {               // 갈래 기둥 셋(옆 0.5 · 가운데 0.9)과 머리판 — 원점은 기둥 밑동
+      var g = new THREE.Group();
+      [[-.45, .5], [0, .9], [.45, .5]].forEach(function (b) { var c = K.mesh(K.cyl(.05, .06, b[1], 16), M.steel); c.position.set(b[0], b[1] / 2, 0); g.add(c);
+        var cap = K.mesh(K.cyl(.16, .16, .05, 24), M.ink); cap.position.set(b[0], b[1] + .02, 0); g.add(cap); });
+      var foot = K.mesh(K.rbox(1.15, .06, .3, .02), M.ink); foot.position.y = .03; g.add(foot);
+      return g;
+    },
+    fund: function (K, M) {                 // 기금 상자 0.6 × 0.4 × 0.45 — 금고 문 · 둥근 손잡이 · 경첩(돈 기호 없음)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.6, .4, .45, .05), M.slate));
+      var door = K.mesh(K.rbox(.46, .3, .02, .02), M.ink, false); door.position.z = .23; g.add(door);
+      var knob = K.mesh(K.cyl(.06, .06, .04, 20), M.steel, false); knob.rotation.x = Math.PI / 2; knob.position.set(.08, 0, .25); g.add(knob);
+      return g;
+    },
+    screen: function (K, M) {               // 빈 화면 판 — 1.0 × 0.62 화면(점등)과 테, 카메라 쪽으로 0.5 돌림. 그림은 없다
+      var g = new THREE.Group(), h = new THREE.Group(); h.rotation.y = .5; g.add(h); g.userData.lamp = true;
+      h.add(K.mesh(K.rbox(1.0, .62, .06, .03), M.ink));
+      var s = K.mesh(K.rbox(.9, .52, .02, .01), M.lamp, false); s.position.z = .035; h.add(s);
+      var leg = K.mesh(K.rbox(.06, .2, .06, .02), M.steel); leg.position.y = -.4; h.add(leg);
+      return g;
+    },
+    clapper: function (K, M) {              // 촬영 슬레이트 — 판 0.42 × 0.32 와 위의 줄무늬 막대(비스듬히 열림)
+      var g = new THREE.Group(), h = new THREE.Group(); h.rotation.y = .5; g.add(h);
+      h.add(K.mesh(K.rbox(.42, .32, .04, .02), M.slate));
+      var stick = new THREE.Group(); stick.position.set(-.21, .18, 0); stick.rotation.z = .3; h.add(stick);
+      for (var i = 0; i < 5; i++) { var st = K.mesh(K.rbox(.084, .06, .045, .005), i % 2 ? M.porcelain : M.ink); st.position.set(.042 + i * .084, 0, 0); stick.add(st); }
+      return g;
+    }
+  };
+
+  // ── 13 크로마키 체험 — 합성 세 겹: 받침 · 합성 화면 틀 · 키 막(바둑판 = 투명) · 배경 판(일반 풍경) · 뒤에 겹친 두 판(날씨 지도 · 영화 장면 — 이름 없는
+  // 일반 무늬) · 전경(사람 오린 판) · 촬영 카메라(모양만). 판은 모두 xy 평면(앞 = +z), 2.4 × 1.4
+  function plate13(K, M, mat) { var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.4, 1.4, .04, .02), mat)); return g; }
+  SHAPES['13-chromakey'] = {
+    stand: function (K, M) {                // 받침 3.0 × 0.2 × 1.2 와 틀을 받치는 기둥 둘
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(3.0, .2, 1.2, .04), M.porcelain));
+      [-1.0, 1.0].forEach(function (x) { var c = K.mesh(K.rbox(.08, .4, .08, .02), M.steel); c.position.set(x, .3, 0); g.add(c); });
+      return g;
+    },
+    frame: function (K, M) {                // 합성 화면 틀 — 바깥 2.6 × 1.6, 테 두께 0.1(속이 빈 액자)
+      var g = new THREE.Group();
+      [[0, .75, 2.6, .1], [0, -.75, 2.6, .1], [-1.25, 0, .1, 1.6], [1.25, 0, .1, 1.6]].forEach(function (b) { var m = K.mesh(K.rbox(b[2], b[3], .14, .03), M.ink); m.position.set(b[0], b[1], 0); g.add(m); });
+      return g;
+    },
+    key: function (K, M) {                  // 키 막 — 8 × 5 칸 바둑판의 절반만 채운 판(빈 칸으로 뒤가 보인다 = 투명하게 처리된 자리) + 가는 테
+      var g = new THREE.Group(), cw = .3, ch = .28;
+      for (var i = 0; i < 8; i++) for (var j = 0; j < 5; j++) if ((i + j) % 2 === 0) { var c = K.mesh(K.rbox(cw, ch, .03, .005), M.rule); c.position.set(-1.05 + i * cw, -.56 + j * ch, 0); g.add(c); }
+      [[0, .71, 2.42, .03], [0, -.71, 2.42, .03], [-1.21, 0, .03, 1.42], [1.21, 0, .03, 1.42]].forEach(function (b) { var m = K.mesh(K.rbox(b[2], b[3], .03, .01), M.muted, false); m.position.set(b[0], b[1], 0); g.add(m); });
+      return g;
+    },
+    bg: function (K, M) {                   // 배경 판 — 지평선 띠 · 낮은 산 셋(돋을새김) · 해
+      var g = plate13(K, M, M.porcelain);
+      var band = K.mesh(K.rbox(2.3, .3, .02, .01), M.rule, false); band.position.set(0, -.5, .03); g.add(band);
+      [[-.7, .55], [.1, .75], [.8, .5]].forEach(function (m) { var s = new THREE.Shape(); s.moveTo(-m[1], 0); s.lineTo(0, m[1] * .8); s.lineTo(m[1], 0); s.lineTo(-m[1], 0);
+        var geo = new THREE.ExtrudeGeometry(s, { depth: .03, bevelEnabled: false }); var mm = K.mesh(geo, M.muted, false); mm.position.set(m[0], -.35, .02); g.add(mm); });
+      var sun = K.mesh(K.cyl(.13, .13, .03, 24), M.steel, false); sun.rotation.x = Math.PI / 2; sun.position.set(.75, .35, .03); g.add(sun);
+      return g;
+    },
+    bg2: function (K, M) {                  // 날씨 지도 판 — 이름 없는 땅 모양 하나와 등압선 고리 셋(일반 무늬 — 어느 나라 지도도 아니다)
+      var g = plate13(K, M, M.mist), s = new THREE.Shape();
+      s.moveTo(-.5, -.4); s.quadraticCurveTo(-.7, .1, -.3, .45); s.quadraticCurveTo(.2, .6, .45, .2); s.quadraticCurveTo(.7, -.2, .3, -.5); s.quadraticCurveTo(-.1, -.6, -.5, -.4);
+      var land = K.mesh(new THREE.ExtrudeGeometry(s, { depth: .03, bevelEnabled: false }), M.rule, false); land.position.set(-.3, 0, .02); g.add(land);
+      [.3, .45, .6].forEach(function (r) { var t = K.mesh(new THREE.TorusGeometry(r, .012, 6, 40, Math.PI * 1.2), M.ink, false); t.position.set(.55, .05, .04); t.rotation.z = -.4; g.add(t); });
+      return g;
+    },
+    bg3: function (K, M) {                  // 영화 장면 판 — 이름 없는 건물 실루엣 줄(높이가 다른 상자들)
+      var g = plate13(K, M, M.rule);
+      [[-.95, .5], [-.65, .8], [-.35, .55], [-.05, 1.0], [.3, .65], [.6, .85], [.92, .45]].forEach(function (b) { var m = K.mesh(K.rbox(.26, b[1], .03, .01), M.slate, false); m.position.set(b[0], -.7 + b[1] / 2, .03); g.add(m); });
+      return g;
+    },
+    fg: function (K, M) {                   // 전경 — 사람 오린 판(머리 · 어깨 · 몸, 높이 1.1)과 작은 받침
+      var g = new THREE.Group(), s = new THREE.Shape();
+      s.moveTo(-.32, -.55); s.lineTo(-.3, .05); s.quadraticCurveTo(-.3, .2, -.12, .22); s.lineTo(.12, .22); s.quadraticCurveTo(.3, .2, .3, .05); s.lineTo(.32, -.55); s.lineTo(-.32, -.55);
+      var body = K.mesh(new THREE.ExtrudeGeometry(s, { depth: .05, bevelEnabled: true, bevelThickness: .01, bevelSize: .01, bevelSegments: 1 }), M.slate); body.position.z = -.025; g.add(body);
+      var head = K.mesh(K.cyl(.14, .14, .05, 28), M.slate); head.rotation.x = Math.PI / 2; head.position.y = .4; g.add(head);
+      var foot = K.mesh(K.rbox(.5, .04, .25, .01), M.ink); foot.position.y = -.57; g.add(foot);
+      return g;
+    },
+    camera: function (K, M) {               // 촬영 카메라 — 몸통 · 렌즈(−z 를 향한다) · 다리 셋. 판 쪽(왼쪽 뒤)을 보게 45° 돌림
+      var g = new THREE.Group(), h = new THREE.Group(); h.rotation.y = Math.PI / 4; g.add(h);
+      h.add(K.mesh(K.rbox(.32, .26, .44, .04), M.slate));
+      var lens = K.mesh(K.cyl(.09, .1, .2, 24), M.ink); lens.rotation.x = Math.PI / 2; lens.position.z = -.3; h.add(lens);
+      [0, 2.1, 4.2].forEach(function (a) { var l = K.mesh(K.cyl(.015, .015, .85, 8), M.steel); l.position.set(.18 * Math.cos(a), -.5, .18 * Math.sin(a)); l.rotation.set(.2 * Math.sin(a), 0, -.2 * Math.cos(a)); h.add(l); });
+      return g;
+    }
+  };
+
+  // ── 15·16 공용 — 누운 판(글자 없음). 받침 속에 숨어 있다가 빠지면서 표의 tilt 로 카메라 쪽에 선다. 줄 무늬는 '문서' 라는 표시일 뿐 내용이 아니다
+  function docPlate(K, M, w, d, mat, rows) {
+    var g = new THREE.Group(); g.add(K.mesh(K.rbox(w, .04, d, .015), mat || M.porcelain));
+    for (var i = 0; i < (rows || 3); i++) { var l = K.mesh(K.rbox(w * .7, .008, .025, .003), M.muted, false); l.position.set(-w * .05, .024, -d * .25 + i * d * .5 / Math.max(1, (rows || 3) - 1)); g.add(l); }
+    return g;
+  }
+  function pair(K, M, offset) {             // 두 칸짜리 판 — 같은 크기 두 장을 나란히(offset 0 = 함께 놓고 본다) 또는 앞뒤로 엇갈려(offset > 0 = 시차). 폭 1.3
+    var g = new THREE.Group();
+    [-1, 1].forEach(function (s, i) { var p = docPlate(K, M, .6, .44, i ? M.rule : M.porcelain, 3); p.position.set(.33 * s, 0, s > 0 ? -offset : 0); g.add(p); });
+    return g;
+  }
+
+  // ── 15 전자파 측정 — 둥근 받침 · 기지국 돛대(패널 안테나 셋 · 아래 장비함) · 울타리(반지름 1.2) · 등급 고리 넷 · 2턴의 두 칸짜리 판 둘
+  // 고리 색은 안쪽(경고)일수록 진하다 — 세기의 계단(라벨 색 규칙인 연두·파랑·주황·빨강은 쓰지 않는다: 강조색 하나 원칙, 그리고 그 라벨은 무선국 설비에 붙는 것이지
+  // 둘레 공간의 색이 아니다 — 조사 자료 A)
+  function emfRing(r0, r1, mat) {
+    return function (K, M) { var g = new THREE.Group(); g.add(K.mesh(K.lathe([[r0, -.03], [r1, -.03, .015], [r1, .03, .015], [r0, .03, .015], [r0, -.03]], 96), M[mat])); return g; };
+  }
+  SHAPES['15-emf'] = {
+    slab: function (K, M) {                 // 둥근 받침 — 지름 3.2, 높이 0.4(닫힌 원통 — 판 둘이 앞쪽 현에 포개져 숨는다). 처음 지름 4.1 은 가로 맞춤에 걸려 전체가 작았다
+      var g = new THREE.Group(); g.add(K.mesh(K.lathe([[0, -.2], [1.6, -.2, .05], [1.6, .2, .04], [0, .2]], 96), M.porcelain));
+      var band = K.mesh(new THREE.CylinderGeometry(1.612, 1.612, .05, 96, 1, true), M.rule, false); band.position.y = .05; g.add(band);
+      return g;
+    },
+    mast: function (K, M) {                 // 기지국 돛대 — 높이 4.0(받침 위 0.4 부터), 위 패널 안테나 셋(120° 간격), 아래 장비함. 점등 뒤 꼭대기에서 전파 고리
+      var g = new THREE.Group(); g.userData.lamp = true;
+      g.add(K.mesh(K.lathe([[0, -2.0], [.17, -2.0, .03], [.11, -1.85], [.06, 1.95], [0, 1.95]], 20), M.steel));
+      for (var i = 0; i < 3; i++) { var a = i * Math.PI * 2 / 3 + .3, p = K.mesh(K.rbox(.1, .65, .2, .03), M.porcelain); p.position.set(.16 * Math.cos(a), 1.5, .16 * Math.sin(a)); p.rotation.y = -a; g.add(p); }
+      var lamp = K.mesh(K.ball(.06), M.lamp); lamp.position.y = 2.0; g.add(lamp);
+      var box = K.mesh(K.rbox(.32, .36, .26, .03), M.slate); box.position.set(-.26, -1.82, -.22); g.add(box);
+      g.userData.emit = new THREE.Vector3(0, 2.0, 0);
+      return g;
+    },
+    fence: function (K, M) {                // 울타리 — 반지름 0.91, 기둥 열넷(높이 0.5)과 위아래 가로대 고리
+      var g = new THREE.Group();
+      for (var i = 0; i < 14; i++) { var a = i / 14 * Math.PI * 2, c = K.mesh(K.cyl(.022, .022, .5, 8), M.ink); c.position.set(.91 * Math.cos(a), 0, .91 * Math.sin(a)); g.add(c); }
+      [-.15, .2].forEach(function (y) { var t = K.mesh(new THREE.TorusGeometry(.91, .016, 6, 72), M.ink); t.rotation.x = Math.PI / 2; t.position.y = y; g.add(t); });
+      return g;
+    },
+    ring1: emfRing(1.3, 1.55, 'porcelain'),  // 1등급 — 가장 바깥, 가장 낮다
+    ring2: emfRing(1.0, 1.22, 'rule'),
+    ring3: emfRing(.62, .84, 'muted'),      // 주의 — 울타리(0.91) 안
+    ring4: emfRing(.24, .52, 'slate'),      // 경고 — 가장 안쪽, 가장 높다
+    who: function (K, M) { return pair(K, M, 0); },      // 세계보건기구 정리 · 국제암연구소 2B — 나란히
+    guide: function (K, M) { return pair(K, M, .18); }   // 2020년 개정 · 2019년판 — 엇갈려
+  };
+
+  // ── 16 무선국 검사 — 받침(닫힌 상자 — 다섯이 숨는다) · 무선설비 함(안테나) · 운용자 자리 · 검사증명서 판 · 달력 고리(다섯 마디) · 배·비행기 모형 ·
+  // 위임 판 · 위탁 판 · 명판. 검사 장비의 기종은 그리지 않는다
+  SHAPES['16-inspection'] = {
+    base: function (K, M) {                 // 받침 2.8 × 0.6 × 2.0, 앞 띠(처음 3.4 × 2.2 는 가로 맞춤에 걸려 무선국이 작았다)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(2.8, .6, 2.0, .06), M.slate));
+      var strip = K.mesh(K.rbox(2.6, .05, .03, .01), M.rule, false); strip.position.set(0, .15, 1.01); g.add(strip);
+      return g;
+    },
+    equip: function (K, M) {                // 무선설비 함 0.9 × 1.3 × 0.6 — 앞판 · 계기 둘(점등) · 위 짧은 안테나(점등 뒤 전파 고리)
+      var g = new THREE.Group(); g.userData.lamp = true; g.add(K.mesh(K.rbox(.9, 1.3, .6, .05), M.porcelain));
+      var face = K.mesh(K.rbox(.76, 1.1, .02, .02), M.rule, false); face.position.z = .31; g.add(face);
+      [.3, 0].forEach(function (y) { var m = K.mesh(K.rbox(.4, .14, .02, .01), M.lamp, false); m.position.set(0, y, .325); g.add(m); });
+      var ant = K.mesh(K.cyl(.02, .03, .9, 10), M.steel); ant.position.set(.25, 1.1, 0); g.add(ant);
+      g.userData.emit = new THREE.Vector3(.25, 1.55, 0);
+      return g;
+    },
+    operator: function (K, M) {             // 운용자 자리 — 작은 책상(0.9 × 0.08 × 0.6, 다리 넷) · 의자 · 책상 위 헤드셋
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.9, .08, .6, .03), M.slate));
+      [[-1, -1], [-1, 1], [1, -1], [1, 1]].forEach(function (s) { var l = K.mesh(K.rbox(.05, .4, .05, .02), M.ink); l.position.set(.4 * s[0], -.24, .26 * s[1]); g.add(l); });
+      var hs = K.mesh(new THREE.TorusGeometry(.11, .02, 8, 24, Math.PI), M.ink); hs.position.set(-.1, .1, 0); g.add(hs);
+      [-1, 1].forEach(function (s) { var c = K.mesh(K.cyl(.045, .045, .04, 16), M.ink); c.rotation.z = Math.PI / 2; c.position.set(-.1 + .11 * s, .08, 0); g.add(c); });
+      var seat = K.mesh(K.rbox(.32, .06, .32, .03), M.muted); seat.position.set(.62, -.18, .05); g.add(seat);     // 의자는 책상 오른쪽 — 앞에 두면 2턴 판이 오를 길을 막는다
+      var back = K.mesh(K.rbox(.05, .36, .32, .02), M.muted); back.position.set(.79, 0, .05); g.add(back);
+      return g;
+    },
+    cert: function (K, M) {                 // 검사증명서 판 — 받침대에 세운 액자(0.6 × 0.42), 카메라 쪽으로 0.5 돌림. 글자 없음
+      var g = new THREE.Group(), h = new THREE.Group(); h.rotation.y = .5; g.add(h);
+      h.add(K.mesh(K.rbox(.6, .42, .04, .02), M.ink));
+      var paper = K.mesh(K.rbox(.5, .32, .02, .01), M.porcelain, false); paper.position.z = .025; h.add(paper);
+      var seal = K.mesh(K.cyl(.05, .05, .02, 20), M.steel, false); seal.rotation.x = Math.PI / 2; seal.position.set(.15, -.08, .04); h.add(seal);
+      var leg = K.mesh(K.rbox(.05, .3, .05, .02), M.steel); leg.position.y = -.33; h.add(leg);
+      return g;
+    },
+    cal: function (K, M) {                  // 달력 고리 — 누운 고리를 다섯 마디로(마디 사이 틈) = 5년 범위
+      var g = new THREE.Group();
+      for (var i = 0; i < 5; i++) { var t = K.mesh(new THREE.TorusGeometry(.32, .045, 8, 20, Math.PI * 2 / 5 - .12), i % 2 ? M.rule : M.slate); t.rotation.set(-Math.PI / 2, 0, i * Math.PI * 2 / 5); g.add(t); }
+      var hub = K.mesh(K.cyl(.06, .06, .04, 16), M.ink); g.add(hub);
+      return g;
+    },
+    trip: function (K, M) {                 // 배·비행기 작은 모형 — 판 위에 작은 배와 작은 비행기(외국 출항)
+      var g = new THREE.Group(); g.add(K.mesh(K.rbox(.7, .04, .4, .015), M.porcelain));
+      var hull = K.mesh(K.rbox(.3, .08, .12, .03), M.slate); hull.position.set(-.16, .06, .05); g.add(hull);
+      var cab = K.mesh(K.rbox(.1, .07, .08, .02), M.rule); cab.position.set(-.18, .13, .05); g.add(cab);
+      var fus = K.mesh(K.cyl(.035, .035, .32, 12), M.steel); fus.rotation.z = Math.PI / 2; fus.position.set(.17, .14, -.05); g.add(fus);
+      var wing = K.mesh(K.rbox(.08, .012, .34, .004), M.steel); wing.position.set(.17, .14, -.05); g.add(wing);
+      return g;
+    },
+    deleg: function (K, M) { return docPlate(K, M, .66, .44, M.porcelain, 3); },  // 위임 판
+    entrust: function (K, M) { return docPlate(K, M, .66, .44, M.rule, 3); },     // 위탁 판
+    plaque: function (K, M) { return docPlate(K, M, .66, .3, M.steel, 2); }       // 명판
+  };
+
   // ── 07 해상무선통신 — 선박 무선국 한 척(선체 · 구명정 · 받침판 · 해역 고리 넷 · 무선실 · GMDSS 콘솔 · 비상위치표지 · 트랜스폰더 · 돛대와 안테나 줄)
   // 선체는 평면도(뾰족한 뱃머리)를 세로로 밀어 낸 모양 — ExtrudeGeometry 는 z 로 밀므로 x 축으로 −90° 돌려 높이를 y 로 맞춘다
   // 해역 고리 — 선체를 감싸는 납작한 타원 고리(폭 0.1, z 를 0.5 로 눌렀다). 라벨 없음(조율자 결정: 모양만). 원으로 두면(반지름 3.4)

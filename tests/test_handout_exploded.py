@@ -31,16 +31,44 @@ def _highlight():
     return next(c["cues"] for c in courses if c["name"] == "하이라이트")
 
 
-def test_빌드_범위는_하이라이트_코스를_앞에서부터_순서대로_늘린다():
-    # U7 ①(2026-11-14): 하이라이트 9큐를 큐시트 순서로 늘린다 — 공연이 그 순서로 도니 앞에서부터 채워야 끊김 없이 이어 본다.
-    # U8 ①: 03 을 먼저 끝내 사용자에게 보인다 — 그래서 03 까지는 반드시 있다
-    assert build.CUE_IDS == tuple(_highlight()[:len(build.CUE_IDS)])
-    assert "03-theory" in build.CUE_IDS
+def _sheet():
+    """큐시트 순서(= `data/courses.yaml` 의 '전체' 코스 — cues: all). 교육자료 데이터가 그 순서로 큐를 싣는다"""
+    return [c["id"] for c in build.load_hud()["cues"]]
+
+
+def test_빌드_범위는_큐시트_순서이고_하이라이트_밖은_06_부터_채운다():
+    # 2026-11-14 하이라이트 9큐를 다 채웠고(갈래 D), 2026-11-16 하이라이트 밖 10큐를 채운다(계획 `2026-11-16-level-screens-rest.md` §4).
+    # 생성물의 장 순서 = 미리보기에서 '다음 장' 으로 이어 듣는 순서라 큐시트 순서여야 한다(하이라이트 순서 뒤에 06 을 덧붙이면 19 다음에 06 이 온다).
+    # 06(가장 물건다운 큐)을 먼저 끝내 사용자에게 보인다 — 그래서 06 은 반드시 있다
+    assert list(build.CUE_IDS) == [c for c in _sheet() if c in build.CUE_IDS]
+    assert "06-bands" in build.CUE_IDS
 
 
 def test_하이라이트_코스의_모든_큐가_있다():
     # 2026-11-14 7큐(04·07·14·17·18·19)를 다 넣어 strict xfail 표시를 지웠다 — 하이라이트 코스가 분해도로 끝까지 간다
     assert set(_highlight()) <= set(build.CUE_IDS)
+
+
+def test_전체_코스의_모든_큐가_있다():
+    # 전체 코스(cues: all)를 전문가로 돌면 19큐 모두 분해도다. 2026-11-16 하이라이트 밖 10큐(05·06·08~13·15·16)를 다 넣어 strict xfail 표시를 지웠다
+    assert list(build.CUE_IDS) == _sheet()
+
+
+def test_06_대역_탑은_대역마다_같은_간격의_한_층이고_두_이름_칸은_양_끝_대역에_붙는다():
+    # 06 은 ITU-R 권고 V.431-8 의 대역 표를 쌓은 탑이다. 대역번호 N 은 0.3×10^N ~ 3×10^N Hz — 대역마다 정확히 10배, 로그 눈금으로 같은 길이다.
+    # 탑은 그 약속을 그림으로 말한다: 대역 4(VLF)~11(EHF) 여덟 층이 아래에서 위로, 조립·분해 둘 다 **같은 간격**. 간격이 어긋나면
+    # '어떤 대역은 더 넓다' 는 거짓 그림이 된다. 이름 칸 둘은 사실 그대로 — 초장파는 가장 낮은 대역(4)의 **주파수 기준** 이름이라 맨 아래 층의
+    # 왼쪽(주파수 기준 열) 칸, 밀리미터파는 가장 높은 대역(11)의 **파장 기준** 이름이라 맨 위 층의 오른쪽(파장 기준 열) 칸이다
+    rows = {p["id"]: p for p in build.load_tables()["06-bands"]["parts"]}
+    tiers = [rows[f"b{n}"] for n in range(4, 12)]
+    assert all(p["dir"] == [0, 1, 0] and p.get("parent") is None for p in tiers)
+    ys = [p["rest"][1] for p in tiers]
+    ex = [p["rest"][1] + p["dist"] for p in tiers]
+    for col in (ys, ex):
+        steps = [b - a for a, b in zip(col, col[1:])]
+        assert min(steps) > 0 and max(steps) - min(steps) < 1e-6, steps
+    assert rows["f4"]["parent"] == "b4" and rows["f4"]["side"] == "L" and rows["f4"]["leave"].startswith("초장파")
+    assert rows["w11"]["parent"] == "b11" and rows["w11"]["side"] == "R" and rows["w11"]["leave"].startswith("밀리미터파")
 
 
 def test_생성물의_큐는_빌드_범위와_같다():
@@ -159,8 +187,9 @@ def test_표의_모양_이름이_모두_scenes_js_에_있다():
     src = (EX / "scenes.js").read_text()
     for cid in build.CUE_IDS:
         block = re.search(r"SHAPES\['" + re.escape(cid) + r"'\]\s*=\s*\{(.*?)\n  \};", src, re.S).group(1)
-        # 모양 = 함수 직접(`name: function`) 또는 함수를 만드는 호출(`name: zoneRing(1.8)` — 07 해역 고리). 한 줄에 하나씩 쓴다
-        have = set(re.findall(r"^\s{4}(\w+):\s*(?:function\b|\w+\()", block, re.M))
+        # 모양 = 함수 직접(`name: function`) · 함수를 만드는 호출(`name: zoneRing(1.8)` — 07 해역 고리) · 함수 이름(`stage: hamStage,` — 05·10 이
+        # 같은 무선국 모양을 같이 쓴다. 없는 이름이면 페이지가 불러올 때 ReferenceError 로 터져 ?check=1 시험이 잡는다). 한 줄에 하나씩 쓴다
+        have = set(re.findall(r"^\s{4}(\w+):\s*(?:function\b|\w+\(|\w+\s*,?\s*(?://.*)?$)", block, re.M))
         need = {p["shape"] for p in build.load_tables()[cid]["parts"]}
         assert need <= have, (cid, need - have)
 
@@ -400,6 +429,17 @@ def test_투명_재질에는_껍질_외곽선을_붙이지_않는다(checked):
       for(var i=0;i<n;i++)S.getScene(i).parts.forEach(function(p){p.shape.traverse(function(o){if(o.isMesh&&o.material&&o.material.transparent&&o.material.type!=='ShaderMaterial')glass++;});
         p.hulls.forEach(function(h){if(h.parent.material.transparent)bad++;});});return [glass,bad];})()""")
     assert r[0] > 0 and r[1] == 0, r
+
+
+@_live
+def test_모든_큐의_도슨트_턴마다_페이지가_지은_강조_사건이_있다(checked):
+    # 표 대조(check_table)는 say 낱말이 도슨트 대사 **글**에 있는지만 본다. 페이지는 낱말 시각을 문장 안 글자 위치로 다시 풀므로(wordTime),
+    # 실제로 그 턴 안에 강조 사건이 생겼는지는 지은 장면에서 확인한다 — 19큐 모두, 도슨트 턴마다(계획 2026-11-16 §4.5 "모든 큐의 도슨트 0턴에 강조 부품")
+    r = checked["js"]("""(function(){var S=window.explodedStage,n=JSON.parse(document.getElementById('data').textContent).cues.length,bad=[];
+      for(var i=0;i<n;i++){var sc=S.getScene(i);sc.cue.utt.forEach(function(u){if(u.role!=='docent')return;
+        if(!sc.events.some(function(e){return e.t>=u.t0-.3&&e.t<=u.t1;}))bad.push(sc.cue.id+' '+u.turn);});}
+      return {n:n,bad:bad};})()""")
+    assert r["n"] == len(build.CUE_IDS) and r["bad"] == [], r
 
 
 @_live

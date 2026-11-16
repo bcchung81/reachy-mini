@@ -95,7 +95,7 @@ def stage():
         call("Emulation.setDeviceMetricsOverride", width=1280, height=720, deviceScaleFactor=1, mobile=False)
         call("Page.navigate", url=f"http://127.0.0.1:{port}/stage/paper")
         wait("document.documentElement.getAttribute('data-ready') === '1'", 30)
-        yield {"hub": hub, "js": js, "wait": wait, "errors": errors, "warned": warned, "director": director}
+        yield {"hub": hub, "js": js, "wait": wait, "errors": errors, "warned": warned, "director": director, "ds": ds}
     finally:
         proc.terminate()
         srv.shutdown()
@@ -175,11 +175,29 @@ def test_자바스크립트_오류가_없다(stage):
     assert stage["errors"] == []
 
 
+def _전용_화면에서_뺀다(ds, cue_id):
+    """`cue_id` 를 웹툰·분해도 매니페스트에서만 뺀다 — 페이지는 그대로(2026-11-16).
+
+    하이라이트 밖 10큐에 웹툰·분해도를 채우면 19큐가 다 차서 **실제 큐로는** "전용 화면이 없다 → 카드 화면으로 이어 보기"
+    길을 볼 수 없다. 그 길은 수준 화면이 덜 찬 구성(새 큐를 넣은 직후·되돌린 빌드)에서 여전히 살아 있어야 한다 — 실제 06 에
+    기대던 시험은 06 이 빌드되는 순간 깨졌다(`2026-11-16-level-screens-rest.md` §5)."""
+    orig = ds.stage_manifest
+
+    def patched():
+        m = orig()
+        for name in ("webtoon", "exploded"):
+            if name in m.get("cues", {}):
+                m["cues"][name] = [c for c in m["cues"][name] if c != cue_id]
+        return m
+    ds.stage_manifest = patched
+
+
 def test_자동_선택_화면은_수준과_지금_큐로_화면을_고른다(stage):
     """운영자가 연 /stage/auto 하나가 (수준, 큐)로 화면을 고른다(2026-11-13).
     ① 교육자료 화면을 안 열어 '시연영상이 안 보인다' ② ~~웹툰·분해도엔 01·02큐뿐이라~~ 06큐에서 수준을 바꾸면 01큐에 멈췄다.
-    (2026-11-14 웹툰·분해도가 하이라이트 9큐로 늘었다 — 06 은 하이라이트 밖이라 여전히 카드 화면이고, 이 시험의 단언은 그대로 맞다.)"""
+    (2026-11-14 웹툰·분해도가 하이라이트 9큐로 늘었다. 2026-11-16 하이라이트 밖 10큐도 채우므로 06 은 매니페스트에서만 뺀다 — `_전용_화면에서_뺀다`.)"""
     js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
+    _전용_화면에서_뺀다(stage["ds"], "06-bands")
     SA = "(window.stageAuto||{})"
     director.level, director.cue_id = "일반", "01-intro"
     js("location.href = '/stage/auto'")
@@ -241,6 +259,7 @@ def test_카드_화면은_공연을_따라_장_수준_차례_말풍선을_바꾼
 
 def test_조정실_안의_시연_화면이_고른_화면을_머리에_알린다(stage):
     js, wait, director = stage["js"], stage["wait"], stage["director"]
+    _전용_화면에서_뺀다(stage["ds"], "06-bands")       # 전용 화면이 없는 큐 — 2026-11-16 부터 19큐가 다 차므로 매니페스트에서만 뺀다
     director.level, director.cue_id = "중고등", "06-bands"
     js("location.href = '/'")
     wait("document.getElementById('stage-screen') && document.getElementById('stage-screen').textContent.indexOf('카드 화면') >= 0", 20)
@@ -256,8 +275,10 @@ def test_조정실_안의_시연_화면이_고른_화면을_머리에_알린다(
 
 def test_하이라이트_큐는_수준별_전용_화면으로_간다(stage):
     """2026-11-14 갈래 C·D — 초등·중고등 웹툰, 전문가 분해도가 하이라이트 9큐(01·02·03·04·07·14·17·18·19)로 늘었다.
-    하이라이트 코스는 처음부터 끝까지 수준별 전용 화면이고, 하이라이트 밖(06)은 카드 화면이 잇는다. 빌드된 페이지를 그대로 읽는다(매니페스트)."""
+    하이라이트 코스는 처음부터 끝까지 수준별 전용 화면이고, 전용 화면이 없는 큐(06 — 2026-11-16 부터는 매니페스트에서만 뺀다)는 카드 화면이 잇는다.
+    빌드된 페이지를 그대로 읽는다(매니페스트)."""
     js, wait, director, hub = stage["js"], stage["wait"], stage["director"], stage["hub"]
+    _전용_화면에서_뺀다(stage["ds"], "06-bands")
     SA = "(window.stageAuto||{})"
     director.level, director.cue_id = "초등", "03-theory"
     js("location.href = '/stage/auto'")
@@ -270,3 +291,16 @@ def test_하이라이트_큐는_수준별_전용_화면으로_간다(stage):
         say(hub, "mc", cue, seq)
         wait(f"{SA}.screen === '{want}' && {SA}.cue === '{cue}'", 15)
     assert _errors_but_webgl(stage["errors"]) == []
+
+
+def test_전문가_분해도는_전체_코스_19큐를_다_가진다():
+    """2026-11-16 칸 X — 하이라이트 밖 10큐까지 채워 전문가 수준은 처음부터 끝까지 분해도다(카드 화면으로 이어지는 큐 없음).
+    조정실이 화면을 고르는 재료(빌드된 페이지에서 읽는 큐 목록, `stage.dashboard.stage_cues`)로 본다 — 페이지를 다시 빌드하다 큐 하나를
+    빠뜨리면 공연 중 그 큐만 카드 화면으로 떨어지는데 화면이 바뀌는 것 말고는 아무 경고가 없다."""
+    import yaml
+
+    from stage.dashboard import MOTION_PAGES, stage_cues
+
+    cues = [c["id"] for c in yaml.safe_load((ROOT / "data" / "cues.yaml").read_text(encoding="utf-8"))]   # 큐시트는 목록 하나
+    assert len(cues) == 19
+    assert stage_cues(MOTION_PAGES["exploded"]) == cues
