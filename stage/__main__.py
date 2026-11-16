@@ -7,7 +7,7 @@
     REACHY_DOCENT_UNIT     도슨트 로봇의 hardware id
     REACHY_LLM_URL         추론 서버 (llm.py 의 기본값을 따른다)
     REACHY_CUES_PATH       큐시트 경로 (기본 data/cues.yaml)
-    REACHY_AUDIENCE_LEVEL  처음 관람객 수준 — 초등/중고등/일반/전문가 (기본 일반).
+    REACHY_AUDIENCE_LEVEL  처음 관람객 수준 — 초중등/일반/전문가 (기본 일반 · 초등·중고등도 받아 초중등으로 — 2026-11-16 합침).
                            시연 중에는 콘솔·대시보드 `l <수준>` 으로 바꾼다(바로 — 다음 발화부터)
     REACHY_LEVELS_PATH     수준 프로필 경로 (기본 data/levels.yaml)
     REACHY_DASHBOARD_HOST  기본 127.0.0.1 (망에 열려면 0.0.0.0 — 전용 공유기에서만.
@@ -321,19 +321,21 @@ def announce_level(lv, explicit: bool) -> None:
     갈릴 여지가 없다 — (b)가 "수준을 두 번 읽지 않는다" 로 없앤 여지를 여기서
     "출처 판정을 두 번 하지 않는다" 로 마저 없앤다.
     """
+    from stage.levels import level_label  # 사람에게 보이는 이름(초중등 = 중고등 대본, 2026-11-16)
+
     src = "환경변수" if explicit else "기본값"
     # 분량은 **관람객 질문 답**의 것이다(`data/levels.yaml` 머리말) — 해설은 고정 대본이라
     # 수준이 바꾸는 것은 대본의 설명 난이도와 이 답 분량뿐이다. 라벨을 안 붙이면 로그를
     # 읽는 사람이 해설 분량으로 오해한다.
     print(
-        f"관람객 수준: {lv.name} ({src}) — 질문 답 "
+        f"관람객 수준: {level_label(lv.name)} ({src}) — 질문 답 "
         f"{lv.min_sentences}~{lv.max_sentences}문장 / {lv.min_chars}~{lv.max_chars}자",
         flush=True,
     )
 
 
 def main() -> None:
-    from stage.levels import level_of_env, load_levels
+    from stage.levels import LEVEL_ALIASES, LEVEL_LABELS, OFFERED_LEVELS, level_of_env, load_levels
 
     # **여기서 한 번만 읽는다.** `level_of_env` 가 오타를 예외로 던지므로 이
     # 줄을 서버 생성 **전에** 둬야 한다 — 수준이 잘못됐으면 서버를 띄우기
@@ -417,7 +419,11 @@ def main() -> None:
         CueSheet(cues), generate, expect_units=expect,
         level_name=level.name,
         docent_min_chars=level.min_chars,
-        level_min_chars={name: lv.min_chars for name, lv in levels.items()},
+        # 고르는 수준은 `OFFERED_LEVELS` 셋뿐이다(2026-11-16 — 초등·중고등을 '초중등' 하나로, 대본은 중고등).
+        # 데이터는 네 수준을 다 읽어 생성기(`generate.select`)도 넷을 알지만, 감독·조정실이 내놓는 것은 셋이다.
+        level_min_chars={name: levels[name].min_chars for name in OFFERED_LEVELS},
+        level_labels=LEVEL_LABELS,
+        level_aliases=LEVEL_ALIASES,
         on_level_change=generate.select,
         warn=warn, hub=hub,
         courses=courses,

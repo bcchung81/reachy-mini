@@ -171,3 +171,38 @@ def test_수준_항목이_매핑이_아니면_소리_내서_실패한다(tmp_pat
     p = _write(tmp_path, raw)
     with pytest.raises(LevelError, match="초등"):
         load_levels(p)
+
+
+# ── 2026-11-16 초등·중고등 → '초중등' 하나(대본은 중고등, 실기 리허설 중 사용자 결정) ──────────────────────
+
+
+def test_고르는_수준은_셋이고_중고등이_초중등으로_보인다():
+    """데이터는 네 수준 그대로(다시 굽지 않는다), 고르는 자리만 셋이다. 고르는 수준은 모두 데이터에 있어야 한다 —
+    없으면 감독이 기동에서 KeyError 로 죽는다."""
+    from stage.levels import LEVEL_NAMES, OFFERED_LEVELS, level_label
+
+    assert OFFERED_LEVELS == ("중고등", "일반", "전문가")
+    assert set(OFFERED_LEVELS) <= set(LEVEL_NAMES) and set(OFFERED_LEVELS) <= set(load_levels())
+    assert [level_label(n) for n in OFFERED_LEVELS] == ["초중등", "일반", "전문가"]
+
+
+def test_초등과_초중등은_합친_수준_중고등으로_받는다():
+    from stage.levels import canonical_level
+
+    assert canonical_level("초등") == "중고등"
+    assert canonical_level(" 초중등 ") == "중고등"
+    assert canonical_level("일반") == "일반"
+    assert canonical_level("유치원") == "유치원"     # 모르는 이름은 그대로 — 거절은 받는 쪽이 소리 내서 한다
+
+
+@pytest.mark.parametrize("raw", ["초등", "초중등", "중고등"])
+def test_기동_수준이_초등이면_중고등_대본으로_뜬다(monkeypatch, raw):
+    """`REACHY_AUDIENCE_LEVEL=초등` 이 데이터에 있는 초등으로 뜨면 조정실에 버튼이 없는 수준으로 공연이 돈다."""
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", raw)
+    assert level_of_env(load_levels()).name == "중고등"
+
+
+def test_모르는_기동_수준의_안내에는_고르는_이름이_나온다(monkeypatch):
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "고급")
+    with pytest.raises(LevelError, match="초중등, 일반, 전문가"):
+        level_of_env(load_levels())

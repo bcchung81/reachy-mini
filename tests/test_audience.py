@@ -531,3 +531,17 @@ def test_프로젝터_화면에는_운영자용_안내_줄을_보이지_않는�
     src = MOTION_PAGES["auto"].read_text(encoding="utf-8")
     assert "#note { display: none; }" in src and "html[data-note] #note { display: block; }" in src
     assert "has('note')" in src
+
+
+def test_교육자료는_보이는_이름을_쓰고_별칭_주소도_받는다(aud):
+    """2026-11-16 초등·중고등 → '초중등'. 교사 손에 남은 옛 `?level=초등` 주소가 400 이 되면 안 된다 — 별칭을 풀어 합친
+    수준 자료를 준다. 화면 글자는 보이는 이름, 주소의 `?level=` 은 내부 이름이다."""
+    aud["d"].canonical_level = lambda n: {"어린이": "초등"}.get(n, n)
+    aud["d"].level_labels = lambda: {"초등": "아이", "일반": "일반"}
+    _, _, body = _get(aud["port"], "/handout?level=%EC%96%B4%EB%A6%B0%EC%9D%B4")      # 어린이(별칭)
+    assert "초등 첫 설명이에요." in body
+    assert "관람객 수준: <strong>아이</strong>" in body
+    assert 'href="/handout?level=%EC%B4%88%EB%93%B1' in body and ">아이</a>" in body     # 링크는 내부 이름(뒤에 &course=), 글자는 이름표
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _get(aud["port"], "/handout?level=%EC%9C%A0%EC%B9%98%EC%9B%90")                # 유치원 — 여전히 400
+    assert e.value.code == 400

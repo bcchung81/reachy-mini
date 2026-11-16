@@ -298,6 +298,8 @@ class Director:
         on_level_change: Callable[[str], None] | None = None,
         courses: dict[str, tuple[str, ...] | None] | None = None,
         qa_reprompt: bool | None = None,
+        level_labels: dict[str, str] | None = None,
+        level_aliases: dict[str, str] | None = None,
         note: Callable[[str], None] | None = None,
     ) -> None:
         self._sheet = sheet
@@ -360,6 +362,11 @@ class Director:
         # 목록이 하나뿐이면 `set_level` 이 바꿀 수 있는 것이 없으므로(모르는 이름이거나
         # "이미 그 수준") 아무것도 안 하는 훅이 불릴 일도 없다.
         self._on_level_change = on_level_change or (lambda name: None)
+        # **이름표·별칭**(2026-11-16 — 초등·중고등을 '초중등' 하나로, `stage/levels.py::OFFERED_LEVELS` 머리말). 이름표는 사람에게
+        # 보이는 이름일 뿐이고 내부 이름(대본·캐시·화면 선택의 열쇠)은 그대로다. 별칭은 **목록에 없는 이름**에만 쓴다 — 목록에
+        # 초등이 따로 있는 감독(테스트·되돌린 구성)에서 `l 초등` 이 중고등으로 새면 안 된다. 안 받으면 둘 다 비어 지금과 같다.
+        self._level_labels = dict(level_labels or {})
+        self._level_aliases = dict(level_aliases or {})
 
         # **코스**(2026-09-25, `data/courses.yaml` → `stage/courses.py::load_courses`). 이름 → 큐 id 들(None 이면
         # 전체), dict 순서가 곧 페이지 버튼 순서이고 첫째가 기동 코스다. 안 받으면 "전체" 하나 — 기존 호출부·
@@ -1314,24 +1321,26 @@ class Director:
         결과는 전부 경고 한 줄로 남긴다(바꿈·이미·모름·실패). 운영자 화면(대시보드 로그)과 터미널에
         같은 줄이 가야 "누가 언제 수준을 바꿨나" 를 로그로 따라간다.
         """
+        name = self.canonical_level(name)
+        label = self.level_label
         with self._lock:
             if name not in self._level_min_chars:
                 # 오타 한 번이 시연을 흔들면 안 된다 — 경고만. 고를 수 있는 것을 같이
                 # 보여 줘야 운영자가 그 자리에서 다시 친다.
                 self._warn(
                     f"모르는 관람객 수준이다: {name!r} — 바꾸지 않는다"
-                    f"(고를 수 있는 것: {', '.join(self._level_min_chars)})"
+                    f"(고를 수 있는 것: {', '.join(label(n) for n in self._level_min_chars)})"
                 )
                 return
             if name == self._level_name:
-                self._warn(f"관람객 수준은 이미 {name} 이다 — 바꿀 것이 없다")
+                self._warn(f"관람객 수준은 이미 {label(name)} 이다 — 바꿀 것이 없다")
                 return
             old = self._level_name
             try:
                 self._on_level_change(name)
             except Exception as exc:  # noqa: BLE001 — 곁다리 기능의 실패가 진행을 막으면 안 된다
                 self._warn(
-                    f"관람객 수준 {name} 전환 실패({type(exc).__name__}: {exc}) — {old} 그대로 간다"
+                    f"관람객 수준 {label(name)} 전환 실패({type(exc).__name__}: {exc}) — {label(old)} 그대로 간다"
                 )
                 return
             self._level_name = name
@@ -1339,7 +1348,7 @@ class Director:
             if self._points:
                 # 지금 큐의 턴 대본을 새 수준으로 — 위치(`_point_i`)는 그대로.
                 self._points = self._sheet.current().points_for(name)
-            self._warn(f"관람객 수준 {old} → {name} — 바로 적용(지금 문장은 끝까지, 다음 발화부터)")
+            self._warn(f"관람객 수준 {label(old)} → {label(name)} — 바로 적용(지금 문장은 끝까지, 다음 발화부터)")
 
     def level_names(self) -> list[str]:
         """고를 수 있는 관람객 수준 이름 — levels.yaml 순서(페이지 버튼 순서).
@@ -1349,6 +1358,21 @@ class Director:
         나와야 한다 — 따로 읽으면 `REACHY_LEVELS_PATH` 하나로 둘이 갈린다.
         """
         return list(self._level_min_chars)
+
+    def level_label(self, name: str) -> str:
+        """내부 수준 이름 → 사람에게 보이는 이름(2026-11-16 중고등 → '초중등'). 없으면 이름 그대로."""
+        return self._level_labels.get(name, name)
+
+    def level_labels(self) -> dict[str, str]:
+        """고를 수 있는 수준마다 보이는 이름 — 조정실 버튼 글자(`hello.level_labels`). `level_names` 와 같은 이유로 여기서 낸다."""
+        return {n: self.level_label(n) for n in self._level_min_chars}
+
+    def canonical_level(self, name: str) -> str:
+        """사람이 친 이름 → 감독이 받는 이름. 목록에 있으면 그대로, 없으면 별칭을 푼다(모름 판정은 `set_level` 이 한다)."""
+        name = (name or "").strip()
+        if name in self._level_min_chars:
+            return name
+        return self._level_aliases.get(name, name)
 
     def set_mode(self, name: str) -> None:
         """운영 모드를 바꾼다 — 콘솔·대시보드 `m <모드>`(설계 §1-2).

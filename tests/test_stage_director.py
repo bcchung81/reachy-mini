@@ -3933,3 +3933,52 @@ def test_질문_기록은_기본으로_감독_표준출력에_찍힌다(capsys):
     capsys.readouterr()
     d.on_heard("전파가 뭐예요?")
     assert "관람객 질문: '전파가 뭐예요?'" in capsys.readouterr().out.splitlines()
+
+
+# ── 2026-11-16 초등·중고등 → '초중등'(대본은 중고등): 이름표·별칭 ─────────────────────────────────────────
+
+
+def _초중등_감독(levels=None, aliases=None):
+    warned: list[str] = []
+    switched: list[str] = []
+    d = Director(
+        _수준_시트(), generate=lambda r, b, h: "x", send=lambda r, c: None, warn=warned.append,
+        level_name="일반",
+        level_min_chars=levels or {"중고등": 120, "일반": 150, "전문가": 180},
+        on_level_change=switched.append,
+        level_labels={"중고등": "초중등"},
+        level_aliases=aliases if aliases is not None else {"초등": "중고등", "초중등": "중고등"},
+    )
+    return d, warned, switched
+
+
+def test_초등이라고_쳐도_합친_수준으로_가고_보이는_이름은_초중등이다():
+    """운영자가 습관대로 `l 초등` 을 친다 — "모르는 수준" 으로 거절하면 공연 중에 헤맨다. 생성기는 내부 이름(중고등)으로
+    바뀌어야 한다(이름표로 바꾸면 수준별 생성기에 없는 이름이라 전환이 실패한다)."""
+    d, warned, switched = _초중등_감독()
+    d.set_level("초등")
+    assert d.snapshot()["level"] == "중고등"
+    assert switched == ["중고등"]
+    assert warned[-1] == "관람객 수준 일반 → 초중등 — 바로 적용(지금 문장은 끝까지, 다음 발화부터)"
+    d.set_level("초중등")
+    assert warned[-1] == "관람객 수준은 이미 초중등 이다 — 바꿀 것이 없다"
+    assert d.level_labels() == {"중고등": "초중등", "일반": "일반", "전문가": "전문가"}
+
+
+def test_모르는_수준_안내는_보이는_이름으로_고를_것을_준다():
+    d, warned, _ = _초중등_감독()
+    d.set_level("유치원")
+    assert warned[-1] == "모르는 관람객 수준이다: '유치원' — 바꾸지 않는다(고를 수 있는 것: 초중등, 일반, 전문가)"
+
+
+def test_별칭은_목록에_없는_이름에만_쓴다():
+    """목록에 초등이 따로 있는 감독(되돌린 구성·테스트)에서 별칭이 먼저 먹으면 `l 초등` 이 중고등으로 샌다."""
+    d, _, switched = _초중등_감독(levels=dict(_수준_하한))
+    d.set_level("초등")
+    assert d.snapshot()["level"] == "초등" and switched == ["초등"]
+
+
+def test_이름표와_별칭을_안_주면_지금과_같다():
+    h = _수준_감독()
+    assert h.d.level_labels() == {n: n for n in _수준들}
+    assert h.d.canonical_level("초중등") == "초중등"

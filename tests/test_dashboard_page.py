@@ -905,3 +905,13 @@ def test_헤드리스_조정실_소켓이_끊기면_로봇_알약은_모름이�
     after = js(_RED)
     assert after[0] == "rgb(229, 72, 77)" and after[1] == "rgb(58, 29, 33)" and after[4] is False, after
     assert browser["errors"] == []
+
+
+def test_수준_버튼과_머리_줄은_이름표로_보이고_명령은_내부_이름으로_보낸다():
+    """2026-11-16 '초중등'(내부 이름 중고등). 버튼 글자를 이름표로 바꾸면서 명령까지 이름표로 보내면 감독이 별칭으로 받아
+    주긴 하지만, 이름표가 별칭에 없는 구성이면 "모르는 수준" 이 된다 — 명령은 내부 이름이어야 한다."""
+    html = PAGE.read_text(encoding="utf-8")
+    assert "msg.level_labels" in html
+    assert "btn.textContent = levelLabel(name);" in html
+    assert 'sendCmd("l " + name)' in html
+    assert "levelLabel(d.level)" in html            # 시연 화면 머리 줄

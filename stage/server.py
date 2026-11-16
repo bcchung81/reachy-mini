@@ -33,6 +33,8 @@ class StageServer:
         level_min_chars: dict[str, int] | None = None,
         on_level_change: Callable[[str], None] | None = None,
         camera: CameraRelay | None = None,
+        level_labels: dict[str, str] | None = None,
+        level_aliases: dict[str, str] | None = None,
         courses: dict[str, tuple[str, ...] | None] | None = None,
     ) -> None:
         self._warn = warn
@@ -60,6 +62,10 @@ class StageServer:
             docent_min_chars=docent_min_chars,
             level_min_chars=level_min_chars,
             on_level_change=on_level_change,
+            # 수준 이름표·별칭(2026-11-16 초등·중고등 → 초중등)도 같은 길이다 — 안 넘기면 조정실 버튼이 "중고등" 으로
+            # 보이고 `l 초등` 이 거절된다. `tests/test_stage_main.py::test_main_에서_감독까지_초중등_수준이_이어진다` 가 지킨다.
+            level_labels=level_labels,
+            level_aliases=level_aliases,
             # 코스(2026-09-25)도 같은 길이다 — 여기서 안 넘기면 감독은 늘 "전체" 하나로 돈다.
             # `tests/test_stage_main.py::test_main_에서_감독까지_코스가_이어진다` 가 지킨다.
             courses=courses,

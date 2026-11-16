@@ -272,12 +272,15 @@ def test_도슨트_프롬프트에_음성_출력_규칙이_있다():
 
 
 def test_기동_로그에_수준이_찍힌다(capsys, monkeypatch):
-    """엉뚱한 수준으로 도는 것은 조용히 품질만 떨어지는 전형적인 실패다."""
+    """엉뚱한 수준으로 도는 것은 조용히 품질만 떨어지는 전형적인 실패다.
+
+    2026-11-16 초등·중고등을 '초중등' 하나로 합쳤다(대본은 중고등) — 습관대로 `초등` 으로 세워도 보이는 이름은
+    초중등이어야 한다(내부 이름 "중고등" 이 찍히면 운영자가 "초등 대본이 아니네" 하고 헷갈린다)."""
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     import stage.__main__ as m
     from stage.levels import level_of_env
     m.announce_level(level_of_env(load_levels()), explicit=True)
-    assert "초등" in capsys.readouterr().out
+    assert "관람객 수준: 초중등 (환경변수)" in capsys.readouterr().out
 
 
 def test_수준_출처_라벨은_전달받은_explicit만_보고_환경변수를_다시_읽지_않는다(
@@ -369,7 +372,7 @@ def test_main_이_수준_이름을_StageServer에_넘긴다(monkeypatch):
 
     (~~`mc_lines` 도 함께 봤다~~ — 고정 대본 전환으로 사전 생성 캐시가 사라졌다.)
     """
-    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
+    monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "전문가")
     seen: dict[str, object] = {}
 
     class _멈춤(Exception):
@@ -384,9 +387,10 @@ def test_main_이_수준_이름을_StageServer에_넘긴다(monkeypatch):
     with pytest.raises(_멈춤):
         stage_main.main()
 
-    assert seen["level_name"] == "초등", (
+    # ~~"초등"~~ — 2026-11-16 초등은 고르는 수준이 아니다(초중등으로 합침). 기본값과 다른 다른 수준으로 세운다.
+    assert seen["level_name"] == "전문가", (
         "main() 이 level.name 을 StageServer 에 넘기지 않았다 — 환경변수로 세운 "
-        f"'초등' 이 아니라 {seen['level_name']!r} 이 닿았다"
+        f"'전문가' 가 아니라 {seen['level_name']!r} 이 닿았다"
     )
 
 
@@ -765,7 +769,7 @@ def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_
     """배선 하나라도 빠지면 `l` 이 반쯤만 돈다: 하한 목록이 빠지면 네 수준 중 지금
     것만 알아 나머지는 "모르는 수준", 훅이 빠지면 감독이 기동에서 막고(ValueError),
     전환기 대신 한 수준 생성기를 넘기면 페르소나가 처음 수준에 굳는다.
-    처음 수준은 기본값("일반")이 아닌 "초등"(함정 ③)."""
+    처음 수준은 기본값("일반")이 아닌 "초등"(함정 ③) — 2026-11-16 부터 별칭이라 내부 이름 "중고등" 으로 기동한다."""
     monkeypatch.setenv("REACHY_AUDIENCE_LEVEL", "초등")
     만든것: list[str] = []
     monkeypatch.setattr(stage_main, "build_generate", _가짜_생성기_공장(만든것))
@@ -782,13 +786,14 @@ def test_main_은_수준별_하한과_전환_훅과_전환기를_StageServer에_
     with pytest.raises(_멈춤):
         stage_main.main()
 
-    assert list(seen["level_min_chars"].items()) == [
-        ("초등", 90), ("중고등", 120), ("일반", 150), ("전문가", 180),     # 2026-11-13 늘림(질문 답 "좀 더 풍부하게")
-    ]
-    assert seen["generate"]("docent", "지시", []) == "초등:docent:지시"
+    # 고르는 수준은 셋(2026-11-16 초등·중고등 → 초중등, 대본은 중고등). 하한은 2026-11-13 늘린 값(질문 답 "좀 더 풍부하게").
+    assert list(seen["level_min_chars"].items()) == [("중고등", 120), ("일반", 150), ("전문가", 180)]
+    assert seen["level_labels"] == {"중고등": "초중등"}
+    assert seen["level_aliases"] == {"초중등": "중고등", "초등": "중고등"}
+    assert seen["generate"]("docent", "지시", []) == "중고등:docent:지시"
     seen["on_level_change"]("전문가")
     assert seen["generate"]("docent", "지시", []) == "전문가:docent:지시"
-    assert 만든것 == ["초등", "전문가"]
+    assert 만든것 == ["중고등", "전문가"]
 
 
 _수준_큐시트 = """\
@@ -847,7 +852,7 @@ def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkey
         stage_main.main()
 
     d = seen["server"].director
-    assert d.level_names() == ["초등", "중고등", "일반", "전문가"]
+    assert d.level_names() == ["중고등", "일반", "전문가"]      # 2026-11-16 초등·중고등 → 초중등(내부 이름 중고등)
     d.set_level("전문가")
 
     # ~~`d.start()` 직후의 해설 생성으로 배선을 봤다~~ — 2026-09-23 고정 대본
@@ -870,7 +875,7 @@ def test_main_에서_감독까지_수준_전환이_끝까지_이어진다(monkey
     # 지시문이 **전문가 수준의** 큐 브리프를 실어야 한다 — 수준이 감독 안쪽
     # (`brief_for`)까지 닿았다는 증거다.
     assert "그건 왜 그런가요?" in 지시 and "전문가 해설" in 지시
-    assert 만든것 == ["초등", "전문가"]
+    assert 만든것 == ["중고등", "전문가"]     # 기동 `초등` 은 별칭 — 합친 수준(중고등) 생성기로 뜬다(2026-11-16)
     assert d.snapshot()["level"] == "전문가"
 
 
@@ -1013,3 +1018,39 @@ def test_원문을_모르는_클라이언트면_절을_이어_붙인다(기록LL
     기록LLM.답 = ["하나요.", "둘이요."]
     generate = stage_main.build_generate(_레벨)
     assert generate("docent", "지시", []) == "하나요.둘이요."
+
+
+def test_main_에서_감독까지_초중등_수준이_이어진다(monkeypatch, tmp_path):
+    """2026-11-16 초등·중고등을 '초중등' 하나로 합쳤다(대본은 중고등, 실기 리허설 중 사용자 결정).
+    `main()` → **진짜** `StageServer` → **진짜** `Director` 한 줄에서: 고르는 수준이 셋이고, 중고등이 '초중등' 으로 보이고,
+    운영자가 습관대로 `l 초등`·`l 초중등` 을 쳐도 합친 수준으로 간다. 이름표·별칭 두 인자 중 하나라도 서버에서 끊기면
+    조정실 버튼이 "중고등" 으로 보이거나 `l 초등` 이 "모르는 수준" 으로 거절된다 — 둘 다 여기서 깨진다."""
+    cues = tmp_path / "cues.yaml"
+    cues.write_text(_수준_큐시트, encoding="utf-8")
+    monkeypatch.setenv("REACHY_CUES_PATH", str(cues))
+    monkeypatch.delenv("REACHY_AUDIENCE_LEVEL", raising=False)
+    monkeypatch.setattr(stage_main, "build_generate", lambda level, warn=print: (lambda role, brief, history: "해설"))
+    경고: list[str] = []
+    진짜 = stage_main.StageServer
+    seen: dict = {}
+
+    class _멈춤(Exception):
+        pass
+
+    def 붙잡기(*a, **kw):
+        kw["warn"] = 경고.append
+        seen["server"] = 진짜(*a, **kw)
+        raise _멈춤
+
+    monkeypatch.setattr(stage_main, "StageServer", 붙잡기)
+    with pytest.raises(_멈춤):
+        stage_main.main()
+
+    d = seen["server"].director
+    assert d.level_names() == ["중고등", "일반", "전문가"]
+    assert d.level_labels() == {"중고등": "초중등", "일반": "일반", "전문가": "전문가"}
+    d.set_level("초등")
+    assert d.snapshot()["level"] == "중고등"
+    assert any("관람객 수준 일반 → 초중등" in w for w in 경고), 경고
+    d.set_level("초중등")
+    assert any("이미 초중등" in w for w in 경고), 경고

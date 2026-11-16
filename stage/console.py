@@ -134,7 +134,7 @@ def dispatch(director: Director, cmd: str, out, camera=None) -> None:
             _stop_first(director)
         director.goto(cue_id)
     elif cmd.startswith("l "):
-        # 관람객 수준(초등/중고등/일반/전문가) — **바로, 다음 발화부터** 적용된다(2026-09-25,
+        # 관람객 수준(초중등/일반/전문가 — 2026-11-16 합침, `초등`·`중고등` 도 받는다) — **바로, 다음 발화부터** 적용된다(2026-09-25,
         # ~~다음 큐부터~~). `n`·`g` 와 달리 먼저 멈추지 않는다: 지금 문장은 끝까지 가고 그 뒤의
         # 도슨트 설명·질문 답부터 새 수준이다. 이름 검증·경고 문구는 `Director.set_level` 한
         # 곳에만 둔다(`g` 와 같은 이유). 대시보드가 명령을 `.lower()` 해도 한글 수준 이름은 그대로다.

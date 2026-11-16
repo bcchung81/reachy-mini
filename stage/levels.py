@@ -14,6 +14,30 @@ import yaml
 LEVEL_NAMES = ("초등", "중고등", "일반", "전문가")
 DEFAULT_LEVEL = "일반"
 
+# **공연에서 고르는 수준은 셋이다 — 초등·중고등을 '초중등' 하나로 합쳤다**(2026-11-16 사용자 결정, 실기 리허설 중).
+# 합친 수준은 **중고등 대본**으로 말한다(용어를 풀어 말하고 비유로 열어 원리를 한 겹 — 고학년 초등에게도 통하고
+# 중고등에게 유치하지 않다). 데이터(대본·교육자료 카드·조사 자료·웹툰·구운 음성)는 `LEVEL_NAMES` 네 수준 그대로 둔다 —
+# 고르는 자리(조정실 버튼·콘솔 `l`·기동 수준·교육자료 주소)만 합친다. 그래서 다시 굽지 않고, 되돌릴 때도 아래 세 줄만
+# 고친다(`OFFERED_LEVELS` 에 "초등" 을 다시 넣고 `LEVEL_LABELS`·`LEVEL_ALIASES` 를 비운다).
+#   OFFERED_LEVELS — 감독이 받아들이고 조정실이 버튼으로 보이는 수준(이 순서가 버튼 순서).
+#   LEVEL_LABELS   — 사람에게 보이는 이름. 내부 이름(대본·캐시·화면 선택의 열쇠)은 그대로 "중고등" 이다.
+#   LEVEL_ALIASES  — 쳐도 받아 주는 다른 이름. 운영자가 습관대로 `l 초등` 을 쳐도, 교사가 옛 `/handout?level=초등`
+#                    주소를 열어도 거절하지 않고 합친 수준으로 간다(바뀐 것은 감독 경고 줄에 이름으로 남는다).
+OFFERED_LEVELS = ("중고등", "일반", "전문가")
+LEVEL_LABELS = {"중고등": "초중등"}
+LEVEL_ALIASES = {"초중등": "중고등", "초등": "중고등"}
+
+
+def canonical_level(name: str) -> str:
+    """사람이 친 수준 이름 → 내부 이름(별칭이면 바꾸고, 아니면 그대로 — 모르는 이름의 판정은 받는 쪽이 한다)."""
+    name = (name or "").strip()
+    return LEVEL_ALIASES.get(name, name)
+
+
+def level_label(name: str) -> str:
+    """내부 수준 이름 → 사람에게 보이는 이름."""
+    return LEVEL_LABELS.get(name, name)
+
 # 숫자 네 필드와 문자열 네 필드를 나눠 둔다 — `load_levels` 가 타입별로 다른
 # 검사를 하기 때문이다(리뷰: 존재만 보고 타입을 안 봤다).
 _INT_FIELDS = (
@@ -114,8 +138,10 @@ def level_of_env(levels: dict[str, Level]) -> Level:
     raw = os.environ.get("REACHY_AUDIENCE_LEVEL", "").strip()
     if not raw:
         return levels[DEFAULT_LEVEL]
-    if raw not in levels:
-        raise LevelError(
-            f"REACHY_AUDIENCE_LEVEL 이 {raw!r} 다 — 쓸 수 있는 값: {', '.join(LEVEL_NAMES)}"
-        )
-    return levels[raw]
+    # 별칭(`초등`·`초중등` → 중고등)을 먼저 푼다. 고르는 수준이 셋이 된 뒤(2026-11-16)에도 데이터는 네 수준이라
+    # `levels` 에는 초등이 있다 — 별칭을 안 풀면 `REACHY_AUDIENCE_LEVEL=초등` 이 조정실에 버튼이 없는 수준으로 기동한다.
+    name = canonical_level(raw)
+    if name not in levels or name not in OFFERED_LEVELS:
+        offered = ", ".join(f"{level_label(n)}" for n in OFFERED_LEVELS)
+        raise LevelError(f"REACHY_AUDIENCE_LEVEL 이 {raw!r} 다 — 쓸 수 있는 값: {offered}")
+    return levels[name]

@@ -181,6 +181,12 @@ class DashboardServer:
             return connection.respond(500, "page missing")
         return self._html(connection, 200, body)
 
+    def _level_labels(self) -> dict:
+        names = self._director.level_names()
+        fn = getattr(self._director, "level_labels", None)
+        labels = fn() if callable(fn) else {}
+        return {n: labels.get(n, n) for n in names}
+
     def stage_manifest(self) -> dict:
         """`/stage/auto` 가 화면을 고를 재료 — 수준별 순서·화면마다 가진 큐·이름. 가진 큐는 **빌드된 페이지에서** 읽는다
         (웹툰·분해도가 19큐로 늘면 여기를 안 고쳐도 따라온다). 파일이 바뀌면 다시 읽는다(mtime)."""
@@ -221,6 +227,11 @@ class DashboardServer:
         courses = self._director.course_names()
         q = urllib.parse.parse_qs(query)
         asked = (q.get("level") or [""])[0].strip()
+        # 별칭을 푼다(2026-11-16): 고르는 수준이 셋이 된 뒤에도 교사 손에 옛 `?level=초등` 주소가 남아 있다 —
+        # 400 으로 막지 않고 합친 수준(중고등 대본)의 자료를 준다. 모르는 이름의 400 은 그대로다.
+        canon = getattr(self._director, "canonical_level", None)
+        if asked and callable(canon):
+            asked = canon(asked)
         course = (q.get("course") or [""])[0].strip()
         if not asked or not course:
             snap = self._safe_snapshot() or {}
@@ -238,7 +249,8 @@ class DashboardServer:
         ids = self._director.course_ids(course)
         cues = tuple(c for c in self._director.cues() if ids is None or c.id in ids)
         try:
-            body = render_handout(cues, asked, levels, course=course if len(courses) > 1 else None)
+            body = render_handout(cues, asked, levels, course=course if len(courses) > 1 else None,
+                                  labels=self._level_labels())
         except Exception as exc:  # noqa: BLE001 — 교육자료가 깨져도 서버는 산다. 원인은 터미널에
             self._warn(f"교육자료를 만들지 못했다({type(exc).__name__}: {exc})")
             return connection.respond(500, "handout failed")
@@ -297,6 +309,9 @@ class DashboardServer:
                 # 헤더의 관람객 수준 버튼(levels.yaml 순서). 파일을 따로 읽지 않고 감독에게
                 # 받는다 — 버튼 이름과 감독이 받아들이는 이름(`l <수준>`)이 한 곳에서 나온다.
                 "levels": self._director.level_names(),
+                # 버튼 글자(2026-11-16 — 내부 이름 "중고등" 을 '초중등' 으로 보인다). 보내는 명령은 여전히 내부 이름이다.
+                # 이름표를 모르는 감독(테스트의 가짜 감독·옛 감독)이면 이름 그대로 — 버튼이 사라지지 않는다.
+                "level_labels": self._level_labels(),
                 # 헤더의 운영 모드 토글(podcast/solo 순서). 수준과 같은 이유로 감독에게
                 # 받는다 — 버튼 이름과 `m <모드>` 가 받아들이는 이름이 한 곳에서 나온다.
                 "modes": self._director.mode_names(),

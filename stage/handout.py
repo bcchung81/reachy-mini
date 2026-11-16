@@ -61,19 +61,24 @@ def _line(who_class: str, who: str, text: str) -> str:
 
 
 def render_handout(cues: tuple[Cue, ...] | list[Cue], level: str, levels: list[str],
-                   title: str = "전파체험관 해설", course: str | None = None) -> str:
+                   title: str = "전파체험관 해설", course: str | None = None,
+                   labels: dict[str, str] | None = None) -> str:
     """교육자료 한 장(HTML). `level` 은 `levels` 안에 있어야 한다 — 없으면 ValueError(부른 쪽이 가른다).
 
     `cues` 는 부른 쪽이 코스로 거른 것이다(오늘 들은 이야기). `course` 를 주면 머리에 코스를 적고 수준 링크가 그
     코스를 유지한다 — 하이라이트 자료를 보다 수준을 바꿨는데 전체 자료가 나오면 안 된다.
+    `labels` 는 보이는 이름(2026-11-16 중고등 → '초중등')이다 — 주소의 `?level=` 은 내부 이름 그대로 둔다.
     """
+    def lab(name: str) -> str:
+        return (labels or {}).get(name, name)
+
     if level not in levels:
         raise ValueError(f"모르는 관람객 수준이다: {level!r} (고를 수 있는 것: {', '.join(levels)})")
     keep = f"&course={urllib.parse.quote(course)}" if course else ""
     links = []
     for lv in levels:
         on = ' class="on" aria-current="page"' if lv == level else ""
-        links.append(f'<a href="/handout?level={urllib.parse.quote(lv)}{keep}"{on}>{html.escape(lv)}</a>')
+        links.append(f'<a href="/handout?level={urllib.parse.quote(lv)}{keep}"{on}>{html.escape(lab(lv))}</a>')
     nav = "".join(links)
     sections = []
     for i, cue in enumerate(cues, start=1):
@@ -89,10 +94,10 @@ def render_handout(cues: tuple[Cue, ...] | list[Cue], level: str, levels: list[s
     return (
         "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        f"<title>{html.escape(title)} — {html.escape(level)} 교육자료</title>"
+        f"<title>{html.escape(title)} — {html.escape(lab(level))} 교육자료</title>"
         f"<style>{_STYLE}</style></head><body><main>"
         f"<header><h1>{html.escape(title)} — 오늘 들은 이야기</h1>"
-        f'<p class="sub">관람객 수준: <strong>{html.escape(level)}</strong>'
+        f'<p class="sub">관람객 수준: <strong>{html.escape(lab(level))}</strong>'
         + (f" · 코스: <strong>{html.escape(course)}</strong>" if course else "")
         + " · 사회자와 도슨트 로봇이 나눈 해설을 그대로 옮겼습니다.</p>"
         f'<nav aria-label="관람객 수준">{nav}<button type="button" onclick="window.print()">인쇄하기</button></nav>'

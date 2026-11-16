@@ -471,3 +471,16 @@ def test_rtc가_dict가_아니면_경고하고_연결을_유지한다(tmp_path):
             _recv_until(ws, "command")
         finished.acquire(timeout=3)
     assert not errors, errors
+
+
+def test_hello_는_수준_이름표를_싣고_이름표를_모르는_감독이면_이름_그대로(dash):
+    """2026-11-16 조정실 버튼에 '초중등'(내부 이름 중고등)을 보인다. 이름표를 모르는 감독(옛 감독·가짜 감독)이면 버튼이
+    사라지지 않고 이름 그대로 — 보내는 명령은 언제나 내부 이름이다(`hello.levels`)."""
+    with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
+        m = json.loads(ws.recv(timeout=3))
+        assert m["level_labels"] == {"초등": "초등", "전문가": "전문가"}
+    dash["d"].level_labels = lambda: {"초등": "아이"}
+    with connect(f"ws://127.0.0.1:{dash['port']}/ws") as ws:
+        m = json.loads(ws.recv(timeout=3))
+        assert m["levels"] == ["초등", "전문가"]
+        assert m["level_labels"] == {"초등": "아이", "전문가": "전문가"}
