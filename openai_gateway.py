@@ -41,6 +41,7 @@ import os
 import pathlib
 import re
 import ssl
+import sys
 import threading
 import time
 import urllib.parse
@@ -83,6 +84,19 @@ LLAMA_ONLY_FIELDS = (
 SAMPLING_FIELDS = ("temperature", "top_p", "logprobs", "top_logprobs")
 
 CHUNK = 4096
+# OpenAI 로 가는 keep-alive 연결을 다시 쓰는 상한(초) — **마지막으로 쓰고 풀에 돌려준 뒤** 이보다 오래 쉰 연결은 버리고 새로 연다
+# (2026-11-17 시뮬에서 찾음). 계기는 **맥 잠자기(배터리에서 덮개 닫힘)** 로 본다 — 증거 `pmset -g log`: 마지막 LLM 성공 16:06:40 과
+# 첫 실패 16:37:12 사이에 16:12:41~16:27:19 잠들었고, 조율자 재현(17:22, 첫 요청 502 5.01초) 직전에도 16:39:49~17:20:44 잠들었다.
+# 어제 17.5분 쉬고 성공한 때는 잠자기가 없었다. 자는 동안 서버가 보낸 FIN·RST 를 못 받아 깬 뒤에도 소켓이 살아 있는 줄 안다 —
+# 보내기는 되고 응답 머리만 안 와 5초 뒤 `ResponseTimeout`, 관람객 질문이 사과 대사로 갔다. 풀에 쌓인 죽은 연결 수만큼(그때 넷)
+# 요청이 하나씩 실패했다. 다른 가능성: 공유기 NAT 등 중간 장비가 쉬는 연결을 소리 없이 지워도 같은 모양이다(전시장 망의 정리 시간은
+# 미리 모른다) — 이 기준은 둘 다 막는다. 쉰 시간은 잠든 시간까지 센다(`idle_clock_name`). 기준 안의 짧은 잠자기·망 흔들림은
+# `OpenAIPool._drop_idle`(다시 쓴 연결이 시간 초과면 풀을 비운다)이 받는다.
+# 왜 60초인가: 새 연결 비용은 이 망에서 TCP+TLS 약 0.05초(조율자 실측 — 연결 0.016초·TLS 끝 0.033초), 죽은 연결을 다시 쓴 값은
+# 5초 + 사과 대사다. 짧게 잡아도 싸다. 60초면 한 질문 안의 STT → LLM(몇 초 간격)과 이어지는 대화는 연결을 다시 쓰고, 한숨 쉰 뒤의
+# 첫 요청만 0.05초를 더 문다. 흔한 NAT·방화벽이 쉬는 연결을 지우는 시간(보통 분 단위)보다 넉넉히 짧다.
+# `REACHY_OPENAI_POOL_IDLE_S` 로 바꾼다(0 = 다시 쓰지 않음 — 요청마다 새 연결, TTS 프록시와 같은 방식).
+POOL_IDLE_S = 60.0
 # 프록시에서 다시 쓰면 안 되는 홉 단위 헤더(`tts_cache_proxy._HOP` 와 같다).
 _HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "proxy-connection"}
 _SK_RE = re.compile(r"sk-[A-Za-z0-9_\-*]{3,}")
@@ -160,6 +174,7 @@ class Config:
     stt_timeout_s: float = 5.0
     stt_retries: int = 1
     base: str = DEFAULT_BASE
+    pool_idle_s: float = POOL_IDLE_S    # 쉰 연결을 다시 쓰는 상한(`POOL_IDLE_S` 근거) — 넘으면 버리고 새로 연다
     # **[B1 실측]** `languages` 를 비우면 짧은 한국어가 외국어가 된다("다음" → `Palum.`·`さん。`). 기본은 한국어 하나 — 로봇의
     # `auto` 도 이것으로 보낸다. 영어 관람객을 받으려면 `REACHY_OPENAI_STT_LANGUAGES=ko,en`(그때만 허용 밖 감지 → ko 재전사가 돈다).
     stt_languages: tuple = ("ko",)
@@ -205,6 +220,8 @@ def config_from_env(env: dict | None = None, *, llm_engine: str | None = None,
         stt_timeout_s=float(env.get("REACHY_OPENAI_STT_TIMEOUT_S") or 5.0),
         stt_retries=int(env.get("REACHY_OPENAI_STT_RETRIES") or 1),
         base=(env.get("REACHY_OPENAI_BASE") or DEFAULT_BASE).strip(),
+        # 음수는 0 으로(다시 쓰지 않음) — "기준이 음수라 모든 연결이 영원히 산다" 같은 뜻 없는 값을 남기지 않는다.
+        pool_idle_s=max(0.0, float(env.get("REACHY_OPENAI_POOL_IDLE_S") or POOL_IDLE_S)),
         stt_languages=tuple(s.strip().lower() for s in (env.get("REACHY_OPENAI_STT_LANGUAGES") or "ko").split(",")
                             if s.strip()) or ("ko",),
         auto_min_s=float(env.get("STT_AUTO_MIN_S") or 1.0),
@@ -620,6 +637,14 @@ class ResponseTimeout(TimeoutError):
     """요청은 보냈는데 응답 머리가 시간 안에 안 왔다(연결 시간 초과와 가르려고 따로 둔다)."""
 
 
+class ConnectTimeout(TimeoutError):
+    """새 연결의 TCP 연결·TLS 손잡기가 시간 안에 안 끝났다 — **OpenAI 에 못 닿은 것**이다(답 없는 망·막힌 방화벽).
+
+    따로 두는 이유(2026-11-17): 맨 `TimeoutError` 로 두면 실패 종류가 `timeout` 이 되어, 예열이 "응답이 늦었다 — 일시적일 수
+    있다" 로 읽는다. 인터넷이 실제로 끊긴(그런데 RST 도 안 오는) 전시장 망에서 운영자를 로그로 보내게 된다. 연결 단계의 시간 초과는
+    `connect` — "인터넷을 확인한다" 로 간다."""
+
+
 # 외부 전용 502 에 싣는 실패 종류(`upstream`). 예열(`scripts/warmup.py`)이 이것으로 "키가 틀렸다 / 잔액·한도 / 인터넷" 을
 # 가른다(계획 2026-11-14 A-1). **종류만** 싣는다 — OpenAI 메시지 글은 401 때 키 조각을 되돌려 주므로(lessons 2026-11-12)
 # 응답에 실으면 예열 화면·로그로 샌다. 원인 글은 게이트웨이 로그에만 남는다(키는 `scrub` 으로 지워서).
@@ -637,7 +662,9 @@ def upstream_kind(status: int | None = None, exc: BaseException | None = None) -
         if 400 <= status < 500:
             return "4xx"
         return "other"
-    if isinstance(exc, TimeoutError):          # ResponseTimeout·socket.timeout 모두 TimeoutError 다
+    if isinstance(exc, ConnectTimeout):        # 연결·TLS 손잡기에서 시간이 다 갔다 — 못 닿았다(위 ConnectTimeout 근거)
+        return "connect"
+    if isinstance(exc, TimeoutError):          # ResponseTimeout·본문 읽기의 socket.timeout — 보냈는데 응답이 늦었다
         return "timeout"
     if isinstance(exc, OSError):               # 연결 거부·이름 풀기 실패·TLS·끊김(RemoteDisconnected 도 OSError)
         return "connect"
@@ -655,6 +682,31 @@ class GatewayError(RuntimeError):
         self.kind = "timeout" if slow else kind
 
 
+def idle_clock_name(platform: str = sys.platform, boottime: bool = hasattr(time, "CLOCK_BOOTTIME")) -> str:
+    """쉰 연결 기준을 잴 시계 — **맥이 잠든 시간까지 세는** 단조 시계를 고른다(2026-11-17).
+
+    `time.monotonic` 은 macOS 에서 `mach_absolute_time` 이라 잠든 동안 멈춘다(이 맥 실측: 부팅 뒤 `CLOCK_MONOTONIC` 497,461초 대
+    `time.monotonic` 464,727초 — 잠든 약 9시간이 빠졌다). 그 시계로 재면 "질문 직후 덮개를 닫고 점심 → 열자마자 질문" 이 쉰 시간 0초로
+    보여 죽은 연결을 다시 쓴다. 2026-11-17 의 두 번 모두 쉰 사이에 덮개 닫힘 잠자기가 있었다(16:12:41~16:27:19, 16:39:49~17:20:44 —
+    `pmset -g log`). macOS 의 `CLOCK_MONOTONIC` 은 잠든 동안에도 흐르고, 리눅스는 `CLOCK_BOOTTIME` 이 그렇다(리눅스 `CLOCK_MONOTONIC` 은
+    멈춘다). 둘 다 없으면 `time.monotonic` 으로 물러나고 기동 때 경고한다(`main`)."""
+    if boottime:
+        return "CLOCK_BOOTTIME"
+    if platform == "darwin":
+        return "CLOCK_MONOTONIC"
+    return "monotonic"
+
+
+IDLE_CLOCK_NAME = idle_clock_name()
+
+
+def idle_clock() -> float:
+    """`IDLE_CLOCK_NAME` 의 지금 값(초). 요청 마감(`deadline`)에는 쓰지 않는다 — 그쪽은 `time.monotonic` 그대로다."""
+    if IDLE_CLOCK_NAME == "monotonic":
+        return time.monotonic()
+    return time.clock_gettime(getattr(time, IDLE_CLOCK_NAME))
+
+
 def set_timeout(conn: http.client.HTTPConnection, seconds: float) -> None:
     """이미 열린 연결의 소켓 시간 상한을 바꾼다(응답 본문 읽기도 이 소켓을 탄다)."""
     conn.timeout = seconds
@@ -667,19 +719,37 @@ class OpenAIPool:
 
     남겨 둔 연결은 서버가 그사이 닫았을 수 있다 — 보내다 끊기면(`RemoteDisconnected` 등) 새 연결로 한 번만 다시 보낸다.
     시간 초과는 다시 보내지 않는다(관람객이 기다린다 — 호출자가 로컬로 넘긴다).
+
+    **오래 쉰 연결은 다시 쓰지 않는다**(2026-11-17, `POOL_IDLE_S` 근거). 위의 "끊기면 다시" 는 서버의 FIN·RST 가 이 PC 에 도착한
+    경우만 잡는다. PC 가 잠든 사이 저쪽이 닫으면(2026-11-17 의 계기 — `pmset -g log`) 그 FIN·RST 는 깬 뒤에도 도착하지 않는다.
+    중간 장비(공유기 NAT 등)가 쉬는 연결을 **소리 없이** 지워도 같다(다른 가능성) — 보내기는 성공하고(커널
+    버퍼) 응답 머리만 오지 않아 마감까지 기다린 뒤 `ResponseTimeout` 이다. 시간 초과는 다시 보내지 않으므로 그 요청은 실패한다.
+    그래서 꺼낼 때 **쉰 시간**으로 가른다(`idle_max_s` 이상 쉬었으면 닫고 새로 연다).
+    소켓이 읽기 가능한지 보는 검사(select·MSG_PEEK — urllib3 의 `is_connection_dropped` 가 하는 것)로는 못 잡는다: 그 검사는
+    상대가 보낸 FIN·RST 가 **도착했을 때만** 참이다. 소리 없이 끊긴 연결은 끝까지 멀쩡해 보인다.
+    TCP keepalive 로 연결을 살려 두는 길도 있지만, 서버가 HTTP 단에서 쉬는 연결을 닫는 것은 탐침으로 못 막고(탐침은 앱에 아무것도
+    전하지 않는다), OS 마다 옵션 이름·단위가 다르며(macOS `TCP_KEEPALIVE` · 리눅스 `TCP_KEEPIDLE`), 중간 장비의 정리 시간보다 짧게
+    맞췄는지 이 PC 에서는 알 길이 없다 — 쉰 연결을 버리는 쪽이 단순하고 확실하다.
+
+    `clock` 은 **쉰 시간만** 잰다 — 기본은 잠든 시간까지 세는 `idle_clock`(근거 `idle_clock_name`), 시험은 가짜 시계를 꽂는다.
+    요청의 마감(`deadline`)은 호출자의 `time.monotonic` 그대로다.
     """
 
     _STALE = (http.client.RemoteDisconnected, http.client.CannotSendRequest, BrokenPipeError,
               ConnectionResetError, ConnectionAbortedError)
 
-    def __init__(self, base: str, max_idle: int = 8) -> None:
+    def __init__(self, base: str, max_idle: int = 8, idle_max_s: float = POOL_IDLE_S, clock=idle_clock) -> None:
         u = urllib.parse.urlsplit(base)
         self.https = u.scheme == "https"
         self.host = u.hostname or "api.openai.com"
         self.port = u.port or (443 if self.https else 80)
         self.prefix = u.path.rstrip("/")
         self.max_idle = max_idle
-        self._idle: list[http.client.HTTPConnection] = []
+        self.idle_max_s = idle_max_s
+        self.clock = clock
+        self.idle_dropped = 0            # 쉰 시간이 넘어 버린 연결 수(누적) — 실제 확인·진단에서 본다
+        self.flushed = 0                 # 다시 쓴 연결의 시간 초과로 같이 닫은 연결 수(누적, `_drop_idle`)
+        self._idle: list[tuple[http.client.HTTPConnection, float]] = []    # (연결, 풀에 돌려준 시각)
         self._lock = threading.Lock()
         self._ctx = ssl.create_default_context() if self.https else None
 
@@ -689,8 +759,20 @@ class OpenAIPool:
         return http.client.HTTPConnection(self.host, self.port, timeout=timeout)
 
     def _take(self) -> http.client.HTTPConnection | None:
+        """쉰 시간이 기준 안인 연결 하나(가장 최근에 돌려준 것). 기준을 넘은 것은 **전부** 닫는다 — 하나만 버리고 나머지를 남기면
+        다음 요청들이 남은 죽은 연결을 하나씩 맞는다(2026-11-17 에 연달아 넷이 실패한 모양)."""
         with self._lock:
-            return self._idle.pop() if self._idle else None
+            now = self.clock()
+            expired = [(c, now - t) for c, t in self._idle if now - t >= self.idle_max_s]
+            self._idle = [(c, t) for c, t in self._idle if now - t < self.idle_max_s]
+            conn = self._idle.pop()[0] if self._idle else None
+            self.idle_dropped += len(expired)
+        if expired:
+            log.info("OpenAI 연결 %d개가 %.0f초 넘게 쉬어(기준 %g초) 다시 쓰지 않고 닫는다 — 새 연결로 보낸다",
+                     len(expired), max(age for _, age in expired), self.idle_max_s)
+        for c, _ in expired:             # 닫기는 잠금 밖에서 — 다른 스레드의 요청을 붙잡지 않는다
+            c.close()
+        return conn
 
     def request(self, method: str, path: str, body: bytes, headers: dict, deadline: float):
         """(연결, 응답). 응답 머리까지 받은 상태로 돌려준다 — 본문은 호출자가 읽고 `release` 한다.
@@ -707,11 +789,24 @@ class OpenAIPool:
             else:
                 set_timeout(conn, left)
             try:
+                if fresh:
+                    # 연결을 따로 열어 **연결 단계의 시간 초과를 가른다**(`ConnectTimeout` 근거 — 실패 종류 connect 대 timeout).
+                    # `request` 가 알아서 열게 두면 여기서 난 시간 초과와 응답 대기 시간 초과가 같은 `TimeoutError` 로 나온다.
+                    try:
+                        conn.connect()
+                    except TimeoutError as exc:
+                        raise ConnectTimeout(f"연결 시간 초과({exc})") from None
                 conn.request(method, self.prefix + path, body=body, headers=headers)
                 set_timeout(conn, max(0.05, deadline - time.monotonic()))
                 try:
                     return conn, conn.getresponse()
                 except TimeoutError as exc:
+                    if not fresh:
+                        # **다시 쓴** 연결이 응답 없이 시간 초과 — 쉰 시간 기준(60초) 안의 짧은 잠자기·망 흔들림으로 죽었을 수 있고, 그러면
+                        # 풀에 남은 연결도 같은 처지다. 하나씩 맞으면 요청마다 5초씩 실패한다(2026-11-17 에 넷이 연달아 실패한 모양) —
+                        # 남은 것을 모두 닫는다(새 연결 비용 약 0.05초). STT 의 '한 번 더 보내기' 도 그래서 새 연결에 실린다.
+                        # 새로 연 연결이 늦은 것은 OpenAI 가 늦은 것이라 풀을 건드리지 않는다.
+                        self._drop_idle("다시 쓴 연결이 응답 없이 시간 초과")
                     raise ResponseTimeout(f"응답 시간 초과({exc})") from None
             except self._STALE:
                 conn.close()
@@ -723,12 +818,24 @@ class OpenAIPool:
                 raise
         raise AssertionError("도달하지 않는다")
 
+    def _drop_idle(self, why: str) -> None:
+        """풀에 남은 연결을 모두 닫는다(닫기는 잠금 밖에서)."""
+        with self._lock:
+            dropped, self._idle = self._idle, []
+            self.flushed += len(dropped)
+        if dropped:
+            log.info("%s — 풀에 남은 OpenAI 연결 %d개도 같은 처지로 보고 모두 닫는다(다음 요청은 새 연결)", why, len(dropped))
+        for c, _ in dropped:
+            c.close()
+
     def release(self, conn: http.client.HTTPConnection, resp: http.client.HTTPResponse) -> None:
-        """본문을 끝까지 읽은 연결만 남긴다(덜 읽은 연결에 다음 요청을 실으면 응답이 엇갈린다)."""
-        if resp.isclosed() and not resp.will_close and conn.sock is not None:
+        """본문을 끝까지 읽은 연결만 남긴다(덜 읽은 연결에 다음 요청을 실으면 응답이 엇갈린다). 돌려준 시각을 같이 적는다 —
+        쉰 시간은 처음 연 때가 아니라 **마지막으로 쓴 때**부터 잰다(대화가 이어지는 동안 쓰던 연결은 계속 쓴다).
+        기준이 0 이면 남기지 않는다(요청마다 새 연결)."""
+        if self.idle_max_s > 0 and resp.isclosed() and not resp.will_close and conn.sock is not None:
             with self._lock:
                 if len(self._idle) < self.max_idle:
-                    self._idle.append(conn)
+                    self._idle.append((conn, self.clock()))
                     return
         conn.close()
 
@@ -752,7 +859,7 @@ class GatewayServer(ThreadingHTTPServer):
 
 class Shared:
     def __init__(self, cfg: Config) -> None:
-        self.pool = OpenAIPool(cfg.base)
+        self.pool = OpenAIPool(cfg.base, idle_max_s=cfg.pool_idle_s)
         self._lock = threading.Lock()
         self._warned: set[str] = set()
 
@@ -1157,7 +1264,10 @@ def describe(cfg: Config, servers: list[GatewayServer]) -> list[str]:
                              f"{on_fail} · 시도당 {cfg.stt_timeout_s:g}초 × {cfg.stt_retries + 1}번")
             else:
                 lines.append(f"STT {where} → 로컬 {local}(통과)")
-    lines.append(f"OpenAI 키 {key_status(cfg.key)}")
+    # 쉰 연결 기준을 기동 줄에 — 환경변수로 바꿨는지 로그 한 줄로 확인한다(`POOL_IDLE_S` 근거).
+    reuse = (f"쉰 연결은 {cfg.pool_idle_s:g}초 넘으면 새로 연다" if cfg.pool_idle_s > 0
+             else "연결을 다시 쓰지 않는다(요청마다 새 연결)")
+    lines.append(f"OpenAI 키 {key_status(cfg.key)} · {reuse}")
     return lines
 
 
@@ -1191,6 +1301,10 @@ def main() -> None:
                            stt=(args.stt_port, None if args.no_local else args.stt_local)
                            if args.stt_port is not None else None)
     log.info("OpenAI 게이트웨이 — %s", " | ".join(describe(cfg, servers)))
+    if IDLE_CLOCK_NAME == "monotonic" and cfg.pool_idle_s > 0:
+        # 폴백은 소리 내서(CLAUDE.md) — 이 OS 에서는 잠든 시간이 쉰 시간에 안 들어간다(`idle_clock_name` 근거).
+        log.warning("이 OS 에는 잠든 시간까지 세는 시계가 없다 — PC 가 잠들었다 깬 직후의 첫 요청이 죽은 연결을 다시 써 %g초 뒤 "
+                    "실패할 수 있다(REACHY_OPENAI_POOL_IDLE_S=0 이면 요청마다 새 연결)", cfg.llm_timeout_s)
     for s in servers[1:]:
         threading.Thread(target=s.serve_forever, daemon=True).start()
     servers[0].serve_forever()

@@ -372,6 +372,146 @@ def test_OpenAI_연결을_다시_쓴다(openai_fake, local_fake, gateway):
     assert openai_fake.connections == 1          # 새 연결마다 TLS 왕복이 첫 토큰 앞에 얹힌다
 
 
+# ── 오래 쉰 연결(2026-11-17) ───────────────────────────────────────
+def silent_drop_on_reuse(state):
+    """같은 연결의 두 번째 요청부터, `state["dropped"]` 이면 **답하지 않는다** — 맥이 잠든 사이 저쪽이 닫은 연결(2026-11-17 의 계기,
+    `pmset -g log`)이나 중간 장비(공유기 NAT 등)가 소리 없이 지운 연결을 흉내 낸다. FIN·RST 가 이 PC 에 안 오니 게이트웨이의 보내기는
+    성공하고 응답 머리만 오지 않는다(2026-11-17 로그 그대로: 30분 쉰 뒤 `ResponseTimeout` 넷, 같은 때 새 연결을 쓴 STT 는 1.45초 성공)."""
+    def act(h, req):
+        h.served = getattr(h, "served", 0) + 1
+        if h.served > 1 and state["dropped"]:
+            time.sleep(1.5)                      # 게이트웨이 상한(0.5초)보다 길게 — 아무것도 안 보내고 닫는다
+            h.close_connection = True
+            return
+        sse_ok(OPENAI_ANSWER)(h, req)
+    return act
+
+
+def _external_gateway(cfg):
+    """외부 전용 게이트웨이(LLM 만)를 띄우고 (주소, 서버). 시험이 서버의 연결 풀에 가짜 시계를 꽂는다."""
+    srv = og.make_servers(cfg, "127.0.0.1", llm=(0, None))[0]
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    return f"http://127.0.0.1:{srv.server_address[1]}", srv
+
+
+def test_오래_쉰_OpenAI_연결은_다시_쓰지_않고_새로_연다(openai_fake, logs):
+    """2026-11-17 시뮬: 맥이 덮개 닫힘으로 잠들었다 깬 뒤(쉰 30분 중 15분 잠 — `pmset -g log`) 첫 관람객 질문들이 사과 대사로 갔다.
+    쉰 지 기준(기본 60초)을 넘은 연결은 버리고 새로 연다 —
+    새 연결 비용은 이 망에서 약 0.05초, 죽은 연결을 다시 쓰면 5초 기다린 뒤 502 다."""
+    state = {"dropped": False}
+    openai_fake.defaults[og.CHAT_PATH] = silent_drop_on_reuse(state)
+    url, srv = _external_gateway(cfg_on(openai_fake, llm_timeout_s=0.5))
+    now = [1000.0]
+    srv.shared.pool.clock = lambda: now[0]
+    try:
+        ask = LLMClient(base_url=url, system_prompt="s")
+        assert list(ask.chat_stream("하나"))[0] == "오픈에이아이 답이에요."
+        now[0] += og.POOL_IDLE_S - 1                 # 기준 안 — 다시 쓴다(대화 중에는 TLS 왕복을 아낀다)
+        assert list(ask.chat_stream("둘"))[0] == "오픈에이아이 답이에요."
+        assert openai_fake.connections == 1
+        now[0] += 30 * 60                            # 30분 쉼 — 그사이 맥이 잠들어 저쪽이 닫은 것을 못 받았다
+        state["dropped"] = True
+        t0 = time.monotonic()
+        assert list(ask.chat_stream("셋"))[0] == "오픈에이아이 답이에요."    # 고치기 전: 0.5초 기다린 뒤 502 timeout
+        assert time.monotonic() - t0 < 0.4
+        assert openai_fake.connections == 2
+        assert logs.warnings() == []
+        assert srv.shared.pool.idle_dropped == 1     # 버린 연결을 센다(실제 확인·로그에서 본다)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        robot_llm._session.close()
+
+
+def _pool_call(pool):
+    conn, resp = pool.request("POST", og.STT_PATH, b"{}", {"Content-Type": "application/json"}, time.monotonic() + 2)
+    resp.read()
+    pool.release(conn, resp)
+    return conn
+
+
+@pytest.mark.parametrize("idle_s,rest,reused", [
+    (60, 59.9, True), (60, 60, False), (60, 3600, False), (0, 0, False),
+], ids=["기준_안", "기준_딱", "한_시간", "0이면_매번_새로"])
+def test_연결_풀은_쉰_시간으로_다시_쓸지_정하고_버린_연결은_닫는다(openai_fake, idle_s, rest, reused):
+    now = [50.0]
+    pool = og.OpenAIPool(openai_fake.url, idle_max_s=idle_s, clock=lambda: now[0])
+    first = _pool_call(pool)
+    now[0] += rest
+    second = _pool_call(pool)
+    assert (second is first) is reused
+    assert openai_fake.connections == (1 if reused else 2)
+    if not reused:
+        assert first.sock is None                    # 버린 연결은 닫았다 — 소켓이 새지 않는다
+
+
+def test_다시_쓴_연결이_응답_없이_시간_초과면_풀에_남은_연결을_모두_닫는다(openai_fake, logs):
+    """기준(60초) 안의 짧은 잠자기·망 흔들림이면 쉰 시간으로는 못 거른다 — 풀에 남은 연결이 다 죽어 있다. 하나가 응답 없이 시간 초과면
+    나머지도 같은 처지로 보고 닫는다. 안 그러면 다음 요청들이 남은 죽은 연결을 하나씩 맞아 5초씩 실패한다(2026-11-17 에 넷이 연달아 실패한
+    모양). STT 의 '한 번 더 보내기' 도 이 덕분에 죽은 연결이 아니라 새 연결에 실린다."""
+    state = {"dropped": False}
+    openai_fake.defaults[og.CHAT_PATH] = silent_drop_on_reuse(state)
+    pool = og.OpenAIPool(openai_fake.url, idle_max_s=60, clock=lambda: 0.0)      # 시계가 안 간다 — 쉰 시간으로는 안 버린다
+
+    def send(deadline_s):
+        return pool.request("POST", og.CHAT_PATH, b"{}", {"Content-Type": "application/json"},
+                            time.monotonic() + deadline_s)
+    held = [send(2) for _ in range(3)]                   # 동시에 셋 — 연결 셋이 풀에 남는다
+    for conn, resp in held:
+        resp.read()
+        pool.release(conn, resp)
+    assert openai_fake.connections == 3
+    state["dropped"] = True                              # 기준 안에 망이 흔들렸다(짧은 잠자기) — 남은 셋이 다 죽었다
+    with pytest.raises(og.ResponseTimeout):
+        send(0.3)                                        # 다시 쓴 하나가 응답 없이 시간 초과
+    # 마감은 가짜의 침묵(1.5초)보다 짧게 — 실제로는 FIN 이 영영 안 온다. 길게 주면 가짜가 끝에 닫는 것을 '끊김 → 새 연결로 한 번 더'
+    # 가 받아 살아나, 고치기 전에도 통과한다(처음 쓴 이 시험이 그렇게 헛통과했다).
+    t0 = time.monotonic()
+    conn, resp = send(1.0)                               # 고치기 전: 남은 죽은 연결을 또 맞아 시간 초과
+    assert resp.status == 200 and resp.read()
+    assert time.monotonic() - t0 < 0.5
+    assert openai_fake.connections == 4                  # 남은 둘을 다시 쓰지 않고 새로 열었다
+    assert pool.flushed == 2
+    assert any("모두 닫는다" in r.getMessage() for r in logs.records), [r.getMessage() for r in logs.records]
+
+
+def test_쉰_연결을_가르는_시각은_내놓은_때부터_잰다(openai_fake):
+    """처음 연 때가 아니라 **마지막으로 쓰고 풀에 돌려준 때**부터 — 대화가 이어지는 동안 쓰던 연결은 계속 쓴다."""
+    now = [0.0]
+    pool = og.OpenAIPool(openai_fake.url, idle_max_s=60, clock=lambda: now[0])
+    first = _pool_call(pool)
+    for _ in range(5):                               # 50초마다 한 번씩 4분 넘게 — 매번 기준 안이다
+        now[0] += 50
+        assert _pool_call(pool) is first
+    assert openai_fake.connections == 1
+
+
+@pytest.mark.parametrize("platform,boottime,want", [
+    ("darwin", False, "CLOCK_MONOTONIC"), ("linux", True, "CLOCK_BOOTTIME"), ("win32", False, "monotonic"),
+])
+def test_쉰_시간은_잠든_시간까지_세는_시계로_잰다(platform, boottime, want):
+    """`time.monotonic` 은 macOS 에서 `mach_absolute_time` 이라 **잠든 동안 멈춘다**(이 맥 실측 2026-11-17: 부팅 뒤 잠든 약 9시간이
+    빠졌다). 그 시계로 재면 "질문 직후 덮개를 닫고 점심 → 열자마자 질문" 이 쉰 시간 0초로 보여 죽은 연결을 다시 쓴다. 2026-11-17 의
+    두 번 모두 쉰 사이에 덮개 닫힘 잠자기가 있었다(`pmset -g log`). macOS 는 `CLOCK_MONOTONIC`, 리눅스는 `CLOCK_BOOTTIME` 이 잠든 시간을 센다."""
+    assert og.idle_clock_name(platform, boottime) == want
+    assert og.OpenAIPool("https://api.openai.com").clock is og.idle_clock     # 기본 시계가 그것이다
+    a = og.idle_clock()
+    assert og.idle_clock() >= a
+
+
+def test_연결_재사용_기준은_환경변수로_바꾸고_기본은_60초(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("")
+    base = {"OPENAI_ENV_FILE": str(env_file)}
+    assert og.POOL_IDLE_S == 60
+    assert og.config_from_env(base).pool_idle_s == 60
+    assert og.config_from_env(dict(base, REACHY_OPENAI_POOL_IDLE_S="15")).pool_idle_s == 15
+    assert og.config_from_env(dict(base, REACHY_OPENAI_POOL_IDLE_S="-3")).pool_idle_s == 0   # 음수는 '다시 쓰지 않음'
+    cfg = og.Config(key=KEY, llm_engine="openai", pool_idle_s=15)
+    assert og.Shared(cfg).pool.idle_max_s == 15
+    assert any("15초" in line for line in og.describe(cfg, []))                         # 기동 줄에 기준을 적는다
+
+
 def test_이미지_질문은_그대로_싣는다(openai_fake, local_fake, gateway):
     urls = gateway(cfg_on(openai_fake), local_fake.url)
     list(LLMClient(base_url=urls["llm"], system_prompt="s").chat_stream("이게 뭐야?", b"\xff\xd8jpeg"))
@@ -990,12 +1130,23 @@ _LEAK_500 = json_ok({"error": {"message": "The server had an error"}}, status=50
 
 @pytest.mark.parametrize("service", ["llm", "stt"])
 @pytest.mark.parametrize("action,kind", [
-    (_LEAK_401, "401"), (_LEAK_429, "429"), (_LEAK_500, "5xx"), ("dead", "connect"), (hang(3.0), "timeout"),
-], ids=["401", "429", "500", "연결_거부", "시간_초과"])
-def test_외부_전용_502_는_실패_종류를_싣고_메시지는_싣지_않는다(openai_fake, gateway, logs, service, action, kind):
+    (_LEAK_401, "401"), (_LEAK_429, "429"), (_LEAK_500, "5xx"), ("dead", "connect"), ("mute", "connect"),
+    (hang(3.0), "timeout"),
+], ids=["401", "429", "500", "연결_거부", "연결_단계_시간초과", "시간_초과"])
+def test_외부_전용_502_는_실패_종류를_싣고_메시지는_싣지_않는다(openai_fake, gateway, logs, service, action, kind, request):
     """예열(`scripts/warmup.py`)이 "키가 틀렸다 / 잔액·한도 / 인터넷" 을 가를 수 있게 **종류만** 싣는다. 메시지 글은 싣지
-    않는다 — OpenAI 401 메시지가 키 조각을 되돌려 주기 때문이다(lessons 2026-11-12). 로봇은 502 본문을 읽지 않으므로 재배포 없음."""
-    if action == "dead":
+    않는다 — OpenAI 401 메시지가 키 조각을 되돌려 주기 때문이다(lessons 2026-11-12). 로봇은 502 본문을 읽지 않으므로 재배포 없음.
+
+    `timeout` 은 **요청을 보낸 뒤 응답이 늦은 것**만이다(2026-11-17). 연결·TLS 손잡기에서 시간이 다 간 것(답 없는 망)은 `connect` —
+    예열이 둘에 다른 할 일을 말한다(인터넷 확인 / 일시적일 수 있음·로그)."""
+    if action == "mute":
+        mute = socket.socket()                         # TCP 는 받지만(커널 대기열) TLS 손잡기에 답하지 않는다 — 답 없는 망
+        mute.bind(("127.0.0.1", 0))
+        mute.listen(8)
+        request.addfinalizer(mute.close)
+        cfg = og.Config(key=KEY, llm_engine="openai", stt_engine="openai",
+                        base=f"https://127.0.0.1:{mute.getsockname()[1]}", llm_timeout_s=0.5, stt_timeout_s=0.5)
+    elif action == "dead":
         dead = socket.socket()
         dead.bind(("127.0.0.1", 0))
         port = dead.getsockname()[1]
@@ -1037,6 +1188,7 @@ def test_실패_종류는_상태_코드를_다섯_갈래로_줄인다(status, ki
 
 def test_실패_종류는_예외로도_가른다():
     assert og.upstream_kind(exc=og.ResponseTimeout("x")) == "timeout"
+    assert og.upstream_kind(exc=og.ConnectTimeout("x")) == "connect"     # 연결·TLS 손잡기 시간 초과 — 못 닿았다
     assert og.upstream_kind(exc=TimeoutError("timed out")) == "timeout"
     assert og.upstream_kind(exc=ConnectionRefusedError(61, "refused")) == "connect"
     assert og.upstream_kind(exc=socket.gaierror(8, "nodename nor servname")) == "connect"

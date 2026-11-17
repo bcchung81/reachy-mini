@@ -1762,6 +1762,57 @@ start_sim_app() {  # role port audio_out director_url
   say_ok "$role 앱 → 데몬 :$port${out:+, 출력 '$out'}  ${c_dim}로그: $log${c_off}"
 }
 
+# ── 맥 전원·덮개 점검(2026-11-17, 계획 docs/superpowers/plans/2026-11-17-sim-errors-M.md) ──────────
+# 16:39 시뮬 기동 도중 **배터리에서 덮개를 닫아** 맥이 'Clamshell Sleep' → 'Maintenance Sleep'/DarkWake 를 2~10초 간격으로
+# 40분 오갔다(`pmset -g log`). 사회자 앱이 마이크를 켠 순간(16:39:59.85)이 다시 잠드는 순간과 겹쳐 CoreAudio 입력이 2.8초 꺼져
+# 있었고(`IO is still disabled after waiting`), `MicCapture._start` 의 PLAYING 확인 5초가 넘어 청취 루프가 죽었다 — 맥이
+# 깨어난 뒤에도 세션 내내 사회자가 못 들었다(청취 루프는 다시 열지 않는다).
+# - `caffeinate`(keep_awake)는 **배터리에서 덮개 닫힘 잠자기를 못 막는다** — 그리고 앱을 띄운 뒤에야 걸린다.
+# - 맥북 내장 마이크는 **덮개가 닫히면 하드웨어로 끊긴다**(그 순간 coreaudiod 'master mute setter ON'). 덮개가 닫힌 채
+#   기동하면 파이프라인은 떠도 무음이다 — 오류도 없이 사회자가 귀머거리가 된다.
+# 그래서 명령을 친 직후(운영자가 아직 자리에 있을 때) 소리 내서 알린다. 막지는 않는다 — 배터리로도 덮개만 열어 두면 돈다.
+# `pmset`·`ioreg` 는 macOS 전용이라 사다리 안에만 둔다(CLAUDE.md): 없으면(리눅스 PC) 점검할 덮개도 없으니 말없이 건너뛴다.
+#
+# 이 맥이 배터리로 도는가 — 시뮬·실기 점검이 같이 쓴다. `pmset` 이 없으면(리눅스 PC) "아니다" 로 본다.
+mac_on_battery() {
+  command -v pmset >/dev/null 2>&1 || return 1
+  case "$(pmset -g batt 2>/dev/null | head -1)" in
+    *"Battery Power"*) return 0 ;;
+  esac
+  return 1
+}
+
+sim_power_check() {
+  local lid=""
+  if mac_on_battery; then
+    say_warn "배터리로 돌고 있다 — 덮개를 닫으면 맥이 잠들어 시뮬이 멈추고 사회자가 마이크를 못 연다(화면 잠자기 방지로도 못 막는다)"
+    echo "      ${c_dim}전원을 연결하고 덮개를 연 채로 둔다 (2026-11-17: 기동 중 덮개를 닫아 사회자가 세션 내내 못 들었다)${c_off}"
+  fi
+  if command -v ioreg >/dev/null 2>&1; then
+    # 키가 없는 맥(데스크톱)은 빈 값 — 경고하지 않는다. grep 이 못 찾아도 pipefail 실패는 이 대입 안에서 끝난다.
+    lid="$(ioreg -r -k AppleClamshellState -d 4 2>/dev/null | grep '"AppleClamshellState"' | head -1)"
+  fi
+  case "$lid" in
+    *Yes*)
+      say_warn "덮개가 닫혀 있다 — 맥북 내장 마이크는 덮개가 닫히면 꺼져 사회자가 못 듣는다(오류 없이 무음이다)"
+      echo "      ${c_dim}덮개를 열거나 외부 마이크를 쓴다 — 외부 마이크면 이 경고는 무시한다${c_off}"
+      ;;
+  esac
+  return 0
+}
+
+# 실기(`start --robot`)의 같은 점검 — **배터리 줄만**(2026-11-17 2차, 조율자 승인). 감독·게이트웨이·TTS 프록시는 이 맥에서
+# 돈다 — 배터리로 덮개가 닫히면 맥이 잠들어 로봇은 깨어 있어도 말할 곳(TTS)·물을 곳(LLM·STT)·지시할 감독이 통째로 없다.
+# 같은 날 같은 잠자기(16:12:41~16:27:19)가 G 칸이 본 LLM 연결 끊김도 냈다. 덮개·내장 마이크 줄은 넣지 않는다 — 실기 로봇은
+# 자기 마이크를 쓰고, 운영 맥은 외부 모니터·전원이 있으면 덮개를 닫고 써도 된다(그때는 배터리가 아니라 이 경고도 안 난다).
+robot_power_check() {
+  if mac_on_battery; then
+    say_warn "운영 맥이 배터리로 돌고 있다 — 덮개가 닫히면 맥이 잠들어 감독·게이트웨이·TTS 프록시가 통째로 잠든다(화면 잠자기 방지로도 못 막는다)"
+    echo "      ${c_dim}전원을 연결하고 덮개를 연 채로 둔다 (2026-11-17: 배터리로 덮개를 닫아 맥이 40분 동안 잠들기를 오갔다)${c_off}"
+  fi
+  return 0
+}
+
 start_sim() {  # director_port dashboard_port dashboard_url
   local dir_port="$1" dash_port="$2" dash_url="$3"
   # 출력 장치. 같은 스피커로 나가면 도슨트 소리가 사회자 마이크로 되돌아와
@@ -1783,6 +1834,8 @@ start_sim() {  # director_port dashboard_port dashboard_url
     echo "      ${c_dim}도슨트 소리가 사회자 마이크로 되돌아와 자기목소리 루프가 쉽게 난다.${c_off}"
     echo "      ${c_dim}갈라 주려면: REACHY_DOCENT_AUDIO_OUT='장치이름' ./reachy.sh start --sim${c_off}"
   fi
+  # 추론 서버·예열(1분 남짓)보다 **먼저** — 이번에는 명령을 치고 55초 뒤에 덮개를 닫았다(위 sim_power_check 주석).
+  sim_power_check
 
   start_traps
   BIND_HOST=127.0.0.1   # 시뮬은 전부 이 맥 안이다 — 망에 열 이유가 없다
@@ -1815,6 +1868,8 @@ start_robot() {  # bind director_port dashboard_port dashboard_url mc_host docen
   say_step "포트 점검 (무대감독 · 대시보드)"
   start_ports_free "$dir_port" "$dash_port" || exit 1
   [ -x "$PY" ] || { say_bad "$PY 가 없다 — 이 저장소는 .venv 파이썬 하나만 쓴다"; exit 1; }
+  # 추론 서버·예열·로봇 올리기보다 **먼저** — 운영자가 명령을 친 직후 자리에 있을 때 본다(robot_power_check 주석).
+  robot_power_check
 
   start_traps
   BIND_HOST="$bind"

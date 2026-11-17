@@ -1239,3 +1239,121 @@ robot_resolve no-such-host.invalid; echo "rc2=$?"
     src = (ROOT / "reachy.sh").read_text(encoding="utf-8")
     body = src.split("robot_resolve() {", 1)[1].split("\n}\n", 1)[0]
     assert "getaddrinfo" in body and "join(2" in body and "dns-sd" not in body
+
+
+# ── 시뮬 기동의 맥 전원·덮개 점검(2026-11-17, 계획 docs/superpowers/plans/2026-11-17-sim-errors-M.md) ──────────
+# 16:39 시뮬 기동 도중 **배터리에서 덮개를 닫아** 맥이 잠들기·다크웨이크를 오갔다(pmset 로그 'Clamshell Sleep'). 사회자 앱이 마이크를
+# 켠 순간(16:39:59)이 다시 잠드는 순간과 겹쳐 CoreAudio 입력이 2.8초 꺼져 있었고, `MicCapture` 의 PLAYING 확인(5초)이 넘어 청취
+# 루프가 죽었다 — 세션 내내 사회자가 못 들었다. `caffeinate`(keep_awake)는 배터리의 덮개 닫힘 잠자기를 못 막는다. 맥북 내장 마이크는
+# 덮개가 닫히면 하드웨어로 끊긴다(그 순간 coreaudiod 'master mute setter ON'). 그래서 기동할 때 소리 내서 알린다 — 막지는 않는다.
+def _fake_power(tmp_path, source, lid):
+    bindir = tmp_path / "pwrbin"
+    bindir.mkdir(exist_ok=True)
+    pm = bindir / "pmset"
+    pm.write_text('#!/bin/sh\necho "pmset $*" >> "$CALLS"\n'
+                  f"echo \"Now drawing from '{source}'\"\n"
+                  "printf ' -InternalBattery-0 (id=1)\\t62%%; discharging; present: true\\n'\n")
+    io = bindir / "ioreg"
+    io.write_text('#!/bin/sh\necho "ioreg $*" >> "$CALLS"\n'
+                  f"echo '  |   \"AppleClamshellState\" = {lid}'\n")
+    pm.chmod(0o755)
+    io.chmod(0o755)
+    return {"PATH": f"{bindir}:{os.environ['PATH']}"}
+
+
+def test_시뮬_기동은_배터리면_덮개를_닫지_말라고_경고한다(tmp_path):
+    r = _source('sim_power_check; echo "rc=$?"', tmp_path,
+                env_extra=_fake_power(tmp_path, "Battery Power", "No"))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr          # 경고만 — 배터리로도 덮개만 열어 두면 돈다
+    assert "WARN" in r.stdout and "배터리" in r.stdout and "덮개를 닫으면" in r.stdout
+    assert "전원을 연결" in r.stdout
+    assert "내장 마이크" not in r.stdout                    # 덮개가 열려 있으면 마이크 경고는 없다
+
+
+def test_시뮬_기동은_덮개가_닫혀_있으면_내장_마이크가_꺼진다고_경고한다(tmp_path):
+    r = _source('sim_power_check; echo "rc=$?"', tmp_path,
+                env_extra=_fake_power(tmp_path, "AC Power", "Yes"))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr
+    assert "WARN" in r.stdout and "덮개가 닫혀" in r.stdout and "내장 마이크" in r.stdout
+    assert "배터리" not in r.stdout
+
+
+def test_전원이_연결되고_덮개가_열려_있으면_아무_말도_안_한다(tmp_path):
+    """대조군 — 위 두 경고가 가짜 명령이 안 먹어서 생긴 것이 아님을 본다(두 명령이 실제로 불렸다)."""
+    r = _source('sim_power_check; echo "rc=$?"', tmp_path,
+                env_extra=_fake_power(tmp_path, "AC Power", "No"))
+    assert r.stdout.strip() == "rc=0", r.stdout + r.stderr
+    calls = _calls(tmp_path)
+    assert any(c.startswith("pmset -g batt") for c in calls), calls
+    assert any(c.startswith("ioreg ") and "AppleClamshellState" in c for c in calls), calls
+
+
+def test_전원_점검_명령이_없으면_건너뛰고_기동을_막지_않는다(tmp_path):
+    """`pmset`·`ioreg` 는 macOS 전용이다 — 사다리 안에만 둔다(CLAUDE.md). 리눅스 PC 에서는 점검할 덮개가 없다."""
+    r = _source('PATH=/var/empty sim_power_check; echo "rc=$?"', tmp_path)
+    assert r.stdout.strip() == "rc=0", r.stdout + r.stderr
+
+
+def test_전원_점검은_시뮬_기동에서_추론_서버보다_먼저_한다(tmp_path):
+    """운영자가 명령을 친 직후, 아직 자리에 있을 때 보여야 한다 — 이번에는 기동 55초 만에 덮개를 닫았다."""
+    r = _source(r'''
+start_ports_free()  { :; }
+sim_power_check()   { echo "power" >> "$CALLS"; }
+start_infer()       { echo "infer" >> "$CALLS"; }
+robot_warmup()      { :; }
+start_sim_daemon()  { :; }
+start_sim_app()     { :; }
+keep_awake()        { :; }
+start_director()    { echo "director" >> "$CALLS"; }
+TTS_BACKEND=qwen
+start_sim 9777 9778 http://127.0.0.1:9778/
+''', tmp_path, env_extra={"REACHY_DOCENT_AUDIO_OUT": "x"})
+    assert _calls(tmp_path) == ["power", "infer", "director"], r.stdout + r.stderr
+
+
+# ── 실기 기동의 운영 맥 전원 점검(2026-11-17 2차, 조율자 승인) ─────────────────────────────────────────
+# 실기 공연에서도 운영 맥이 배터리로 덮개가 닫히면 맥이 잠든다 — 감독·게이트웨이·TTS 프록시가 통째로 멈춘다(로봇은 깨어 있어도
+# 말할 곳·물을 곳이 없다). 같은 잠자기가 시뮬 사회자 마이크(위)와 G 칸의 LLM 연결 끊김(16:12~16:27)을 냈다. 덮개·내장 마이크 줄은
+# 시뮬 전용 — 실기 로봇은 자기 마이크를 쓴다.
+def test_실기_기동은_배터리면_운영_맥이_잠들어_감독과_서버가_멈춘다고_경고한다(tmp_path):
+    r = _source('robot_power_check; echo "rc=$?"', tmp_path,
+                env_extra=_fake_power(tmp_path, "Battery Power", "Yes"))
+    assert "rc=0" in r.stdout, r.stdout + r.stderr          # 경고만 — 기동을 막지 않는다
+    assert "WARN" in r.stdout and "운영 맥" in r.stdout and "배터리" in r.stdout
+    assert "덮개가 닫히면" in r.stdout and "감독·게이트웨이·TTS 프록시" in r.stdout and "잠든다" in r.stdout
+    assert "전원을 연결" in r.stdout
+    # 덮개가 닫혀 있다고 가짜가 말해도 실기 경로는 내장 마이크를 말하지 않는다 — 덮개는 묻지도 않는다.
+    assert "내장 마이크" not in r.stdout
+    assert not any(c.startswith("ioreg") for c in _calls(tmp_path)), _calls(tmp_path)
+
+
+def test_실기_기동은_전원이_연결돼_있으면_아무_말도_안_한다(tmp_path):
+    """대조군 — 위 경고가 가짜 `pmset` 이 안 먹어서 생긴 것이 아님을 본다(실제로 불렸다)."""
+    r = _source('robot_power_check; echo "rc=$?"', tmp_path,
+                env_extra=_fake_power(tmp_path, "AC Power", "Yes"))
+    assert r.stdout.strip() == "rc=0", r.stdout + r.stderr
+    assert any(c.startswith("pmset -g batt") for c in _calls(tmp_path)), _calls(tmp_path)
+
+
+def test_실기_전원_점검_명령이_없으면_건너뛰고_기동을_막지_않는다(tmp_path):
+    """운영 PC 가 리눅스면 `pmset` 이 없다 — macOS 전용은 사다리 안에만(CLAUDE.md)."""
+    r = _source('PATH=/var/empty robot_power_check; echo "rc=$?"', tmp_path)
+    assert r.stdout.strip() == "rc=0", r.stdout + r.stderr
+
+
+def test_전원_점검은_실기_기동에서_추론_서버보다_먼저_한다(tmp_path):
+    """명령을 친 직후, 운영자가 아직 자리에 있을 때 보여야 한다. 로봇에는 닿지 않는다(앱 올리기는 가짜)."""
+    r = _source(_FAKE_ROBOT + r'''
+start_ports_free()     { :; }
+robot_power_check()    { echo "power" >> "$CALLS"; }
+start_infer()          { echo "infer" >> "$CALLS"; }
+up()                   { return 0; }
+lan_ip()               { echo 10.9.8.10; }
+robot_warmup()         { :; }
+robot_bringup_one()    { return 0; }
+keep_awake()           { :; }
+start_director()       { echo "director" >> "$CALLS"; }
+start_robot 0.0.0.0 9777 9778 http://127.0.0.1:9778/ 10.9.8.21 10.9.8.22
+''', tmp_path)
+    calls = [c for c in _calls(tmp_path) if c in ("power", "infer", "director")]
+    assert calls == ["power", "infer", "director"], r.stdout + r.stderr

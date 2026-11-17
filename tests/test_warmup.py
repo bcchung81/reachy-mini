@@ -132,13 +132,34 @@ def test_외부_전용_예열_실패는_종류와_안_되는_것을_말한다(st
 
 
 @pytest.mark.parametrize("kind,want", [
-    ("5xx", "일시 오류"), ("timeout", "인터넷"), ("4xx", "openai-gateway.log"), (None, "openai-gateway.log"),
+    ("5xx", "일시 오류"), ("connect", "인터넷"), ("timeout", "일시적"), ("4xx", "openai-gateway.log"),
+    (None, "openai-gateway.log"),
 ])
 def test_외부_전용_LLM_실패_종류마다_할_일이_다르다(stack, capsys, kind, want):
     _Fake.plan = {"/v1/chat/completions": (502, kind)}
     warmup.main(_env(stack))
     llm = next(l for l in capsys.readouterr().out.splitlines() if l.lstrip().startswith("LLM"))
     assert "점검 실패" in llm and want in llm, llm
+
+
+def test_외부_전용_응답_시간_초과는_인터넷_탓으로_몰지_않는다(stack, capsys):
+    """2026-11-17 시뮬: 맥이 잠들었다 깬 뒤 게이트웨이가 죽은 연결을 다시 써 응답 시간 초과(timeout) — 예열이 "인터넷 연결: 못
+    닿았다 … 전시장 망의 인터넷을 확인한다" 로 운영자를 엉뚱한 곳에 보냈다(인터넷은 멀쩡했다, 같은 때 STT 1.45초 성공).
+    `connect`(못 닿았다)만 인터넷을 가리키고, `timeout`(보냈는데 응답이 상한 안에 안 왔다)은 일시적일 수 있다 + 그 서버 로그."""
+    _Fake.plan = {"/v1/chat/completions": (502, "timeout"),
+                  "/v1/audio/transcriptions": (502, "connect"),
+                  "/v1/audio/speech": (502, "timeout")}
+    warmup.main(_env(stack))
+    lines = capsys.readouterr().out.splitlines()
+
+    def failed(name):
+        return next(l for l in lines if l.lstrip().startswith(name) and "점검 실패" in l)
+    for name, log in (("LLM", "openai-gateway.log"), ("TTS", "tts-proxy.log")):
+        line = failed(name)
+        assert "응답" in line and "일시적" in line and log in line, line
+        assert "못 닿았다" not in line and "전시장" not in line, line
+    stt = failed("STT")
+    assert "못 닿았다" in stt and "인터넷" in stt, stt
 
 
 def test_외부_전용인데_게이트웨이가_안_떠_있으면_그렇게_말한다(stack, capsys, monkeypatch):

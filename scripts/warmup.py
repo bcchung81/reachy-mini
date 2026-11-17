@@ -117,8 +117,16 @@ def explain(service: str, kind: str) -> str:
     if kind == "429":
         # 429 본문은 "분당 한도" 와 "잔액 없음" 으로 갈리는데 종류만 받으니 둘을 못 가른다 — 둘 다 적는다(계획 A-1 위험).
         return f"{vendor} 잔액 부족 또는 한도 초과(429): 결제·사용량을 확인한다(분당 한도면 잠시 뒤 풀린다)"
-    if kind in ("connect", "timeout"):
-        return f"인터넷 연결: {vendor} 에 못 닿았다({kind}). 전시장 망의 인터넷을 확인한다"
+    if kind == "connect":
+        return f"인터넷 연결: {vendor} 에 못 닿았다(connect). 전시장 망의 인터넷을 확인한다"
+    if kind == "timeout":
+        # connect 와 **가른다**(2026-11-17): 맥이 덮개 닫힘으로 잠들었다 깬 뒤 게이트웨이가 죽은 연결을 다시 써 응답이 안 왔을 때 예전 문구
+        # "인터넷 연결: 못 닿았다 … 전시장 망의 인터넷을 확인한다" 가 운영자를 엉뚱한 곳에 보냈다 — 인터넷은 멀쩡했고 같은 때 STT 는
+        # 1.45초에 성공했다. timeout 은 "보냈는데 응답이 상한 안에 안 왔다" 다(게이트웨이는 연결 단계의 시간 초과를 connect 로 싣는다).
+        # 인터넷 탓이라고 단정하지 않고, 일시적일 수 있음 + 그 서버 로그를 가리킨다. TTS 프록시의 timeout 은 연결 단계 시간 초과도
+        # 담는다(`tts_cache_proxy.upstream_kind` — "timed out" 글로 가른다) — 그래서 "계속되면 인터넷도" 를 남긴다.
+        return (f"{vendor} 응답이 시간 상한 안에 오지 않았다(timeout) — 일시적일 수 있다(회선·{vendor} 쪽 지연). "
+                f"{log} 를 보고 다시 점검한다. 계속되면 인터넷과 {vendor} 상태를 본다")
     if kind == "5xx":
         return f"{vendor} 쪽 일시 오류(5xx): 잠시 뒤 다시 띄운다. 계속되면 {vendor} 상태 페이지를 본다"
     if kind == "server":
